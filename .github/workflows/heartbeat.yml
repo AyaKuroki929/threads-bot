@@ -1,0 +1,114 @@
+name: Heartbeat - Verify Post Success
+
+on:
+  schedule:
+    # morning が出ているか確認 (JST 8:30 / 9:00 / 9:30)
+    - cron: '30 23 * * *'   # JST 8:30
+    - cron: '0 0 * * *'     # JST 9:00
+    - cron: '30 0 * * *'    # JST 9:30
+    # noon が出ているか確認 (JST 13:30 / 14:00 / 14:30)
+    - cron: '30 4 * * *'    # JST 13:30
+    - cron: '0 5 * * *'     # JST 14:00
+    - cron: '30 5 * * *'    # JST 14:30
+    # evening が出ているか確認 (JST 22:30 / 23:00 / 23:30)
+    - cron: '30 13 * * *'   # JST 22:30
+    - cron: '0 14 * * *'    # JST 23:00
+    - cron: '30 14 * * *'   # JST 23:30
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine expected slot
+        id: slot
+        run: |
+          HOUR_JST=$(TZ=Asia/Tokyo date '+%-H')
+          if [ "$HOUR_JST" -ge 8 ] && [ "$HOUR_JST" -lt 13 ]; then
+            echo "name=morning" >> $GITHUB_OUTPUT
+          elif [ "$HOUR_JST" -ge 13 ] && [ "$HOUR_JST" -lt 22 ]; then
+            echo "name=noon" >> $GITHUB_OUTPUT
+          else
+            echo "name=evening" >> $GITHUB_OUTPUT
+          fi
+          echo "today=$(TZ=Asia/Tokyo date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "now=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')" >> $GITHUB_OUTPUT
+
+      - name: Verify last_run.json
+        id: verify
+        run: |
+          SLOT="${{ steps.slot.outputs.name }}"
+          TODAY="${{ steps.slot.outputs.today }}"
+          if [ ! -f last_run.json ]; then
+            echo "ok=false" >> $GITHUB_OUTPUT
+            echo "reason=last_run.json not found" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          LAST=$(python3 -c "import json; print(json.load(open('last_run.json')).get('$SLOT', ''))")
+          echo "[heartbeat] $SLOT today=$TODAY last_recorded=$LAST"
+          if [[ "$LAST" == "$TODAY"* ]]; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "ok=false" >> $GITHUB_OUTPUT
+            echo "reason=last $SLOT recorded: '$LAST', expected today=$TODAY" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Find existing open issue for today's slot
+        if: steps.verify.outputs.ok != 'true'
+        id: existing
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const slot = '${{ steps.slot.outputs.name }}'
+            const today = '${{ steps.slot.outputs.today }}'
+            const title_marker = `[${today}] ${slot}`
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 50
+            })
+            const found = issues.data.find(i => i.title.includes(title_marker))
+            core.setOutput('exists', found ? 'true' : 'false')
+
+      - name: Create alert issue (only if not already created today)
+        if: steps.verify.outputs.ok != 'true' && steps.existing.outputs.exists != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const slot = '${{ steps.slot.outputs.name }}'
+            const today = '${{ steps.slot.outputs.today }}'
+            const now = '${{ steps.slot.outputs.now }}'
+            const reason = `${{ steps.verify.outputs.reason }}`
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 [${today}] ${slot} 投稿未確認 (heartbeat at ${now})`,
+              body: [
+                `Heartbeatチェックで本日の **${slot}** 投稿の成功記録が見つかりませんでした。`,
+                ``,
+                `- 確認時刻: ${now}`,
+                `- 期待スロット: ${slot}`,
+                `- 検出理由: ${reason}`,
+                ``,
+                `## 対応`,
+                `下記コマンドで手動投稿できます（Macのターミナルで実行）:`,
+                `\`\`\``,
+                `gh workflow run post.yml -f slot=${slot} -f dry_run=false`,
+                `\`\`\``,
+                ``,
+                `## 補足`,
+                `- 1日に同じslotで複数Issueが立つのを防ぐため、**今日中はこのIssue1件のみ**作成されます`,
+                `- 投稿が出たことを確認したら、このIssueをcloseしてください`,
+              ].join('\n'),
+              labels: ['heartbeat-alert']
+            })
