@@ -100,7 +100,9 @@ def wait_for_network(timeout=240, interval=5):
 
 
 def select_post(time_slot):
-    """ネタを1つ選んで (idx, text_or_list) を返す。used_posts.json への書き込みはしない。"""
+    """ネタを1つ選んで (idx, text_or_list) を返す。used_posts.json への書き込みはしない。
+    used_indices は posts.json への永続的な追記履歴として扱い、リセットしない。
+    全消費した場合は RuntimeError で停止する（CI失敗→メール通知で気付ける）。"""
     with open(POSTS_FILE, "r", encoding="utf-8") as f:
         posts = json.load(f)
 
@@ -113,24 +115,24 @@ def select_post(time_slot):
     all_posts = posts[time_slot]
     available = [i for i in range(len(all_posts)) if i not in used_indices]
     if not available:
-        available = list(range(len(all_posts)))
+        raise RuntimeError(
+            f"[ネタ枯渇] {time_slot} の未使用ネタが0本です。Macで regen.sh を手動実行して "
+            f"posts.json を補充してください: cd ~/threads_bot && ./regen.sh"
+        )
 
     idx = random.choice(available)
     return idx, all_posts[idx]
 
 
 def commit_used(time_slot, idx):
-    """投稿成功後に used_posts.json へコミット。失敗時は呼ばないのでネタを温存できる。"""
+    """投稿成功後に used_posts.json へコミット。リセットせず永続的に記録し続ける。
+    posts.json は regen.sh で追記され続けるので、indices は単調増加していく。
+    一度使ったidxは二度と引かれない＝過去投稿との被りを永続的にゼロ保証。"""
     used = {}
     if os.path.exists(USED_FILE):
         with open(USED_FILE, "r", encoding="utf-8") as f:
             used = json.load(f)
     used.setdefault(time_slot, [])
-    # 全消費したらリセットしてから今回のidxを記録
-    with open(POSTS_FILE, "r", encoding="utf-8") as f:
-        posts = json.load(f)
-    if len(used[time_slot]) >= len(posts[time_slot]):
-        used[time_slot] = []
     if idx not in used[time_slot]:
         used[time_slot].append(idx)
     with open(USED_FILE, "w", encoding="utf-8") as f:
