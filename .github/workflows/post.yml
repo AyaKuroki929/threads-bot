@@ -2,12 +2,26 @@ name: Threads Auto Post
 
 on:
   schedule:
+    # GitHub Actions の schedule は遅延・欠落することがあるので、各時刻5分刻みで複数発火させる。
+    # 重複は last_run.json + already_posted_today() で防止する（最初の成功で記録され、以降は即skip）。
     # JST 7:00 = UTC 22:00 (前日)
     - cron: '0 22 * * *'
+    - cron: '5 22 * * *'
+    - cron: '15 22 * * *'
+    - cron: '30 22 * * *'
+    - cron: '50 22 * * *'
     # JST 12:00 = UTC 3:00
     - cron: '0 3 * * *'
+    - cron: '5 3 * * *'
+    - cron: '15 3 * * *'
+    - cron: '30 3 * * *'
+    - cron: '50 3 * * *'
     # JST 21:00 = UTC 12:00
     - cron: '0 12 * * *'
+    - cron: '5 12 * * *'
+    - cron: '15 12 * * *'
+    - cron: '30 12 * * *'
+    - cron: '50 12 * * *'
   workflow_dispatch:
     inputs:
       slot:
@@ -60,10 +74,11 @@ jobs:
             echo "name=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
+            # cron schedule の "分 時" → slot を判定。重複は last_run.json で防止。
             case "${{ github.event.schedule }}" in
-              "0 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
-              "0 3 * * *")  echo "name=noon" >> $GITHUB_OUTPUT ;;
-              "0 12 * * *") echo "name=evening" >> $GITHUB_OUTPUT ;;
+              "0 22 * * *"|"5 22 * * *"|"15 22 * * *"|"30 22 * * *"|"50 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
+              "0 3 * * *"|"5 3 * * *"|"15 3 * * *"|"30 3 * * *"|"50 3 * * *")     echo "name=noon"    >> $GITHUB_OUTPUT ;;
+              "0 12 * * *"|"5 12 * * *"|"15 12 * * *"|"30 12 * * *"|"50 12 * * *") echo "name=evening" >> $GITHUB_OUTPUT ;;
             esac
             echo "dry=false" >> $GITHUB_OUTPUT
           fi
