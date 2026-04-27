@@ -293,7 +293,11 @@ def post_to_threads(texts, debug=False, dry_run=False):
 
     with sync_playwright() as p:
         force_headed = os.environ.get("HEADED") == "1"
-        browser = p.chromium.launch(headless=(not dry_run) and not force_headed)
+        is_ci = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
+        # CI（クラウド）では XServer が無いので常にheadless。
+        # ローカルは dry-run時のみheadedで目視確認できる従来挙動を維持。
+        headless = True if is_ci else ((not dry_run) and not force_headed)
+        browser = p.chromium.launch(headless=headless)
         context = browser.new_context(
             storage_state=SESSION_FILE,
             locale="ja-JP",
