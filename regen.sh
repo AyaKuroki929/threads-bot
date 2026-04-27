@@ -36,10 +36,23 @@ PROMPT='あなたはベモーレサロンのSNS運用担当です。以下を実
 
 ファイル編集にはEdit/Writeツールを使い、確認・承認を求めず自動で完了させてください。'
 
+# 最新の posts.json / used_posts.json をクラウドから取得（クラウド側が直近の真実）
+git pull --quiet --rebase >> "$LOG" 2>&1 || echo "[warn] git pull failed, continue with local" >> "$LOG"
+
 /Applications/cmux.app/Contents/Resources/bin/claude \
   -p "$PROMPT" \
   --permission-mode bypassPermissions \
   >> "$LOG" 2>&1
 
 touch "$STAMP"
+
+# 補充結果（posts.json）をクラウドへ push。これでクラウド実行時に最新ネタが反映される
+if ! git diff --quiet posts.json; then
+  git add posts.json
+  git commit -m "regen: posts.json refilled $(date '+%Y-%m-%d %H:%M JST')" >> "$LOG" 2>&1
+  git push --quiet >> "$LOG" 2>&1 && echo "[ok] regen pushed to origin" >> "$LOG"
+else
+  echo "[info] posts.json no change" >> "$LOG"
+fi
+
 echo "=== $(date) regen end ===" >> "$LOG"
