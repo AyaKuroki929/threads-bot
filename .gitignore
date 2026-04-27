@@ -1,0 +1,26 @@
+# 機密情報（絶対にcommitしない）
+session.json
+
+# ログ・スクリーンショット
+*.log
+*.png
+log.txt
+caffeinate.log
+launchd.out.log
+launchd.err.log
+regen.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# OS
+.DS_Store
+
+# ローカルのみのデバッグ用
+debug.py
+inspect_composer.py
+reply_explore.py
+test_thread.py
