@@ -19,6 +19,37 @@ USED_FILE = os.path.join(os.path.dirname(__file__), "used_posts.json")
 LAST_RUN_FILE = os.path.join(os.path.dirname(__file__), "last_run.json")
 USERNAME = "bemolle_diet"
 
+# 投稿失敗時の終了コード
+EXIT_COOKIE_EXPIRED = 3   # Threadsログイン切れ → workflow側で専用Issue作成
+EXIT_GENERIC_FAIL = 2
+
+
+class CookieExpiredError(Exception):
+    """Threadsのcookieが切れている時に送出。"""
+    pass
+
+
+def _detect_login_required(page):
+    """ログイン画面に飛ばされていないかチェック。飛ばされていたら CookieExpiredError。"""
+    login_selectors = [
+        'input[autocomplete="username"]',
+        'input[name="username"]',
+        'a[href="/login"]',
+        'a[href*="/login?"]',
+    ]
+    for sel in login_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                raise CookieExpiredError(
+                    f"Threadsのログインセッションが切れています（{sel} 検出）。"
+                    "Macで `python3 extract_cookies2.py && gh secret set THREADS_SESSION < session.json` を実行してください。"
+                )
+        except CookieExpiredError:
+            raise
+        except Exception:
+            continue
+
 
 def already_posted_today(time_slot):
     """今日その時間帯に投稿済みかどうか。cron多重発火時の重複防止。"""
@@ -199,6 +230,7 @@ def _open_composer(page):
     """ホームから新規投稿モーダルを開く。"""
     page.goto("https://www.threads.com", wait_until="domcontentloaded")
     page.wait_for_timeout(5000)
+    _detect_login_required(page)   # cookie切れならここで CookieExpiredError
     opener_selectors = [
         'div[role="button"]:has-text("What\'s new?")',
         'div[role="button"]:has-text("新しい投稿を作成")',
@@ -365,6 +397,12 @@ def main():
     if not dry_run:
         wait_for_network(timeout=240, interval=5)
 
+        # 投稿時刻ジッター（0〜5分のランダム遅延）。毎日同じ時刻ピッタリのbot臭を消す。
+        if not os.environ.get("SKIP_JITTER"):
+            jitter_sec = random.randint(0, 300)
+            print(f"[jitter] 投稿前 {jitter_sec}秒（{jitter_sec//60}分{jitter_sec%60}秒）待機")
+            time.sleep(jitter_sec)
+
     # 投稿失敗時の自動リトライ（最大3回・90秒間隔）。ネタは成功時のみ消費する。
     max_attempts = 1 if dry_run else 3
     last_exc = None
@@ -373,6 +411,10 @@ def main():
             post_to_threads(texts, debug=dry_run, dry_run=dry_run)
             last_exc = None
             break
+        except CookieExpiredError as e:
+            # cookie切れはリトライしても無駄なので即exit。専用exit codeで workflow に伝える
+            print(f"[fatal] Threadsログイン切れ: {e}")
+            sys.exit(EXIT_COOKIE_EXPIRED)
         except Exception as e:
             last_exc = e
             print(f"[retry] 試行{attempt}/{max_attempts} 失敗: {e}")
@@ -382,7 +424,7 @@ def main():
                 time.sleep(60)
     if last_exc is not None:
         print(f"[fatal] {max_attempts}回試行して投稿できませんでした: {last_exc}")
-        sys.exit(2)
+        sys.exit(EXIT_GENERIC_FAIL)
 
     print("投稿完了！" if not dry_run else "[dry-run] 終了")
 
