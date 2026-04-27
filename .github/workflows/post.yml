@@ -37,6 +37,12 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  # 同じslotのジョブは1つずつしか実行しない（ツリー投稿中に次の発火が走って重複する事故を完全に潰す）
+  # cancel-in-progress: false にして、走行中ジョブはキャンセルせず、後続を待たせる
+  group: threads-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (contains(github.event.schedule, ' 3 ') && 'noon') || (contains(github.event.schedule, ' 12 ') && 'evening') || github.event.inputs.slot || 'manual' }}
+  cancel-in-progress: false
+
 jobs:
   post:
     runs-on: ubuntu-latest
