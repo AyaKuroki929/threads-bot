@@ -1,0 +1,14 @@
+name: Notification Test (intentional failure)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fail:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Intentional failure for push notification test
+        run: |
+          echo "This is a test failure to verify iPhone push notifications work."
+          echo "If you got a push notification, it works! Delete this workflow after."
+          exit 1
