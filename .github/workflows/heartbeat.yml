@@ -19,6 +19,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: write
 
 jobs:
   check:
@@ -62,8 +63,31 @@ jobs:
             echo "reason=last $SLOT recorded: '$LAST', expected today=$TODAY" >> $GITHUB_OUTPUT
           fi
 
-      - name: Find existing open issue for today's slot
+      - name: Auto-recovery - trigger post.yml if missing
         if: steps.verify.outputs.ok != 'true'
+        id: recovery
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const slot = '${{ steps.slot.outputs.name }}'
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'post.yml',
+                ref: 'main',
+                inputs: { slot: slot, dry_run: 'false' }
+              })
+              console.log(`[recovery] post.yml triggered for ${slot}`)
+              core.setOutput('triggered', 'true')
+            } catch (e) {
+              console.log(`[recovery] trigger failed: ${e.message}`)
+              core.setOutput('triggered', 'false')
+              core.setOutput('error', e.message)
+            }
+
+      - name: Find existing open alert issue for today's slot
+        if: steps.verify.outputs.ok != 'true' && steps.recovery.outputs.triggered != 'true'
         id: existing
         uses: actions/github-script@v7
         with:
@@ -80,8 +104,8 @@ jobs:
             const found = issues.data.find(i => i.title.includes(title_marker))
             core.setOutput('exists', found ? 'true' : 'false')
 
-      - name: Create alert issue (only if not already created today)
-        if: steps.verify.outputs.ok != 'true' && steps.existing.outputs.exists != 'true'
+      - name: Create alert issue (only when recovery trigger itself failed)
+        if: steps.verify.outputs.ok != 'true' && steps.recovery.outputs.triggered != 'true' && steps.existing.outputs.exists != 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -89,16 +113,19 @@ jobs:
             const today = '${{ steps.slot.outputs.today }}'
             const now = '${{ steps.slot.outputs.now }}'
             const reason = `${{ steps.verify.outputs.reason }}`
+            const recovery_err = `${{ steps.recovery.outputs.error }}`
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🚨 [${today}] ${slot} 投稿未確認 (heartbeat at ${now})`,
+              title: `🚨 [${today}] ${slot} 投稿未確認 + 自動リカバリ失敗 (heartbeat at ${now})`,
               body: [
-                `Heartbeatチェックで本日の **${slot}** 投稿の成功記録が見つかりませんでした。`,
+                `Heartbeatが本日の **${slot}** 投稿の成功記録を見つけられず、`,
+                `自動リカバリ（post.yml の workflow_dispatch トリガー）も失敗しました。`,
                 ``,
                 `- 確認時刻: ${now}`,
                 `- 期待スロット: ${slot}`,
                 `- 検出理由: ${reason}`,
+                `- リカバリ失敗理由: ${recovery_err}`,
                 ``,
                 `## 対応`,
                 `下記コマンドで手動投稿できます（Macのターミナルで実行）:`,
@@ -106,9 +133,12 @@ jobs:
                 `gh workflow run post.yml -f slot=${slot} -f dry_run=false`,
                 `\`\`\``,
                 ``,
-                `## 補足`,
-                `- 1日に同じslotで複数Issueが立つのを防ぐため、**今日中はこのIssue1件のみ**作成されます`,
-                `- 投稿が出たことを確認したら、このIssueをcloseしてください`,
+                `投稿が出たことを確認したら、このIssueをcloseしてください。`,
               ].join('\n'),
               labels: ['heartbeat-alert']
             })
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "[heartbeat] slot=${{ steps.slot.outputs.name }} ok=${{ steps.verify.outputs.ok }} recovery_triggered=${{ steps.recovery.outputs.triggered }}"
