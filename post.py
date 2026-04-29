@@ -52,7 +52,15 @@ def _detect_login_required(page):
 
 
 def already_posted_today(time_slot):
-    """今日その時間帯に投稿済みかどうか。cron多重発火時の重複防止。"""
+    """今日その時間帯に投稿済みか。cron多重発火時の重複防止。
+    各slotには「妥当な投稿時間帯」を設定し、その範囲内の記録のみ「投稿済み」と判定する。
+    範囲外（例: evening が深夜0時に記録）は遅延発火扱いで無効 → 正規時間帯に再発火させる。
+
+    JST時間帯：
+    - morning: 5:00〜10:59
+    - noon:    11:00〜16:59
+    - evening: 17:00〜23:59
+    """
     if not os.path.exists(LAST_RUN_FILE):
         return False
     try:
@@ -63,8 +71,23 @@ def already_posted_today(time_slot):
     last = data.get(time_slot)
     if not last:
         return False
+
     today = datetime.now().strftime("%Y-%m-%d")
-    return last.startswith(today)
+    if not last.startswith(today):
+        return False
+
+    try:
+        last_dt = datetime.strptime(last, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+
+    valid_hours = {
+        "morning": (5, 11),
+        "noon":    (11, 17),
+        "evening": (17, 24),
+    }
+    h_start, h_end = valid_hours.get(time_slot, (0, 24))
+    return h_start <= last_dt.hour < h_end
 
 
 def record_success(time_slot):
