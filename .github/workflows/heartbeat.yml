@@ -30,21 +30,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determine expected slot
+      - name: Determine expected slot (cron-schedule-based + valid-hour guard)
         id: slot
         run: |
-          HOUR_JST=$(TZ=Asia/Tokyo date '+%-H')
-          if [ "$HOUR_JST" -ge 8 ] && [ "$HOUR_JST" -lt 13 ]; then
-            echo "name=morning" >> $GITHUB_OUTPUT
-          elif [ "$HOUR_JST" -ge 13 ] && [ "$HOUR_JST" -lt 22 ]; then
-            echo "name=noon" >> $GITHUB_OUTPUT
+          # cron schedule文字列から本来チェックすべきslotを決定（現在時刻ベースだと遅延発火で誤判定する）
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            HOUR_JST=$(TZ=Asia/Tokyo date '+%-H')
+            if [ "$HOUR_JST" -ge 8 ] && [ "$HOUR_JST" -lt 13 ]; then
+              SLOT="morning"
+            elif [ "$HOUR_JST" -ge 13 ] && [ "$HOUR_JST" -lt 22 ]; then
+              SLOT="noon"
+            else
+              SLOT="evening"
+            fi
+            VALID_START=0; VALID_END=24
           else
-            echo "name=evening" >> $GITHUB_OUTPUT
+            case "${{ github.event.schedule }}" in
+              "30 23 * * *"|"0 0 * * *"|"30 0 * * *") SLOT="morning"; VALID_START=5;  VALID_END=11 ;;
+              "30 4 * * *"|"0 5 * * *"|"30 5 * * *")  SLOT="noon";    VALID_START=11; VALID_END=17 ;;
+              "30 13 * * *"|"0 14 * * *"|"30 14 * * *") SLOT="evening"; VALID_START=17; VALID_END=24 ;;
+              *) SLOT="evening"; VALID_START=17; VALID_END=24 ;;
+            esac
           fi
+          HOUR_JST=$(TZ=Asia/Tokyo date '+%-H')
+          if [ "$HOUR_JST" -lt "$VALID_START" ] || [ "$HOUR_JST" -ge "$VALID_END" ]; then
+            echo "[skip] heartbeat fired outside $SLOT valid window (now=${HOUR_JST}h, valid=${VALID_START}-${VALID_END}h)"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+          echo "name=$SLOT" >> $GITHUB_OUTPUT
           echo "today=$(TZ=Asia/Tokyo date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
           echo "now=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')" >> $GITHUB_OUTPUT
 
       - name: Verify last_run.json
+        if: steps.slot.outputs.skip != 'true'
         id: verify
         run: |
           SLOT="${{ steps.slot.outputs.name }}"
@@ -64,7 +84,7 @@ jobs:
           fi
 
       - name: Auto-recovery - trigger post.yml if missing
-        if: steps.verify.outputs.ok != 'true'
+        if: steps.slot.outputs.skip != 'true' && steps.verify.outputs.ok != 'true'
         id: recovery
         uses: actions/github-script@v7
         with:
@@ -87,7 +107,7 @@ jobs:
             }
 
       - name: Find existing open alert issue for today's slot
-        if: steps.verify.outputs.ok != 'true' && steps.recovery.outputs.triggered != 'true'
+        if: steps.slot.outputs.skip != 'true' && steps.verify.outputs.ok != 'true' && steps.recovery.outputs.triggered != 'true'
         id: existing
         uses: actions/github-script@v7
         with:
@@ -105,7 +125,7 @@ jobs:
             core.setOutput('exists', found ? 'true' : 'false')
 
       - name: Create alert issue (only when recovery trigger itself failed)
-        if: steps.verify.outputs.ok != 'true' && steps.recovery.outputs.triggered != 'true' && steps.existing.outputs.exists != 'true'
+        if: steps.slot.outputs.skip != 'true' && steps.verify.outputs.ok != 'true' && steps.recovery.outputs.triggered != 'true' && steps.existing.outputs.exists != 'true'
         uses: actions/github-script@v7
         with:
           script: |
