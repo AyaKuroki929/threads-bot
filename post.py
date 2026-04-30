@@ -17,6 +17,7 @@ POSTS_FILE = os.path.join(os.path.dirname(__file__), "posts.json")
 SESSION_FILE = os.path.join(os.path.dirname(__file__), "session.json")
 USED_FILE = os.path.join(os.path.dirname(__file__), "used_posts.json")
 LAST_RUN_FILE = os.path.join(os.path.dirname(__file__), "last_run.json")
+PRIORITY_FILE = os.path.join(os.path.dirname(__file__), "priority_posts.json")
 USERNAME = "bemolle_diet"
 
 # 投稿失敗時の終了コード
@@ -172,12 +173,71 @@ def wait_for_network(timeout=240, interval=5):
     return False
 
 
+def _consume_priority(time_slot):
+    """priority_posts.json にこのslotで予約されているidxがあれば取り出して返す。
+    形式（2種サポート）:
+      A) {"morning":[idx, ...], "noon":[idx, ...], "evening":[idx, ...]}
+         → FIFO（先頭idxを使用）
+      B) {"morning":[{"date":"YYYY-MM-DD","idx":N}, ...], "noon":[...], "evening":[...]}
+         → 日付一致のみ消費（過去日付エントリは自動削除）
+    None を返した場合は通常のランダム選択にfallback。"""
+    if not os.path.exists(PRIORITY_FILE):
+        return None
+    try:
+        with open(PRIORITY_FILE, "r", encoding="utf-8") as f:
+            pri = json.load(f)
+    except Exception:
+        return None
+    queue = pri.get(time_slot, [])
+    if not queue:
+        return None
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    chosen_idx = None
+    new_queue = []
+
+    for entry in queue:
+        if isinstance(entry, dict):
+            # 日付指定形式
+            d = entry.get("date")
+            i = entry.get("idx")
+            if d == today and chosen_idx is None:
+                chosen_idx = i
+                continue   # 今日消費 → queueから外す
+            elif d and d < today:
+                # 期限切れ → 自動削除（queueに残さない）
+                print(f"[priority] expired entry removed: {entry}")
+                continue
+            else:
+                new_queue.append(entry)
+        else:
+            # 旧FIFO形式（int idx）
+            if chosen_idx is None:
+                chosen_idx = entry
+                continue
+            new_queue.append(entry)
+
+    if chosen_idx is not None:
+        pri[time_slot] = new_queue
+        with open(PRIORITY_FILE, "w", encoding="utf-8") as f:
+            json.dump(pri, f, ensure_ascii=False, indent=2)
+        print(f"[priority] {time_slot} の予約投稿 idx={chosen_idx} を選択")
+        return chosen_idx
+    return None
+
+
 def select_post(time_slot):
     """ネタを1つ選んで (idx, text_or_list) を返す。used_posts.json への書き込みはしない。
-    used_indices は posts.json への永続的な追記履歴として扱い、リセットしない。
+    まず priority_posts.json の予約をチェックし、あればそれを使う。
+    無ければ used_indices を除いた未使用プールからランダム。
     全消費した場合は RuntimeError で停止する（CI失敗→メール通知で気付ける）。"""
     with open(POSTS_FILE, "r", encoding="utf-8") as f:
         posts = json.load(f)
+
+    # 予約優先
+    priority_idx = _consume_priority(time_slot)
+    if priority_idx is not None and 0 <= priority_idx < len(posts[time_slot]):
+        return priority_idx, posts[time_slot][priority_idx]
 
     used = {}
     if os.path.exists(USED_FILE):
