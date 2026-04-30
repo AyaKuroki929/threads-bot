@@ -90,6 +90,25 @@ def already_posted_today(time_slot):
     return h_start <= last_dt.hour < h_end
 
 
+# slotごとの「現在時刻が投稿していい時間帯か」判定用（同じテーブル）
+SLOT_VALID_HOURS = {
+    "morning": (5, 11),
+    "noon":    (11, 17),
+    "evening": (17, 24),
+}
+
+
+def is_valid_time_for_slot(time_slot):
+    """現在時刻(JST)が指定slotの正規時間帯内か。
+    範囲外なら投稿しない（heartbeat遅延発火・意図しないトリガから守る）。
+    SKIP_TIME_GUARD=1 で無効化（手動補完時用のescape hatch）。"""
+    if os.environ.get("SKIP_TIME_GUARD") == "1":
+        return True
+    h_start, h_end = SLOT_VALID_HOURS.get(time_slot, (0, 24))
+    now_hour = datetime.now().hour
+    return h_start <= now_hour < h_end
+
+
 def record_success(time_slot):
     data = {}
     if os.path.exists(LAST_RUN_FILE):
@@ -401,6 +420,13 @@ def main():
 
     if not dry_run and already_posted_today(time_slot):
         print(f"[skip] {time_slot} は本日すでに投稿済み。終了。")
+        return
+
+    if not dry_run and not is_valid_time_for_slot(time_slot):
+        h_start, h_end = SLOT_VALID_HOURS.get(time_slot, (0, 24))
+        now_hms = datetime.now().strftime('%H:%M')
+        print(f"[skip] 現在 {now_hms} JST は {time_slot} の正規時間帯（{h_start:02d}:00〜{h_end:02d}:00）外のため投稿しません。"
+              f"手動補完時は SKIP_TIME_GUARD=1 で無効化可。")
         return
 
     if dry_run:
