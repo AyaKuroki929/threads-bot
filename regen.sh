@@ -8,12 +8,13 @@ cd /Users/ayakuroki/threads_bot
 LOG=/Users/ayakuroki/threads_bot/regen.log
 STAMP=/Users/ayakuroki/threads_bot/.regen_last_run
 
-# 前回実行から3日未満ならスキップ（被り絶対回避のため余裕度UP）
+# 前回実行から1日未満ならスキップ（在庫切れリスク回避のため発火頻度UP）
+# 旧: 3日 → 新: 1日（補充閾値も5本→10本に緩和）
 if [ -f "$STAMP" ]; then
   last=$(stat -f %m "$STAMP")
   now=$(date +%s)
   diff_days=$(( (now - last) / 86400 ))
-  if [ "$diff_days" -lt 3 ]; then
+  if [ "$diff_days" -lt 1 ]; then
     echo "=== $(date) skip (last run ${diff_days}d ago) ===" >> "$LOG"
     exit 0
   fi
@@ -44,7 +45,7 @@ PROMPT='あなたはベモーレサロンのSNS運用担当です。以下を実
 
 1. /Users/ayakuroki/threads_bot/posts.json と /Users/ayakuroki/threads_bot/used_posts.json を読む
 2. 各スロット（morning, noon, evening）の未使用本数を計算
-3. 未使用が**5本以下**のスロットには、新たに**10本**を生成してposts.jsonに追記
+3. 未使用が**10本以下**のスロットには、新たに**10本**を生成してposts.jsonに追記（在庫切れリスク回避のため余裕度高め）
    - morning / evening は文字列、noon は3要素の配列（3部ツリー）
    - **story_bank.mdの実体験のみを使う**。新規エピソード創作は絶対NG
    - 同じ事実を「違う型」で語り直すアプローチ：
