@@ -173,6 +173,27 @@ def wait_for_network(timeout=240, interval=5):
     return False
 
 
+def _get_priority_indices(time_slot):
+    """priority_posts.json でこの slot にキューされている全 idx を返す（過去日付含む）。
+    select_post の random 選択で priority 予約済 idx を除外するために使う。"""
+    if not os.path.exists(PRIORITY_FILE):
+        return set()
+    try:
+        with open(PRIORITY_FILE, "r", encoding="utf-8") as f:
+            pri = json.load(f)
+    except Exception:
+        return set()
+    indices = set()
+    for entry in pri.get(time_slot, []):
+        if isinstance(entry, dict):
+            i = entry.get("idx")
+            if isinstance(i, int):
+                indices.add(i)
+        elif isinstance(entry, int):
+            indices.add(entry)
+    return indices
+
+
 def _consume_priority(time_slot):
     """priority_posts.json にこのslotで予約されているidxがあれば取り出して返す。
     形式（2種サポート）:
@@ -180,6 +201,7 @@ def _consume_priority(time_slot):
          → FIFO（先頭idxを使用）
       B) {"morning":[{"date":"YYYY-MM-DD","idx":N}, ...], "noon":[...], "evening":[...]}
          → 日付一致のみ消費（過去日付エントリは自動削除）
+    既に used_posts.json にある idx は重複防止のため自動スキップ（queueから削除）。
     None を返した場合は通常のランダム選択にfallback。"""
     if not os.path.exists(PRIORITY_FILE):
         return None
@@ -192,6 +214,16 @@ def _consume_priority(time_slot):
     if not queue:
         return None
 
+    # used_posts.json を読み込み、重複idxを検出
+    used = {}
+    if os.path.exists(USED_FILE):
+        try:
+            with open(USED_FILE, "r", encoding="utf-8") as f:
+                used = json.load(f)
+        except Exception:
+            pass
+    used_indices = set(used.get(time_slot, []))
+
     today = datetime.now().strftime("%Y-%m-%d")
     chosen_idx = None
     new_queue = []
@@ -202,6 +234,10 @@ def _consume_priority(time_slot):
             d = entry.get("date")
             i = entry.get("idx")
             if d == today and chosen_idx is None:
+                # 既に投稿済みidxならスキップ（重複防止）
+                if i in used_indices:
+                    print(f"[priority] idx={i} は既にused_posts.jsonにある → 重複防止のためスキップ、通常選択にfallback")
+                    continue
                 chosen_idx = i
                 continue   # 今日消費 → queueから外す
             elif d and d < today:
@@ -213,6 +249,9 @@ def _consume_priority(time_slot):
         else:
             # 旧FIFO形式（int idx）
             if chosen_idx is None:
+                if entry in used_indices:
+                    print(f"[priority] idx={entry} は既にused_posts.jsonにある → 重複防止のためスキップ")
+                    continue
                 chosen_idx = entry
                 continue
             new_queue.append(entry)
@@ -246,7 +285,15 @@ def select_post(time_slot):
 
     used_indices = used.get(time_slot, [])
     all_posts = posts[time_slot]
-    available = [i for i in range(len(all_posts)) if i not in used_indices]
+    # 将来予約されているidxはランダム選択から除外（priority idxを勝手に消費しない）
+    priority_reserved = _get_priority_indices(time_slot)
+    available = [i for i in range(len(all_posts))
+                 if i not in used_indices and i not in priority_reserved]
+    if not available:
+        # 予約除外で空になる場合は予約も含めて再選択（壊滅回避）
+        available = [i for i in range(len(all_posts)) if i not in used_indices]
+        if available:
+            print(f"[warn] {time_slot} priority予約以外に未使用が無いため、予約idxも候補に含めます")
     if not available:
         raise RuntimeError(
             f"[ネタ枯渇] {time_slot} の未使用ネタが0本です。Macで regen.sh を手動実行して "
