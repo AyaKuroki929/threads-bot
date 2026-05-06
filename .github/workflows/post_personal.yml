@@ -5,6 +5,9 @@ on:
     # JST 7:30 = UTC 22:30 (前日)
     - cron: '30 22 * * *'
     - cron: '0 23 * * *'
+    # JST 12:00 = UTC 3:00
+    - cron: '0 3 * * *'
+    - cron: '30 3 * * *'
     # JST 22:00 = UTC 13:00
     - cron: '0 13 * * *'
     - cron: '30 13 * * *'
@@ -16,6 +19,7 @@ on:
         type: choice
         options:
           - morning
+          - noon
           - evening
       dry_run:
         description: 'dry-run（実際には投稿しない）'
@@ -23,7 +27,7 @@ on:
         default: true
 
 concurrency:
-  group: threads-personal-${{ (contains(github.event.schedule, ' 22 ') || contains(github.event.schedule, ' 23 ')) && 'morning' || contains(github.event.schedule, ' 13 ') && 'evening' || github.event.inputs.slot || 'manual' }}
+  group: threads-personal-${{ (contains(github.event.schedule, ' 22 ') || contains(github.event.schedule, ' 23 ')) && 'morning' || contains(github.event.schedule, ' 3 ') && 'noon' || contains(github.event.schedule, ' 13 ') && 'evening' || github.event.inputs.slot || 'manual' }}
   cancel-in-progress: false
 
 jobs:
@@ -42,6 +46,7 @@ jobs:
       LAST_RUN_FILE: last_run_personal.json
       PRIORITY_FILE: priority_posts_personal.json
       COMMENT_TARGETS_FILE: comment_targets_personal.json
+      THREADS_TOPIC: ビジネス＆起業家
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
     steps:
       - name: Checkout
@@ -56,6 +61,7 @@ jobs:
           else
             case "${{ github.event.schedule }}" in
               "30 22 * * *"|"0 23 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
+              "0 3 * * *"|"30 3 * * *")   echo "name=noon"    >> $GITHUB_OUTPUT ;;
               "0 13 * * *"|"30 13 * * *") echo "name=evening" >> $GITHUB_OUTPUT ;;
             esac
             echo "dry=false" >> $GITHUB_OUTPUT

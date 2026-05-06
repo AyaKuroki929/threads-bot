@@ -22,6 +22,7 @@ PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_po
 USERNAME      = os.environ.get("THREADS_USERNAME", "bemolle_diet")
 COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets_personal.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+TOPIC         = os.environ.get("THREADS_TOPIC", "")
 
 # 投稿失敗時の終了コード
 EXIT_COOKIE_EXPIRED = 3   # Threadsログイン切れ → workflow側で専用Issue作成
@@ -378,6 +379,48 @@ def _click_submit(page):
             break
 
 
+def _set_topic(page, topic: str):
+    """コンポーザーモーダル内でトピックを設定する。失敗しても投稿は続行。"""
+    if not topic:
+        return
+    try:
+        dialog = page.locator('div[role="dialog"]').last
+        topic_btn = None
+        for sel in [
+            '[aria-label*="トピック"]',
+            '[aria-label*="Topic"]',
+            '[aria-label*="topic"]',
+            'div[role="button"]:has-text("トピックを追加")',
+            'div[role="button"]:has-text("Add topic")',
+        ]:
+            loc = dialog.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                topic_btn = loc
+                break
+        if topic_btn is None:
+            print(f"[topic] ボタンが見つかりません。トピックなしで続行。")
+            return
+        topic_btn.click()
+        page.wait_for_timeout(1500)
+        # 検索ボックスにトピック名を入力
+        search_box = page.locator('input[placeholder*="トピック"], input[placeholder*="topic"], input[placeholder*="Topic"]').first
+        if search_box.count() > 0:
+            search_box.fill(topic)
+            page.wait_for_timeout(1000)
+            # 候補の最初の項目を選択
+            candidate = page.locator('div[role="option"], div[role="listitem"]').first
+            if candidate.count() > 0:
+                candidate.click()
+                page.wait_for_timeout(800)
+                print(f"[topic] '{topic}' を設定しました。")
+            else:
+                print(f"[topic] 候補が見つかりません。トピックなしで続行。")
+        else:
+            print(f"[topic] 検索ボックスが見つかりません。トピックなしで続行。")
+    except Exception as e:
+        print(f"[topic] 設定失敗（続行）: {e}")
+
+
 def _open_composer(page):
     """ホームから新規投稿モーダルを開く。"""
     page.goto("https://www.threads.com", wait_until="domcontentloaded")
@@ -495,6 +538,7 @@ def post_to_threads(texts, debug=False, dry_run=False):
         try:
             print(f"[1/{len(texts)}] 1部目を新規投稿")
             _open_composer(page)
+            _set_topic(page, TOPIC)
             _input_text(page, texts[0])
             if dry_run:
                 print("[dry_run] 1部目の入力まで完了。Postは押さずに終了。")
