@@ -40,7 +40,8 @@ PROMPT='あなたは黒木彩さん（@aya_kuroki_0929）の個人Threads投稿�
 1. /Users/ayakuroki/threads_bot/posts_personal.json と /Users/ayakuroki/threads_bot/used_posts_personal.json を読む
 2. morning と evening の未使用本数を計算（noon は使用しないため無視）
 3. 未使用が**10本以下**のスロットには、新たに**10本**を生成してposts_personal.jsonに追記
-   - morning / evening ともに文字列の単発投稿（noonは生成しない）
+   - morning / evening ともに2要素の配列（2部ツリー）。noonは生成しない
+   - 1部目：フック＋本文（100〜200文字）、2部目：気づき・結果・問いかけ（80〜150文字）
    - GENERATE_RULES_personal.mdの3本柱の配分（やってみた4:あるある3:裏側公開2:うらかたさん1）を守る
    - 全体の30〜40%の末尾にエンゲージメント誘発フレーズを入れる
    - 既存posts_personal.jsonの全投稿と訴求軸が被らないよう注意
