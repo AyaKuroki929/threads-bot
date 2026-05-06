@@ -81,6 +81,9 @@ jobs:
 
       - name: Post to Threads (personal)
         id: post
+        env:
+          # 手動実行時は時間帯チェックをスキップ（テスト・補完用）
+          SKIP_TIME_GUARD: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: |
           set +e
           if [ "${{ steps.params.outputs.dry }}" = "true" ]; then
