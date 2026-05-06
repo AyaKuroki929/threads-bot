@@ -533,7 +533,7 @@ def _send_line_notify(slot: str, texts: list):
             with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
                 targets = json.load(f)
             lines = []
-            for i, t in enumerate(targets[:3], 1):
+            for i, t in enumerate(targets, 1):
                 lines.append(f"{i}. @{t['account']}\n   ↳ {t['comment']}")
             if lines:
                 targets_msg = "\n\n──────────\n💬 コメントしに行く（5分でOK）\n\n" + "\n\n".join(lines)
