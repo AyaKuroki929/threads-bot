@@ -3,12 +3,18 @@ name: Threads Auto Post
 on:
   schedule:
     # 各スロット2本（0分・30分）で冗長化。重複は last_run.json で防止。
-    # JST 7:00 = UTC 22:00 (前日)
+    # JST 7:00  = UTC 22:00 (前日)
     - cron: '0 22 * * *'
     - cron: '30 22 * * *'
+    # JST 9:00  = UTC 0:00
+    - cron: '0 0 * * *'
+    - cron: '30 0 * * *'
     # JST 12:00 = UTC 3:00
     - cron: '0 3 * * *'
     - cron: '30 3 * * *'
+    # JST 18:00 = UTC 9:00
+    - cron: '0 9 * * *'
+    - cron: '30 9 * * *'
     # JST 21:00 = UTC 12:00
     - cron: '0 12 * * *'
     - cron: '30 12 * * *'
@@ -20,7 +26,9 @@ on:
         type: choice
         options:
           - morning
+          - morning2
           - noon
+          - evening2
           - evening
       dry_run:
         description: 'dry-run（実際には投稿しない）'
@@ -30,7 +38,7 @@ on:
 concurrency:
   # 同じslotのジョブは1つずつしか実行しない（ツリー投稿中に次の発火が走って重複する事故を完全に潰す）
   # cancel-in-progress: false にして、走行中ジョブはキャンセルせず、後続を待たせる
-  group: threads-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (contains(github.event.schedule, ' 3 ') && 'noon') || (contains(github.event.schedule, ' 12 ') && 'evening') || github.event.inputs.slot || 'manual' }}
+  group: threads-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (contains(github.event.schedule, ' 0 ') && 'morning2') || (contains(github.event.schedule, ' 3 ') && 'noon') || (contains(github.event.schedule, ' 9 ') && 'evening2') || (contains(github.event.schedule, ' 12 ') && 'evening') || github.event.inputs.slot || 'manual' }}
   cancel-in-progress: false
 
 jobs:
@@ -73,9 +81,11 @@ jobs:
           else
             # cron schedule の "分 時" → slot を判定。重複は last_run.json で防止。
             case "${{ github.event.schedule }}" in
-              "0 22 * * *"|"30 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
-              "0 3 * * *"|"30 3 * * *")  echo "name=noon"    >> $GITHUB_OUTPUT ;;
-              "0 12 * * *"|"30 12 * * *") echo "name=evening" >> $GITHUB_OUTPUT ;;
+              "0 22 * * *"|"30 22 * * *") echo "name=morning"  >> $GITHUB_OUTPUT ;;
+              "0 0 * * *"|"30 0 * * *")   echo "name=morning2" >> $GITHUB_OUTPUT ;;
+              "0 3 * * *"|"30 3 * * *")   echo "name=noon"     >> $GITHUB_OUTPUT ;;
+              "0 9 * * *"|"30 9 * * *")   echo "name=evening2" >> $GITHUB_OUTPUT ;;
+              "0 12 * * *"|"30 12 * * *") echo "name=evening"  >> $GITHUB_OUTPUT ;;
             esac
             echo "dry=false" >> $GITHUB_OUTPUT
           fi

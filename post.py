@@ -87,9 +87,11 @@ def already_posted_today(time_slot):
         return False
 
     valid_hours = {
-        "morning": (5, 11),
-        "noon":    (11, 17),
-        "evening": (17, 24),
+        "morning":  (5, 11),
+        "morning2": (8, 12),
+        "noon":     (11, 17),
+        "evening2": (16, 20),
+        "evening":  (17, 24),
     }
     h_start, h_end = valid_hours.get(time_slot, (0, 24))
     return h_start <= last_dt.hour < h_end
@@ -97,9 +99,11 @@ def already_posted_today(time_slot):
 
 # slotごとの「現在時刻が投稿していい時間帯か」判定用（同じテーブル）
 SLOT_VALID_HOURS = {
-    "morning": (5, 11),
-    "noon":    (11, 17),
-    "evening": (17, 24),
+    "morning":  (5, 11),
+    "morning2": (8, 12),
+    "noon":     (11, 17),
+    "evening2": (16, 20),
+    "evening":  (17, 24),
 }
 
 
@@ -134,8 +138,10 @@ def schedule_next_wake(time_slot):
         return
 
     next_wake_times = {
-        "morning": ["11:58:00", "12:06:00"],
-        "noon": ["20:58:00", "21:06:00"],
+        "morning":  ["08:58:00", "09:06:00"],
+        "morning2": ["11:58:00", "12:06:00"],
+        "noon":     ["17:58:00", "18:06:00"],
+        "evening2": ["20:58:00", "21:06:00"],
     }
     if time_slot not in next_wake_times:
         return
@@ -568,7 +574,7 @@ def _send_line_notify(slot: str, texts: list):
     """投稿完了後にLINEへ通知。LINE_CHANNEL_ACCESS_TOKEN が未設定なら何もしない。"""
     if not LINE_TOKEN:
         return
-    slot_label = {"morning": "朝 7:30", "noon": "昼 12:00", "evening": "夜 22:00"}.get(slot, slot)
+    slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夕 18:00", "evening": "夜 21:00"}.get(slot, slot)
     content = "\n\n↩️ ツリー返信\n".join(texts) if len(texts) > 1 else texts[0]
 
     targets_msg = ""
@@ -600,8 +606,8 @@ def _send_line_notify(slot: str, texts: list):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ["morning", "noon", "evening"]:
-        print("使い方: python3 post.py morning|noon|evening [--dry-run]")
+    if len(sys.argv) < 2 or sys.argv[1] not in ["morning", "morning2", "noon", "evening2", "evening"]:
+        print("使い方: python3 post.py morning|morning2|noon|evening2|evening [--dry-run]")
         sys.exit(1)
 
     time_slot = sys.argv[1]
