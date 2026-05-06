@@ -6,12 +6,12 @@ name: Threads Personal Auto Post
 #
 # on:
 #   schedule:
-#     # JST 7:00 = UTC 22:00 (前日)
-#     - cron: '0 22 * * *'
+#     # JST 7:30 = UTC 22:30 (前日)
 #     - cron: '30 22 * * *'
-#     # JST 21:00 = UTC 12:00
-#     - cron: '0 12 * * *'
-#     - cron: '30 12 * * *'
+#     - cron: '0 23 * * *'
+#     # JST 22:00 = UTC 13:00
+#     - cron: '0 13 * * *'
+#     - cron: '30 13 * * *'
 
 on:
   workflow_dispatch:
@@ -47,6 +47,8 @@ jobs:
       USED_FILE: used_posts_personal.json
       LAST_RUN_FILE: last_run_personal.json
       PRIORITY_FILE: priority_posts_personal.json
+      COMMENT_TARGETS_FILE: comment_targets_personal.json
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

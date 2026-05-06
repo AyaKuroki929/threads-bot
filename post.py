@@ -20,6 +20,8 @@ USED_FILE     = os.environ.get("USED_FILE",     os.path.join(_BASE, "used_posts.
 LAST_RUN_FILE = os.environ.get("LAST_RUN_FILE", os.path.join(_BASE, "last_run.json"))
 PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_posts.json"))
 USERNAME      = os.environ.get("THREADS_USERNAME", "bemolle_diet")
+COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets_personal.json"))
+LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 # 投稿失敗時の終了コード
 EXIT_COOKIE_EXPIRED = 3   # Threadsログイン切れ → workflow側で専用Issue作成
@@ -518,6 +520,41 @@ def post_to_threads(texts, debug=False, dry_run=False):
             browser.close()
 
 
+def _send_line_notify(slot: str, texts: list):
+    """投稿完了後にLINEへ通知。LINE_CHANNEL_ACCESS_TOKEN が未設定なら何もしない。"""
+    if not LINE_TOKEN:
+        return
+    slot_label = {"morning": "朝 7:30", "noon": "昼 12:00", "evening": "夜 22:00"}.get(slot, slot)
+    content = "\n\n↩️ ツリー返信\n".join(texts) if len(texts) > 1 else texts[0]
+
+    targets_msg = ""
+    if os.path.exists(COMMENT_TARGETS_FILE):
+        try:
+            with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+                targets = json.load(f)
+            lines = []
+            for i, t in enumerate(targets[:3], 1):
+                lines.append(f"{i}. @{t['account']}\n   ↳ {t['comment']}")
+            if lines:
+                targets_msg = "\n\n──────────\n💬 コメントしに行く（5分でOK）\n\n" + "\n\n".join(lines)
+        except Exception:
+            pass
+
+    msg = f"📱 Threads投稿完了（{slot_label}）\n\n{content}{targets_msg}"
+    try:
+        body = {"messages": [{"type": "text", "text": msg}]}
+        req = urllib.request.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as r:
+            print(f"[line] 通知送信完了 status={r.status}")
+    except Exception as e:
+        print(f"[line] 通知送信失敗（続行）: {e}")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ["morning", "noon", "evening"]:
         print("使い方: python3 post.py morning|noon|evening [--dry-run]")
@@ -589,6 +626,7 @@ def main():
         commit_used(time_slot, idx)
         record_success(time_slot)
         schedule_next_wake(time_slot)
+        _send_line_notify(time_slot, texts)
 
 
 if __name__ == "__main__":
