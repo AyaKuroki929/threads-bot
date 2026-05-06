@@ -9,9 +9,6 @@ name: Threads Personal Auto Post
 #     # JST 7:00 = UTC 22:00 (前日)
 #     - cron: '0 22 * * *'
 #     - cron: '30 22 * * *'
-#     # JST 12:00 = UTC 3:00
-#     - cron: '0 3 * * *'
-#     - cron: '30 3 * * *'
 #     # JST 21:00 = UTC 12:00
 #     - cron: '0 12 * * *'
 #     - cron: '30 12 * * *'
@@ -25,7 +22,6 @@ on:
         type: choice
         options:
           - morning
-          - noon
           - evening
       dry_run:
         description: 'dry-run（実際には投稿しない）'
