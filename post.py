@@ -67,7 +67,7 @@ def _verify_account(page):
             return
         # ナビで見つからない場合は edit_profile にアクセスして URL で判断
         page.goto(f"https://www.threads.com/@{USERNAME}/edit_profile", wait_until="domcontentloaded", timeout=20000)
-        if f"/{USERNAME}" in page.url and "login" not in page.url:
+        if f"/@{USERNAME}" in page.url and "login" not in page.url:
             print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit_profile）")
             return
         # ここまで来たら別アカウントでログインしている
