@@ -13,12 +13,13 @@ import urllib.error
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
-POSTS_FILE = os.path.join(os.path.dirname(__file__), "posts.json")
-SESSION_FILE = os.path.join(os.path.dirname(__file__), "session.json")
-USED_FILE = os.path.join(os.path.dirname(__file__), "used_posts.json")
-LAST_RUN_FILE = os.path.join(os.path.dirname(__file__), "last_run.json")
-PRIORITY_FILE = os.path.join(os.path.dirname(__file__), "priority_posts.json")
-USERNAME = "bemolle_diet"
+_BASE = os.path.dirname(__file__)
+POSTS_FILE    = os.environ.get("POSTS_FILE",    os.path.join(_BASE, "posts.json"))
+SESSION_FILE  = os.environ.get("SESSION_FILE",  os.path.join(_BASE, "session.json"))
+USED_FILE     = os.environ.get("USED_FILE",     os.path.join(_BASE, "used_posts.json"))
+LAST_RUN_FILE = os.environ.get("LAST_RUN_FILE", os.path.join(_BASE, "last_run.json"))
+PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_posts.json"))
+USERNAME      = os.environ.get("THREADS_USERNAME", "bemolle_diet")
 
 # 投稿失敗時の終了コード
 EXIT_COOKIE_EXPIRED = 3   # Threadsログイン切れ → workflow側で専用Issue作成
