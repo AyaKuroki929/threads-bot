@@ -20,7 +20,7 @@ USED_FILE     = os.environ.get("USED_FILE",     os.path.join(_BASE, "used_posts.
 LAST_RUN_FILE = os.environ.get("LAST_RUN_FILE", os.path.join(_BASE, "last_run.json"))
 PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_posts.json"))
 USERNAME      = os.environ.get("THREADS_USERNAME", "bemolle_diet")
-COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets_personal.json"))
+COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 TOPIC         = os.environ.get("THREADS_TOPIC", "")
 
@@ -54,6 +54,34 @@ def _detect_login_required(page):
             raise
         except Exception:
             continue
+
+
+def _verify_account(page):
+    """ログイン中アカウントが USERNAME と一致するか確認。不一致なら即 SystemExit。
+    投稿前に必ず呼ぶ。誤アカウントへの投稿を防ぐ最終防波堤。"""
+    try:
+        # ナビゲーションに自分のプロフィールリンクがあるか確認
+        link = page.locator(f'a[href="/@{USERNAME}"]').first
+        if link.count() > 0:
+            print(f"[account] ✅ @{USERNAME} でログイン確認済み")
+            return
+        # ナビで見つからない場合は edit_profile にアクセスして URL で判断
+        page.goto(f"https://www.threads.com/@{USERNAME}/edit_profile", wait_until="domcontentloaded", timeout=20000)
+        if f"/{USERNAME}" in page.url and "login" not in page.url:
+            print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit_profile）")
+            return
+        # ここまで来たら別アカウントでログインしている
+        actual_url = page.url
+        print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / 実際のURL: {actual_url}")
+        print(f"[account] THREADS_SESSION[_PERSONAL] シークレットが正しいアカウントのセッションか確認してください。")
+        sys.exit(4)
+    except SystemExit:
+        raise
+    except CookieExpiredError:
+        raise
+    except Exception as e:
+        # 確認できなかった場合は警告のみ（投稿は続行）
+        print(f"[account] ⚠️ アカウント確認スキップ（確認不能）: {e}")
 
 
 def already_posted_today(time_slot):
@@ -542,8 +570,9 @@ def post_to_threads(texts, debug=False, dry_run=False):
         page = context.new_page()
 
         try:
-            print(f"[1/{len(texts)}] 1部目を新規投稿")
-            _open_composer(page)
+            print(f"[account] 投稿前アカウント確認: USERNAME={USERNAME}, SESSION_FILE={SESSION_FILE}")
+            _open_composer(page)   # ここでログイン済みか確認 + ホームを開く
+            _verify_account(page)  # ログイン中アカウントが USERNAME と一致するか確認
             _set_topic(page, TOPIC)
             _input_text(page, texts[0])
             if dry_run:

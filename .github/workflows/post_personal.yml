@@ -101,6 +101,46 @@ jobs:
           echo "exit_code=$ec" >> $GITHUB_OUTPUT
           exit $ec
 
+      - name: Create Account-Mismatch alert (only on exit code 4)
+        if: failure() && steps.post.outputs.exit_code == '4'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const today = new Date().toLocaleDateString('ja-JP', {timeZone: 'Asia/Tokyo'})
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'account-mismatch-personal',
+              per_page: 5
+            })
+            if (existing.data.length > 0) {
+              console.log('account-mismatch-personal Issue 既存のためskip:', existing.data[0].html_url)
+              return
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 個人Threads アカウント不一致 - セッション要確認 (${today})`,
+              body: [
+                `個人アカウント(@aya_kuroki_0929)の自動投稿が **アカウント不一致** で停止しました（${today}）。`,
+                ``,
+                `THREADS_SESSION_PERSONAL シークレットが @aya_kuroki_0929 のセッションではない可能性があります。`,
+                ``,
+                `## やること（Macのターミナルで）`,
+                `\`\`\`bash`,
+                `# Chromeで @aya_kuroki_0929 にログインした状態で実行`,
+                `cd ~/threads_bot`,
+                `python3 extract_cookies2.py`,
+                `cp session.json session_personal.json`,
+                `gh secret set THREADS_SESSION_PERSONAL < session_personal.json`,
+                `\`\`\``,
+                ``,
+                `対応完了したらこのIssueをcloseしてください。`,
+              ].join('\n'),
+              labels: ['account-mismatch-personal']
+            })
+
       - name: Create Cookie-Expired alert (only on exit code 3)
         if: failure() && steps.post.outputs.exit_code == '3'
         uses: actions/github-script@v7
