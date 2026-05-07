@@ -442,62 +442,71 @@ def _set_topic(page, topic: str):
         return
     try:
         dialog = page.locator('div[role="dialog"]').last
-        topic_btn = None
-        for sel in [
-            '[aria-label*="トピック"]',
-            '[aria-label*="Topic"]',
-            '[aria-label*="topic"]',
-            'div[role="button"]:has-text("トピックを追加")',
-            'div[role="button"]:has-text("Add topic")',
-            '[role="button"]:has-text("トピック")',
-            '[role="button"]:has-text("話題")',
-            'button:has-text("トピック")',
-            'span:has-text("トピックを追加")',
-            '[data-testid*="topic"]',
-            '[data-testid*="Topic"]',
-        ]:
-            loc = dialog.locator(sel).first
-            if loc.count() > 0 and loc.is_visible():
-                topic_btn = loc
-                break
-        # dialogの外も試す
-        if topic_btn is None:
+
+        def _find_topic_btn():
             for sel in [
                 '[aria-label*="トピック"]',
-                '[role="button"]:has-text("トピックを追加")',
+                '[aria-label*="Topic"]',
+                '[aria-label*="topic"]',
+                'div[role="button"]:has-text("トピックを追加")',
+                'div[role="button"]:has-text("Add topic")',
                 '[role="button"]:has-text("トピック")',
+                'button:has-text("トピック")',
+                'span:has-text("トピックを追加")',
+                '[data-testid*="topic"]',
             ]:
-                loc = page.locator(sel).first
+                loc = dialog.locator(sel).first
                 if loc.count() > 0 and loc.is_visible():
-                    topic_btn = loc
-                    break
+                    return loc
+            return None
+
+        topic_btn = _find_topic_btn()
+
+        # 直接見つからない場合は「もっと見る」を展開してから再探索
         if topic_btn is None:
-            # デバッグ用: dialogのボタンテキスト一覧を出力
+            for more_sel in [
+                'div[role="button"]:has-text("もっと見る")',
+                'button:has-text("もっと見る")',
+                '[role="button"]:has-text("More")',
+                'div[role="button"]:has-text("More")',
+            ]:
+                more_btn = dialog.locator(more_sel).first
+                if more_btn.count() > 0 and more_btn.is_visible():
+                    print("[topic] 「もっと見る」を展開します")
+                    more_btn.click()
+                    page.wait_for_timeout(1000)
+                    break
+            topic_btn = _find_topic_btn()
+
+        if topic_btn is None:
             try:
                 btns = dialog.locator('[role="button"]').all()
                 btn_texts = [b.text_content()[:30] for b in btns if b.is_visible()]
-                print(f"[topic] ボタンが見つかりません。dialog内のbutton一覧: {btn_texts[:10]}")
+                print(f"[topic] ボタンが見つかりません。dialog内のbutton一覧: {btn_texts[:15]}")
             except Exception:
                 pass
-            print(f"[topic] トピックなしで続行。")
+            print("[topic] トピックなしで続行。")
             return
+
         topic_btn.click()
         page.wait_for_timeout(1500)
+
         # 検索ボックスにトピック名を入力
-        search_box = page.locator('input[placeholder*="トピック"], input[placeholder*="topic"], input[placeholder*="Topic"]').first
+        search_box = page.locator(
+            'input[placeholder*="トピック"], input[placeholder*="topic"], input[placeholder*="Topic"]'
+        ).first
         if search_box.count() > 0:
             search_box.fill(topic)
-            page.wait_for_timeout(1000)
-            # 候補の最初の項目を選択
+            page.wait_for_timeout(1200)
             candidate = page.locator('div[role="option"], div[role="listitem"]').first
             if candidate.count() > 0:
                 candidate.click()
                 page.wait_for_timeout(800)
                 print(f"[topic] '{topic}' を設定しました。")
             else:
-                print(f"[topic] 候補が見つかりません。トピックなしで続行。")
+                print("[topic] 候補が見つかりません。トピックなしで続行。")
         else:
-            print(f"[topic] 検索ボックスが見つかりません。トピックなしで続行。")
+            print("[topic] 検索ボックスが見つかりません。トピックなしで続行。")
     except Exception as e:
         print(f"[topic] 設定失敗（続行）: {e}")
 
