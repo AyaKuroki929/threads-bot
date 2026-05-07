@@ -50,6 +50,7 @@ refresh_account() {
     local secret="$3"       # THREADS_SESSION or THREADS_SESSION_PERSONAL
     local session_file="$4" # session.json or session_personal.json
     local min_cookies="$5"  # minimum expected cookie count
+    local expected_uid="$6" # 期待するds_user_id（アカウント取り違え防止）
 
     log "--- [$account] 更新開始 (Profile $profile) ---"
 
@@ -68,6 +69,22 @@ refresh_account() {
     if [ "$session_file" != "session.json" ]; then
         cp session.json "$session_file"
     fi
+
+    # ユーザーIDチェック（アカウント取り違え防止）
+    actual_uid=$(/usr/bin/python3 -c "
+import json
+cookies = json.load(open('$session_file'))['cookies']
+uid = next((c['value'] for c in cookies if c['name'] == 'ds_user_id' and 'threads' in c.get('domain','')), '')
+print(uid)
+" 2>/dev/null || echo "")
+    if [ "$actual_uid" != "$expected_uid" ]; then
+        fail_with_issue \
+            "Cookie自動更新失敗[$account] - アカウント取り違え検出" \
+            "@$account: 期待UID=${expected_uid}, 実際のUID=${actual_uid}。Chrome Profile $profile に別アカウントがログインしています。確認してください。"
+        log "CRITICAL: アカウント取り違え。Secretは更新しません。"
+        return 1
+    fi
+    log "UID確認OK: $actual_uid = @$account"
 
     # 抽出件数チェック
     cookie_count=$(/usr/bin/python3 -c "import json; print(len(json.load(open('$session_file'))['cookies']))" 2>/dev/null || echo "0")
@@ -100,11 +117,11 @@ refresh_account() {
     return 0
 }
 
-# bemolle_diet: Profile 3, min 5 cookies
-refresh_account "bemolle_diet" "3" "THREADS_SESSION" "session.json" "5"
+# bemolle_diet: Profile 3, min 5 cookies, UID=73523451930
+refresh_account "bemolle_diet" "3" "THREADS_SESSION" "session.json" "5" "73523451930"
 
-# aya_kuroki_0929: Profile 1, min 10 cookies
-refresh_account "aya_kuroki_0929" "1" "THREADS_SESSION_PERSONAL" "session_personal.json" "10"
+# aya_kuroki_0929: Profile 1, min 10 cookies, UID=63084943935
+refresh_account "aya_kuroki_0929" "1" "THREADS_SESSION_PERSONAL" "session_personal.json" "10" "63084943935"
 
 # 最終実行時刻を記録
 date +%s > "$LAST_RUN_FILE"
