@@ -107,6 +107,13 @@ jobs:
           echo "投稿まで ${delay}秒 待機（ランダム遅延）"
           sleep $delay
 
+      - name: Pull latest state (重複投稿防止)
+        if: steps.slot.outputs.dry != 'true'
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot"
+          git pull --rebase origin main 2>&1 || true
+
       - name: Post to Threads
         id: post
         run: |
@@ -227,7 +234,7 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
-          git add used_posts.json last_run.json commented_posts.json comment_targets.json 2>/dev/null || true
+          git add used_posts.json last_run.json commented_posts.json comment_targets.json api_usage_log.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no state changes"
           else

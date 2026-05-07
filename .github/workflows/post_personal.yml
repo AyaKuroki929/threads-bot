@@ -50,6 +50,8 @@ jobs:
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
       AUTO_COMMENT: '1'
       COMMENTED_FILE: commented_posts_personal.json
+      COMMENT_MIN_POOL: '5'
+      COMMENT_KEYWORDS_FILE: comment_search_keywords_personal.json
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Checkout
@@ -94,6 +96,13 @@ jobs:
           delay=$((RANDOM % 900))
           echo "投稿まで ${delay}秒 待機（ランダム遅延）"
           sleep $delay
+
+      - name: Pull latest state (重複投稿防止)
+        if: steps.params.outputs.dry != 'true'
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot-personal"
+          git pull --rebase origin main 2>&1 || true
 
       - name: Post to Threads (personal)
         id: post
@@ -218,10 +227,11 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
-          git add used_posts_personal.json last_run_personal.json commented_posts_personal.json 2>/dev/null || true
+          git add used_posts_personal.json last_run_personal.json commented_posts_personal.json comment_targets_personal.json api_usage_log.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no state changes"
           else
             git commit -m "state_personal: ${{ steps.params.outputs.name }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            git pull --rebase origin HEAD
             git push
           fi

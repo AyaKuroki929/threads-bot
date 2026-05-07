@@ -1094,6 +1094,22 @@ def _send_line_notify(slot: str, texts: list, comment_results: list = None):
         print(f"[line] 通知送信失敗（続行）: {e}")
 
 
+def _git_pull_latest():
+    """最新のlast_run.jsonを取得するためgit pullを実行。失敗しても続行。"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "pull", "--rebase", "origin", "main"],
+            capture_output=True, timeout=30, cwd=_BASE
+        )
+        if result.returncode == 0:
+            print("[guard] git pull完了（最新state確認済み）")
+        else:
+            print(f"[guard] git pull失敗（続行）: {result.stderr.decode()[:100]}")
+    except Exception as e:
+        print(f"[guard] git pull例外（続行）: {e}")
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ["morning", "morning2", "noon", "evening2", "evening"]:
         print("使い方: python3 post.py morning|morning2|noon|evening2|evening [--dry-run]")
@@ -1101,6 +1117,10 @@ def main():
 
     time_slot = sys.argv[1]
     dry_run = "--dry-run" in sys.argv
+
+    # 投稿前に最新のlast_run.jsonを取得（cron遅延発火による重複投稿防止）
+    if not dry_run:
+        _git_pull_latest()
 
     if not dry_run and already_posted_today(time_slot):
         print(f"[skip] {time_slot} は本日すでに投稿済み。終了。")
