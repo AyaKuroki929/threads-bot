@@ -50,6 +50,7 @@ jobs:
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
       AUTO_COMMENT: '1'
       COMMENTED_FILE: commented_posts_personal.json
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,7 +78,7 @@ jobs:
       - name: Install Playwright + Chromium
         run: |
           pip install --upgrade pip
-          pip install playwright
+          pip install playwright anthropic
           python -m playwright install --with-deps chromium
 
       - name: Restore session_personal.json from secret

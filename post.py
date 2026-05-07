@@ -492,8 +492,8 @@ def _already_commented_today(commented, account):
     return any(f"/{account}/" in k and v.startswith(today) for k, v in commented.items())
 
 
-def _get_target_latest_post_url(page, account):
-    """@account の最新投稿URLを取得。取得できなければ None。"""
+def _get_target_latest_post(page, account):
+    """@account の最新投稿のURLとテキストを取得。取得できなければ (None, '') を返す。"""
     try:
         page.goto(f"https://www.threads.com/@{account}", wait_until="domcontentloaded", timeout=20000)
         page.wait_for_timeout(3000)
@@ -501,15 +501,78 @@ def _get_target_latest_post_url(page, account):
         if articles.count() == 0:
             articles = page.locator('article')
         if articles.count() == 0:
-            return None
-        time_link = articles.first.locator('time').first
+            return None, ""
+        first = articles.first
+        # URL取得
+        time_link = first.locator('time').first
         if time_link.count() == 0:
-            return None
+            return None, ""
         href = time_link.evaluate("el => el.closest('a')?.href")
-        return href if (href and "/post/" in href) else None
+        if not href or "/post/" not in href:
+            return None, ""
+        # テキスト取得（投稿本文を抜き出す）
+        post_text = ""
+        try:
+            # span / div 内のテキストを収集（time要素を除く）
+            text_nodes = first.locator('span, div[dir="auto"]')
+            texts = []
+            for i in range(min(text_nodes.count(), 20)):
+                t = text_nodes.nth(i).inner_text().strip()
+                if t and len(t) > 5 and t not in texts:
+                    texts.append(t)
+            post_text = " ".join(texts[:6])[:400]
+        except Exception:
+            pass
+        return href, post_text
     except Exception as e:
         print(f"[comment] @{account} 最新投稿取得失敗: {e}")
-        return None
+        return None, ""
+
+
+_FALLBACK_COMMENTS = [
+    "参考になります❤️",
+    "この視点、なかったです。ありがとうございます。",
+    "腑に落ちました。",
+    "これ、まさに感じてたことです。",
+    "保存しました。",
+]
+
+
+def _generate_comment(post_text: str, account_note: str) -> str:
+    """投稿内容に合ったコメントをClaude APIで生成。APIキー未設定はフォールバック。"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key or not post_text.strip():
+        return random.choice(_FALLBACK_COMMENTS)
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = f"""あなたは美容サロンオーナー兼AI自動化実践者（@aya_kuroki_0929）です。
+以下の投稿に対して、自然で短い共感コメントを1つ生成してください。
+
+【投稿者の特徴】
+{account_note}
+
+【投稿内容】
+{post_text[:400]}
+
+【ルール】
+- 15〜45文字程度
+- 敬語ベースだが堅すぎない自然な口調
+- 投稿内容に具体的に反応する（「参考になります」だけでなく、何が参考になったかが感じられるもの）
+- ハッシュタグなし・絵文字は1個まで（なくてもOK）
+- サロンオーナー目線で書く
+- 宣伝・自己PRにならない
+
+コメント本文のみを出力してください。"""
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        print(f"[comment] コメント生成失敗 → フォールバック: {e}")
+        return random.choice(_FALLBACK_COMMENTS)
 
 
 def _post_comment_to_url(page, post_url, comment_text):
@@ -562,8 +625,7 @@ def _do_auto_comments(page, dry_run=False):
 
     for t in targets:
         account = t.get("account", "")
-        comment_text = t.get("comment", "")
-        if not account or not comment_text:
+        if not account:
             continue
         try:
             if _already_commented_today(commented, account):
@@ -571,7 +633,7 @@ def _do_auto_comments(page, dry_run=False):
                 results.append({"account": account, "status": "skipped"})
                 continue
 
-            post_url = _get_target_latest_post_url(page, account)
+            post_url, post_text = _get_target_latest_post(page, account)
             if not post_url:
                 print(f"[comment] @{account} 最新投稿取得できず → スキップ")
                 results.append({"account": account, "status": "no_post"})
@@ -583,16 +645,21 @@ def _do_auto_comments(page, dry_run=False):
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
+            # 投稿内容に合ったコメントをClaude APIで生成
+            account_note = t.get("note", "")
+            comment_text = _generate_comment(post_text, account_note)
+            print(f"[comment] @{account} 生成コメント: 「{comment_text}」")
+
             if dry_run:
-                print(f"[comment][dry_run] @{account}: {post_url}\n  コメント: {comment_text}")
-                results.append({"account": account, "status": "dry_run", "url": post_url})
+                print(f"[comment][dry_run] @{account}: {post_url}")
+                results.append({"account": account, "status": "dry_run", "url": post_url, "comment": comment_text})
                 continue
 
             _post_comment_to_url(page, post_url, comment_text)
             commented[log_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             _save_commented(commented)
             print(f"[comment] @{account} コメント完了 ✅")
-            results.append({"account": account, "status": "ok", "url": post_url})
+            results.append({"account": account, "status": "ok", "url": post_url, "comment": comment_text})
 
             # アカウント間に少し待機（bot臭を消す）
             page.wait_for_timeout(random.randint(4000, 8000))
@@ -771,8 +838,12 @@ def _send_line_notify(slot: str, texts: list, comment_results: list = None):
         for r in comment_results:
             icon = status_icon.get(r.get("status", ""), "❓")
             account = r.get("account", "")
-            lines.append(f"{icon} @{account}")
-        targets_msg = "\n\n──────────\n🤖 自動コメント完了\n\n" + "\n".join(lines)
+            comment = r.get("comment", "")
+            line = f"{icon} @{account}"
+            if comment and r.get("status") in ("ok", "dry_run"):
+                line += f"\n   「{comment}」"
+            lines.append(line)
+        targets_msg = "\n\n──────────\n🤖 自動コメント完了\n\n" + "\n\n".join(lines)
     elif os.path.exists(COMMENT_TARGETS_FILE):
         # 手動コメント案を表示（AUTO_COMMENT=0 の場合）
         try:
