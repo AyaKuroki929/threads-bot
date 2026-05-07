@@ -66,28 +66,26 @@ def _verify_account(page):
     投稿前に必ず呼ぶ。誤アカウントへの投稿を防ぐ最終防波堤。"""
     try:
         # ホームにアクセスしてナビのプロフィールリンクで確認（最も確実な方法）
-        page.goto("https://www.threads.com", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)
+        # 自分のプロフィールページにアクセスし「プロフィールを編集」ボタンで確認
+        # このボタンは自分のプロフィールにしか表示されないため確実
+        page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(4000)
         _detect_login_required(page)
-        # href属性にユーザー名が含まれるリンクを広く探す（相対・絶対URL両対応）
-        link = page.locator(f'a[href*="@{USERNAME}"]').first
-        if link.count() > 0:
-            print(f"[account] ✅ @{USERNAME} でログイン確認済み")
-            return
-        # HTMLにユーザー名が含まれるか確認（ナビ構造変化への保険）
-        content = page.content()
-        if USERNAME in content:
-            print(f"[account] ✅ @{USERNAME} でログイン確認済み（HTML検出）")
-            return
-        # 別アカウントでログインしている（ログ用にどのアカウントか拾う）
-        all_links = page.locator('a[href*="/@"]')
-        actual_user = "不明"
-        for i in range(min(all_links.count(), 20)):
-            href = all_links.nth(i).get_attribute("href") or ""
-            if "/@" in href and "/post/" not in href and "/explore" not in href:
-                actual_user = href
-                break
-        print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / 検出: {actual_user}")
+        edit_selectors = [
+            '[aria-label*="プロフィールを編集"]',
+            '[aria-label*="Edit profile"]',
+            'a[href*="edit_profile"]',
+            'div[role="button"]:has-text("プロフィールを編集")',
+            'div[role="button"]:has-text("Edit profile")',
+        ]
+        for sel in edit_selectors:
+            loc = page.locator(sel).first
+            if loc.count() > 0:
+                print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit button）")
+                return
+        # 編集ボタンがない = 自分のプロフィールではない
+        actual_url = page.url
+        print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / URL: {actual_url}")
         print(f"[account] THREADS_SESSION シークレットが @{USERNAME} のセッションか確認してください。")
         sys.exit(4)
     except SystemExit:
