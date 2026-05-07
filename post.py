@@ -390,7 +390,12 @@ def _input_text(page, text):
     except Exception:
         # オーバーレイに遮られた場合は force click で突破
         textarea.click(force=True)
+    textarea.focus()  # force click後もキーボードフォーカスを確実に当てる
     page.wait_for_timeout(600)
+    # 既存テキストをクリア（前回の残留テキスト対策）
+    page.keyboard.press("Control+a")
+    page.keyboard.press("Delete")
+    page.wait_for_timeout(200)
     for i, line in enumerate(text.split("\n")):
         if i > 0:
             page.keyboard.press("Shift+Enter")
