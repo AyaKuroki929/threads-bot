@@ -23,6 +23,8 @@ USERNAME      = os.environ.get("THREADS_USERNAME", "bemolle_diet")
 COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets.json"))
 COMMENTED_FILE = os.environ.get("COMMENTED_FILE", os.path.join(_BASE, "commented_posts.json"))
 AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
+# 1回の実行でコメントするアカウント数の上限（0=全件）
+MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "0"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 TOPIC         = os.environ.get("THREADS_TOPIC", "")
 
@@ -622,6 +624,15 @@ def _do_auto_comments(page, dry_run=False):
 
     commented = _load_commented()
     results = []
+
+    # MAX_COMMENTS_PER_RUN が設定されている場合、今日未コメントのアカウントからランダムに選ぶ
+    if MAX_COMMENTS_PER_RUN > 0:
+        eligible = [t for t in targets if not _already_commented_today(commented, t.get("account", ""))]
+        if len(eligible) > MAX_COMMENTS_PER_RUN:
+            targets = random.sample(eligible, MAX_COMMENTS_PER_RUN)
+            print(f"[comment] {len(eligible)}件中{MAX_COMMENTS_PER_RUN}件をランダム選択")
+        else:
+            targets = eligible
 
     for t in targets:
         account = t.get("account", "")
