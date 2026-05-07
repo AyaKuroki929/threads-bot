@@ -25,6 +25,8 @@ COMMENTED_FILE = os.environ.get("COMMENTED_FILE", os.path.join(_BASE, "commented
 AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
 # 1回の実行でコメントするアカウント数の上限（0=全件）
 MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "0"))
+# 同じアカウントへの再コメント禁止期間（日数）。0=制限なし
+COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "0"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 TOPIC         = os.environ.get("THREADS_TOPIC", "")
 
@@ -488,10 +490,24 @@ def _save_commented(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def _already_commented_today(commented, account):
-    """今日そのアカウントにすでにコメント済みか（URL問わず）"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    return any(f"/{account}/" in k and v.startswith(today) for k, v in commented.items())
+def _already_commented_recently(commented, account):
+    """COMMENT_COOLDOWN_DAYS 以内にそのアカウントにコメント済みか。
+    COMMENT_COOLDOWN_DAYS=0 の場合は今日のみチェック（従来動作）。"""
+    if COMMENT_COOLDOWN_DAYS > 0:
+        cutoff = datetime.now() - timedelta(days=COMMENT_COOLDOWN_DAYS)
+        for k, v in commented.items():
+            if f"/{account}/" not in k:
+                continue
+            try:
+                commented_at = datetime.strptime(v[:10], "%Y-%m-%d")
+                if commented_at >= cutoff:
+                    return True
+            except ValueError:
+                pass
+        return False
+    else:
+        today = datetime.now().strftime("%Y-%m-%d")
+        return any(f"/{account}/" in k and v.startswith(today) for k, v in commented.items())
 
 
 def _get_target_latest_post(page, account):
@@ -627,7 +643,7 @@ def _do_auto_comments(page, dry_run=False):
 
     # MAX_COMMENTS_PER_RUN が設定されている場合、今日未コメントのアカウントからランダムに選ぶ
     if MAX_COMMENTS_PER_RUN > 0:
-        eligible = [t for t in targets if not _already_commented_today(commented, t.get("account", ""))]
+        eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
         if len(eligible) > MAX_COMMENTS_PER_RUN:
             targets = random.sample(eligible, MAX_COMMENTS_PER_RUN)
             print(f"[comment] {len(eligible)}件中{MAX_COMMENTS_PER_RUN}件をランダム選択")
@@ -639,8 +655,8 @@ def _do_auto_comments(page, dry_run=False):
         if not account:
             continue
         try:
-            if _already_commented_today(commented, account):
-                print(f"[comment] @{account} 本日コメント済み → スキップ")
+            if _already_commented_recently(commented, account):
+                print(f"[comment] @{account} クールダウン中 → スキップ")
                 results.append({"account": account, "status": "skipped"})
                 continue
 

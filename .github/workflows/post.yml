@@ -54,6 +54,7 @@ jobs:
       THREADS_TOPIC: 美容
       AUTO_COMMENT: '1'
       MAX_COMMENTS_PER_RUN: '3'
+      COMMENT_COOLDOWN_DAYS: '30'
       COMMENT_TARGETS_FILE: comment_targets.json
       COMMENTED_FILE: commented_posts.json
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
