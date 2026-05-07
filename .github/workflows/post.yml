@@ -238,6 +238,32 @@ jobs:
           if git diff --staged --quiet; then
             echo "no state changes"
           else
+            git fetch origin main 2>/dev/null || true
+            # コメント履歴とAPIログはunion merge（絶対に上書きしない）
+            python3 - <<'PYEOF'
+import json, subprocess, os
+
+def merge_union(fname):
+    r = subprocess.run(['git', 'show', 'FETCH_HEAD:' + fname],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.exists(fname):
+        return
+    try:
+        remote = json.loads(r.stdout)
+        with open(fname) as f: local = json.load(f)
+        merged = {**remote, **local}
+        with open(fname, 'w') as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+        print(f'[merge] {fname}: remote={len(remote)} local={len(local)} merged={len(merged)}')
+    except Exception as e:
+        print(f'[merge] {fname} error: {e}')
+
+merge_union('commented_posts.json')
+merge_union('commented_posts_personal.json')
+merge_union('api_usage_log.json')
+PYEOF
+            git add used_posts.json last_run.json commented_posts.json commented_posts_personal.json comment_targets.json api_usage_log.json 2>/dev/null || true
             git commit -m "state: ${{ steps.slot.outputs.name }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            git rebase FETCH_HEAD 2>/dev/null || git rebase --abort 2>/dev/null || true
             git push
           fi

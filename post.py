@@ -477,14 +477,36 @@ def _set_topic(page, topic: str):
 
 
 def _load_commented():
-    """コメント済みログ読み込み。{key: iso_datetime} の辞書。"""
-    if not os.path.exists(COMMENTED_FILE):
-        return {}
+    """コメント済みログ読み込み。ローカルファイルとgit origin/mainを union merge して返す。
+    同一投稿への二重コメントを防ぐため、必ず両方を合わせた最大セットを使用する。"""
+    import subprocess as _sp
+    local: dict = {}
+    if os.path.exists(COMMENTED_FILE):
+        try:
+            with open(COMMENTED_FILE, "r", encoding="utf-8") as f:
+                local = json.load(f)
+        except Exception:
+            local = {}
+
+    # git origin/main の最新版も取得してunion merge
     try:
-        with open(COMMENTED_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        r = _sp.run(
+            ["git", "show", f"origin/main:{COMMENTED_FILE}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if r.returncode == 0:
+            remote = json.loads(r.stdout)
+            merged = {**remote, **local}  # local優先だが両方のキーを保持
+            if len(merged) > len(local):
+                print(f"[commented] remote={len(remote)} local={len(local)} merged={len(merged)} (union)")
+                # ローカルファイルも最新にしておく
+                with open(COMMENTED_FILE, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+                return merged
     except Exception:
-        return {}
+        pass
+
+    return local
 
 
 def _save_commented(data):
@@ -870,8 +892,10 @@ def _do_auto_comments(page, dry_run=False):
                 continue
 
             log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
-            if log_key in commented:
-                print(f"[comment] @{account} この投稿は既コメント済み → スキップ")
+            # コメント直前に再度ファイルを読み直して二重チェック（並走・遅延対策）
+            commented = _load_commented()
+            if log_key in commented or _already_commented_recently(commented, account):
+                print(f"[comment] @{account} コメント済み（直前再チェック） → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
