@@ -1197,7 +1197,7 @@ def main():
         commit_used(time_slot, idx)
         record_success(time_slot)
         schedule_next_wake(time_slot)
-        _send_line_notify(time_slot, texts, comment_results if AUTO_COMMENT else None)
+        # 成功通知は不要なので削除（失敗通知はworkflow側のステップで送信）
 
 
 if __name__ == "__main__":
