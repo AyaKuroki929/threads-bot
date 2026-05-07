@@ -966,6 +966,30 @@ def _get_latest_post_url(page, after_reply=False):
     return href
 
 
+def _check_latest_post_is_recent(page, max_age_min=10):
+    """プロフィールページで最新投稿が max_age_min 分以内か確認。None=確認不能。"""
+    try:
+        from datetime import timezone
+        articles = page.locator('div[data-pressable-container="true"]')
+        if articles.count() == 0:
+            articles = page.locator('article')
+        if articles.count() == 0:
+            return None
+        time_el = articles.first.locator('time[datetime]').first
+        if time_el.count() == 0:
+            return None
+        dt_str = time_el.get_attribute('datetime')
+        if not dt_str:
+            return None
+        post_dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        age_min = (datetime.now(timezone.utc) - post_dt).total_seconds() / 60
+        print(f"[verify] 最新投稿 {age_min:.1f}分前")
+        return age_min <= max_age_min
+    except Exception as e:
+        print(f"[verify] タイムスタンプ確認失敗（続行）: {e}")
+        return None
+
+
 def _open_reply_modal(page, post_url):
     """投稿詳細ページに遷移して、post_url のポスト本体に紐づく「返信」アイコンを押す。
     Threadsの仕様:
@@ -1032,6 +1056,7 @@ def post_to_threads(texts, debug=False, dry_run=False):
                 return
             _click_submit(page)
 
+            post_verified = True  # ツリー投稿は _get_latest_post_url が検証を兼ねる
             if len(texts) > 1:
                 page.wait_for_timeout(3000)
                 current_url = _get_latest_post_url(page)
@@ -1045,16 +1070,48 @@ def post_to_threads(texts, debug=False, dry_run=False):
                     page.wait_for_timeout(3000)
                     current_url = _get_latest_post_url(page, after_reply=True)
                     print(f"[debug] {i}部目URL: {current_url}")
+            else:
+                # 単発投稿: プロフィールへ移動してタイムスタンプ確認
+                page.wait_for_timeout(3000)
+                try:
+                    _get_latest_post_url(page)  # プロフィールページへ移動
+                    post_verified = _check_latest_post_is_recent(page)
+                except Exception as e:
+                    print(f"[verify] 投稿確認スキップ: {e}")
+                    post_verified = None
 
             # 自動コメント（AUTO_COMMENT=1 の場合のみ）
             comment_results = []
             if AUTO_COMMENT:
                 print("[comment] 自動コメント開始...")
                 comment_results = _do_auto_comments(page, dry_run=dry_run)
-            return comment_results
+            return {"post_verified": post_verified, "comment_results": comment_results}
         finally:
             browser.close()
-    return []
+    return {"post_verified": None, "comment_results": []}
+
+
+def _send_line_failure_notify(reason: str, slot: str):
+    """投稿未確認・コメント失敗時のLINE通知。"""
+    if not LINE_TOKEN:
+        return
+    slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夕 18:00", "evening": "夜 21:00"}.get(slot, slot)
+    if reason == "post":
+        msg = f"⚠️ 投稿未確認（{slot_label}）\n@{USERNAME}\n\n投稿ボタンは押しましたが、Threadsに反映されていません。手動確認をお願いします。"
+    else:
+        msg = f"⚠️ 自動コメント全件失敗（{slot_label}）\n@{USERNAME}\n\n投稿は完了しましたが、他アカウントへのコメントに全件失敗しました。"
+    try:
+        body = {"messages": [{"type": "text", "text": msg}]}
+        req = urllib.request.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as r:
+            print(f"[line] 失敗通知送信完了 status={r.status}")
+    except Exception as e:
+        print(f"[line] 失敗通知送信失敗（続行）: {e}")
 
 
 def _send_line_notify(slot: str, texts: list, comment_results: list = None):
@@ -1173,7 +1230,9 @@ def main():
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
-            comment_results = post_to_threads(texts, debug=dry_run, dry_run=dry_run)
+            result = post_to_threads(texts, debug=dry_run, dry_run=dry_run)
+            post_verified = result.get("post_verified") if isinstance(result, dict) else None
+            comment_results = result.get("comment_results", []) if isinstance(result, dict) else []
             last_exc = None
             break
         except CookieExpiredError as e:
@@ -1194,10 +1253,22 @@ def main():
     print("投稿完了！" if not dry_run else "[dry-run] 終了")
 
     if not dry_run:
+        # 投稿がThreadsに反映されているか確認
+        if post_verified is False:
+            print("[fatal] 投稿がThreadsに反映されていません")
+            _send_line_failure_notify("post", time_slot)
+            sys.exit(EXIT_GENERIC_FAIL)
+
         commit_used(time_slot, idx)
         record_success(time_slot)
         schedule_next_wake(time_slot)
-        # 成功通知は不要なので削除（失敗通知はworkflow側のステップで送信）
+
+        # コメントが全件失敗していた場合のみ通知
+        if AUTO_COMMENT and comment_results:
+            ok_count = sum(1 for r in comment_results if r.get("status") == "ok")
+            if ok_count == 0:
+                print("[warn] 自動コメントが全件失敗しました")
+                _send_line_failure_notify("comment", time_slot)
 
 
 if __name__ == "__main__":
