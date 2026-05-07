@@ -504,10 +504,15 @@ def _set_topic(page, topic: str):
 
         if topic_btn is None:
             try:
-                # デバッグ用: 展開後ダイアログ内ボタン一覧
+                # デバッグ用: 展開後ダイアログ内ボタンのaria-labelとテキスト一覧
                 latest_dialog = page.locator('div[role="dialog"]').last
-                btn_texts = [b.inner_text()[:30] for b in latest_dialog.locator('[role="button"]').all() if b.is_visible()]
-                print(f"[topic] ダイアログ内ボタン: {btn_texts[:30]}")
+                btn_info = []
+                for b in latest_dialog.locator('[role="button"]').all():
+                    if b.is_visible():
+                        txt = b.inner_text()[:20]
+                        lbl = b.get_attribute('aria-label') or ''
+                        btn_info.append(f"'{txt}'[{lbl[:30]}]")
+                print(f"[topic] ダイアログ内ボタン(text[aria-label]): {btn_info[:30]}")
             except Exception:
                 pass
             print("[topic] トピックなしで続行。")
