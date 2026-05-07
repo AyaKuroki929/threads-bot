@@ -433,7 +433,11 @@ def _click_submit(page):
     print(f"[debug] 送信ボタンクリック: idx={target_idx} text={repr(target_text)}")
     target.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
-    target.click()
+    try:
+        target.click(timeout=5000)
+    except Exception:
+        print("[debug] 送信ボタン通常クリック失敗 → force=Trueで再試行")
+        target.click(force=True)
     for _ in range(30):
         page.wait_for_timeout(500)
         if page.locator('div[role="dialog"]').count() == 0:
