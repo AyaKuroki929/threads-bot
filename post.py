@@ -21,6 +21,8 @@ LAST_RUN_FILE = os.environ.get("LAST_RUN_FILE", os.path.join(_BASE, "last_run.js
 PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_posts.json"))
 USERNAME      = os.environ.get("THREADS_USERNAME", "bemolle_diet")
 COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets.json"))
+COMMENTED_FILE = os.environ.get("COMMENTED_FILE", os.path.join(_BASE, "commented_posts.json"))
+AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 TOPIC         = os.environ.get("THREADS_TOPIC", "")
 
@@ -468,6 +470,140 @@ def _set_topic(page, topic: str):
         print(f"[topic] 設定失敗（続行）: {e}")
 
 
+def _load_commented():
+    """コメント済みログ読み込み。{key: iso_datetime} の辞書。"""
+    if not os.path.exists(COMMENTED_FILE):
+        return {}
+    try:
+        with open(COMMENTED_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_commented(data):
+    with open(COMMENTED_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _already_commented_today(commented, account):
+    """今日そのアカウントにすでにコメント済みか（URL問わず）"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return any(f"/{account}/" in k and v.startswith(today) for k, v in commented.items())
+
+
+def _get_target_latest_post_url(page, account):
+    """@account の最新投稿URLを取得。取得できなければ None。"""
+    try:
+        page.goto(f"https://www.threads.com/@{account}", wait_until="domcontentloaded", timeout=20000)
+        page.wait_for_timeout(3000)
+        articles = page.locator('div[data-pressable-container="true"]')
+        if articles.count() == 0:
+            articles = page.locator('article')
+        if articles.count() == 0:
+            return None
+        time_link = articles.first.locator('time').first
+        if time_link.count() == 0:
+            return None
+        href = time_link.evaluate("el => el.closest('a')?.href")
+        return href if (href and "/post/" in href) else None
+    except Exception as e:
+        print(f"[comment] @{account} 最新投稿取得失敗: {e}")
+        return None
+
+
+def _post_comment_to_url(page, post_url, comment_text):
+    """post_url の投稿にコメント（返信）を投稿する。"""
+    page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
+    page.wait_for_timeout(3000)
+    post_id = post_url.rstrip("/").split("/")[-1]
+    # 元投稿コンテナの返信ボタンを探す
+    reply_btn = None
+    container = page.locator(f'div[data-pressable-container="true"]:has(a[href*="/post/{post_id}"])').first
+    if container.count() > 0:
+        for label in ['[aria-label*="返信"]', '[aria-label*="Reply"]']:
+            btn = container.locator(label).first
+            if btn.count() > 0:
+                reply_btn = btn
+                break
+    if reply_btn is None or reply_btn.count() == 0:
+        for label in ['[aria-label*="返信"]', '[aria-label*="Reply"]']:
+            btn = page.locator(label).first
+            if btn.count() > 0:
+                reply_btn = btn
+                break
+    if reply_btn is None or reply_btn.count() == 0:
+        raise RuntimeError("返信ボタンが見つかりません")
+    reply_btn.scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    reply_btn.click()
+    page.wait_for_timeout(2000)
+    if page.locator('div[role="dialog"]').count() == 0:
+        raise RuntimeError("返信モーダルが開きませんでした")
+    _input_text(page, comment_text)
+    page.wait_for_timeout(500)
+    _click_submit(page)
+    page.wait_for_timeout(2000)
+
+
+def _do_auto_comments(page, dry_run=False):
+    """コメントターゲット全件に自動コメント。今日コメント済みはスキップ。
+    戻り値: [{account, status, url?}]"""
+    if not os.path.exists(COMMENT_TARGETS_FILE):
+        return []
+    try:
+        with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+            targets = json.load(f)
+    except Exception:
+        return []
+
+    commented = _load_commented()
+    results = []
+
+    for t in targets:
+        account = t.get("account", "")
+        comment_text = t.get("comment", "")
+        if not account or not comment_text:
+            continue
+        try:
+            if _already_commented_today(commented, account):
+                print(f"[comment] @{account} 本日コメント済み → スキップ")
+                results.append({"account": account, "status": "skipped"})
+                continue
+
+            post_url = _get_target_latest_post_url(page, account)
+            if not post_url:
+                print(f"[comment] @{account} 最新投稿取得できず → スキップ")
+                results.append({"account": account, "status": "no_post"})
+                continue
+
+            log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
+            if log_key in commented:
+                print(f"[comment] @{account} この投稿は既コメント済み → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
+            if dry_run:
+                print(f"[comment][dry_run] @{account}: {post_url}\n  コメント: {comment_text}")
+                results.append({"account": account, "status": "dry_run", "url": post_url})
+                continue
+
+            _post_comment_to_url(page, post_url, comment_text)
+            commented[log_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _save_commented(commented)
+            print(f"[comment] @{account} コメント完了 ✅")
+            results.append({"account": account, "status": "ok", "url": post_url})
+
+            # アカウント間に少し待機（bot臭を消す）
+            page.wait_for_timeout(random.randint(4000, 8000))
+
+        except Exception as e:
+            print(f"[comment] @{account} コメント失敗: {e}")
+            results.append({"account": account, "status": "error", "error": str(e)})
+
+    return results
+
+
 def _open_composer(page):
     """ホームから新規投稿モーダルを開く。"""
     page.goto("https://www.threads.com", wait_until="domcontentloaded")
@@ -608,11 +744,19 @@ def post_to_threads(texts, debug=False, dry_run=False):
                     page.wait_for_timeout(3000)
                     current_url = _get_latest_post_url(page, after_reply=True)
                     print(f"[debug] {i}部目URL: {current_url}")
+
+            # 自動コメント（AUTO_COMMENT=1 の場合のみ）
+            comment_results = []
+            if AUTO_COMMENT:
+                print("[comment] 自動コメント開始...")
+                comment_results = _do_auto_comments(page, dry_run=dry_run)
+            return comment_results
         finally:
             browser.close()
+    return []
 
 
-def _send_line_notify(slot: str, texts: list):
+def _send_line_notify(slot: str, texts: list, comment_results: list = None):
     """投稿完了後にLINEへ通知。LINE_CHANNEL_ACCESS_TOKEN が未設定なら何もしない。"""
     if not LINE_TOKEN:
         return
@@ -620,7 +764,17 @@ def _send_line_notify(slot: str, texts: list):
     content = "\n\n↩️ ツリー返信\n".join(texts) if len(texts) > 1 else texts[0]
 
     targets_msg = ""
-    if os.path.exists(COMMENT_TARGETS_FILE):
+    if comment_results:
+        # 自動コメント済みの場合：結果を表示
+        status_icon = {"ok": "✅", "skipped": "⏭️", "error": "❌", "no_post": "⚠️", "dry_run": "🧪"}
+        lines = []
+        for r in comment_results:
+            icon = status_icon.get(r.get("status", ""), "❓")
+            account = r.get("account", "")
+            lines.append(f"{icon} @{account}")
+        targets_msg = "\n\n──────────\n🤖 自動コメント完了\n\n" + "\n".join(lines)
+    elif os.path.exists(COMMENT_TARGETS_FILE):
+        # 手動コメント案を表示（AUTO_COMMENT=0 の場合）
         try:
             with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
                 targets = json.load(f)
@@ -694,7 +848,7 @@ def main():
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
-            post_to_threads(texts, debug=dry_run, dry_run=dry_run)
+            comment_results = post_to_threads(texts, debug=dry_run, dry_run=dry_run)
             last_exc = None
             break
         except CookieExpiredError as e:
@@ -718,7 +872,7 @@ def main():
         commit_used(time_slot, idx)
         record_success(time_slot)
         schedule_next_wake(time_slot)
-        _send_line_notify(time_slot, texts)
+        _send_line_notify(time_slot, texts, comment_results if AUTO_COMMENT else None)
 
 
 if __name__ == "__main__":

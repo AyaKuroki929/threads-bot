@@ -48,6 +48,8 @@ jobs:
       COMMENT_TARGETS_FILE: comment_targets_personal.json
       THREADS_TOPIC: ビジネス＆起業家
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      AUTO_COMMENT: '1'
+      COMMENTED_FILE: commented_posts_personal.json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -185,7 +187,7 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
-          git add used_posts_personal.json last_run_personal.json 2>/dev/null || true
+          git add used_posts_personal.json last_run_personal.json commented_posts_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no state changes"
           else
