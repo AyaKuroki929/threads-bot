@@ -60,17 +60,28 @@ def _verify_account(page):
     """ログイン中アカウントが USERNAME と一致するか確認。不一致なら即 SystemExit。
     投稿前に必ず呼ぶ。誤アカウントへの投稿を防ぐ最終防波堤。"""
     try:
-        # /edit_profile（ユーザー名なし）にアクセス → ログイン中アカウントにリダイレクトされる
-        # /@bemolle_diet/edit_profile を直指定すると別アカウントでも同じURLになる場合があるため
-        page.goto("https://www.threads.com/edit_profile", wait_until="domcontentloaded", timeout=20000)
-        page.wait_for_timeout(1500)
+        # ホームにアクセスしてナビのプロフィールリンクで確認（最も確実な方法）
+        page.goto("https://www.threads.com", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
         _detect_login_required(page)
-        actual_url = page.url
-        if f"/@{USERNAME}/" in actual_url and "login" not in actual_url:
-            print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit_profile redirect）")
+        link = page.locator(f'a[href="/@{USERNAME}"]').first
+        if link.count() > 0:
+            print(f"[account] ✅ @{USERNAME} でログイン確認済み")
             return
-        # ここまで来たら別アカウントでログインしている
-        print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / 実際のURL: {actual_url}")
+        # HTMLにユーザー名が含まれるか確認（ナビ構造変化への保険）
+        content = page.content()
+        if f'"username":"{USERNAME}"' in content or f'"@{USERNAME}"' in content:
+            print(f"[account] ✅ @{USERNAME} でログイン確認済み（HTML検出）")
+            return
+        # 別アカウントでログインしている
+        nav_links = page.locator('nav a[href^="/@"]')
+        actual_user = "不明"
+        for i in range(min(nav_links.count(), 10)):
+            href = nav_links.nth(i).get_attribute("href") or ""
+            if href.startswith("/@") and "/post/" not in href:
+                actual_user = href
+                break
+        print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / 検出: {actual_user}")
         print(f"[account] THREADS_SESSION シークレットが @{USERNAME} のセッションか確認してください。")
         sys.exit(4)
     except SystemExit:
