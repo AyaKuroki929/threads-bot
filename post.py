@@ -449,13 +449,37 @@ def _set_topic(page, topic: str):
             '[aria-label*="topic"]',
             'div[role="button"]:has-text("トピックを追加")',
             'div[role="button"]:has-text("Add topic")',
+            '[role="button"]:has-text("トピック")',
+            '[role="button"]:has-text("話題")',
+            'button:has-text("トピック")',
+            'span:has-text("トピックを追加")',
+            '[data-testid*="topic"]',
+            '[data-testid*="Topic"]',
         ]:
             loc = dialog.locator(sel).first
             if loc.count() > 0 and loc.is_visible():
                 topic_btn = loc
                 break
+        # dialogの外も試す
         if topic_btn is None:
-            print(f"[topic] ボタンが見つかりません。トピックなしで続行。")
+            for sel in [
+                '[aria-label*="トピック"]',
+                '[role="button"]:has-text("トピックを追加")',
+                '[role="button"]:has-text("トピック")',
+            ]:
+                loc = page.locator(sel).first
+                if loc.count() > 0 and loc.is_visible():
+                    topic_btn = loc
+                    break
+        if topic_btn is None:
+            # デバッグ用: dialogのボタンテキスト一覧を出力
+            try:
+                btns = dialog.locator('[role="button"]').all()
+                btn_texts = [b.text_content()[:30] for b in btns if b.is_visible()]
+                print(f"[topic] ボタンが見つかりません。dialog内のbutton一覧: {btn_texts[:10]}")
+            except Exception:
+                pass
+            print(f"[topic] トピックなしで続行。")
             return
         topic_btn.click()
         page.wait_for_timeout(1500)
@@ -607,27 +631,37 @@ def _generate_comment(post_text: str, account_note: str) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key or not post_text.strip():
         return random.choice(_FALLBACK_COMMENTS)
+
+    # アカウントごとのペルソナ
+    if USERNAME == "bemolle_diet":
+        persona = "大阪でエステサロンを経営している、美容と健康に詳しい30代後半の女性"
+    else:
+        persona = "美容サロンオーナー兼AI自動化実践者（@aya_kuroki_0929）"
+
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
-        prompt = f"""あなたは美容サロンオーナー兼AI自動化実践者（@aya_kuroki_0929）です。
-以下の投稿に対して、自然で短い共感コメントを1つ生成してください。
+        prompt = f"""あなたは{persona}です。
+以下の投稿に対して、自然で短いコメントを1つ生成してください。
 
-【投稿者の特徴】
-{account_note}
+【投稿者について】
+{account_note if account_note else "（情報なし）"}
 
 【投稿内容】
 {post_text[:400]}
 
-【ルール】
-- 15〜45文字程度
-- 敬語ベースだが堅すぎない自然な口調
-- 投稿内容に具体的に反応する（「参考になります」だけでなく、何が参考になったかが感じられるもの）
-- ハッシュタグなし・絵文字は1個まで（なくてもOK）
-- サロンオーナー目線で書く
-- 宣伝・自己PRにならない
+【絶対守るルール】
+- 20〜50文字程度（長すぎない）
+- 投稿の具体的な内容に反応する（「参考になります」だけは絶対NG）
+- 敬語ベースだが自然な話し言葉に近い口調
+- ハッシュタグなし
+- 絵文字は使わないか、使っても1個まで
+- 自分のサロンや自己PRは一切書かない
+- 「〜ですね」「〜ました」で終わる文が続くのを避ける（語尾を変化させる）
+- 「とても」「非常に」「大変」などの形式的な強調語を使わない
+- AIが書いたような整った文章にしない。人間が思ったことをそのまま書いた感じで
 
-コメント本文のみを出力してください。"""
+コメント本文のみを出力してください（説明や前置きは不要）。"""
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=80,

@@ -88,6 +88,13 @@ jobs:
           printf '%s' "$SESSION" > session_personal.json
           python3 -c "import json; json.load(open('session_personal.json')); print('session_personal.json valid')"
 
+      - name: Random delay (human-like timing)
+        if: steps.params.outputs.dry != 'true'
+        run: |
+          delay=$((RANDOM % 900))
+          echo "投稿まで ${delay}秒 待機（ランダム遅延）"
+          sleep $delay
+
       - name: Post to Threads (personal)
         id: post
         env:
