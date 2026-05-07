@@ -450,93 +450,28 @@ def _click_submit(page):
 
 
 def _set_topic(page, topic: str):
-    """コンポーザーモーダル内でトピックを設定する。失敗しても投稿は続行。"""
+    """コンポーザーモーダル内でトピックを設定する。失敗しても投稿は続行。
+    input[placeholder="トピックを追加"] を直接操作する（ボタン経由は不要）。"""
     if not topic:
         return
     try:
-        dialog = page.locator('div[role="dialog"]').last
-
-        TOPIC_SELS = [
-            '[aria-label*="トピック"]',
-            '[aria-label*="Topic"]',
-            '[aria-label*="topic"]',
-            '[aria-label*="話題"]',
-            'div[role="button"]:has-text("トピックを追加")',
-            'div[role="button"]:has-text("Add topic")',
-            '[role="button"]:has-text("トピック")',
-            'button:has-text("トピック")',
-            'span:has-text("トピックを追加")',
-            'span:has-text("話題を追加")',
-            '[data-testid*="topic"]',
-            '[data-testid*="theme"]',
-        ]
-
-        def _find_topic_btn(scope):
-            for sel in TOPIC_SELS:
-                loc = scope.locator(sel).first
-                if loc.count() > 0 and loc.is_visible():
-                    return loc
-            return None
-
-        topic_btn = _find_topic_btn(dialog)
-
-        # 直接見つからない場合は「もっと見る」を展開してから再探索
-        if topic_btn is None:
-            for more_sel in [
-                'div[role="button"]:has-text("もっと見る")',
-                'button:has-text("もっと見る")',
-                '[role="button"]:has-text("More")',
-                'div[role="button"]:has-text("More")',
-            ]:
-                more_btn = dialog.locator(more_sel).first
-                if more_btn.count() > 0 and more_btn.is_visible():
-                    print("[topic] 「もっと見る」を展開します")
-                    more_btn.click()
-                    page.wait_for_timeout(2000)
-                    break
-            # 展開後は最新ダイアログを再取得（新パネルが別レイヤーで出る場合があるため）
-            latest_dialog = page.locator('div[role="dialog"]').last
-            topic_btn = _find_topic_btn(latest_dialog)
-            if topic_btn is None:
-                topic_btn = _find_topic_btn(page)
-                if topic_btn:
-                    print("[topic] ページ全体からトピックボタンを発見")
-
-        if topic_btn is None:
-            try:
-                # デバッグ用: 展開後ダイアログ内ボタンのaria-labelとテキスト一覧
-                latest_dialog = page.locator('div[role="dialog"]').last
-                btn_info = []
-                for b in latest_dialog.locator('[role="button"]').all():
-                    if b.is_visible():
-                        txt = b.inner_text()[:20]
-                        lbl = b.get_attribute('aria-label') or ''
-                        btn_info.append(f"'{txt}'[{lbl[:30]}]")
-                print(f"[topic] ダイアログ内ボタン(text[aria-label]): {btn_info[:30]}")
-            except Exception:
-                pass
-            print("[topic] トピックなしで続行。")
+        topic_input = page.locator('input[placeholder="トピックを追加"]').first
+        if topic_input.count() == 0:
+            topic_input = page.locator(
+                'input[placeholder*="トピック"], input[placeholder*="コミュニティ"], input[placeholder*="topic"]'
+            ).first
+        if topic_input.count() == 0:
+            print("[topic] 入力フォームが見つかりません。トピックなしで続行。")
             return
-
-        topic_btn.click()
-        page.wait_for_timeout(1500)
-
-        # 検索ボックスにトピック名を入力
-        search_box = page.locator(
-            'input[placeholder*="トピック"], input[placeholder*="topic"], input[placeholder*="Topic"]'
-        ).first
-        if search_box.count() > 0:
-            search_box.fill(topic)
-            page.wait_for_timeout(1200)
-            candidate = page.locator('div[role="option"], div[role="listitem"]').first
-            if candidate.count() > 0:
-                candidate.click()
-                page.wait_for_timeout(800)
-                print(f"[topic] '{topic}' を設定しました。")
-            else:
-                print("[topic] 候補が見つかりません。トピックなしで続行。")
-        else:
-            print("[topic] 検索ボックスが見つかりません。トピックなしで続行。")
+        topic_input.click(force=True)
+        page.wait_for_timeout(500)
+        topic_input.fill(topic)
+        page.wait_for_timeout(1200)
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(300)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(800)
+        print(f"[topic] '{topic}' を設定しました。")
     except Exception as e:
         print(f"[topic] 設定失敗（続行）: {e}")
 
@@ -763,6 +698,53 @@ def _generate_comment(post_text: str, account_note: str) -> str:
     except Exception as e:
         print(f"[comment] コメント生成失敗 → フォールバック: {e}")
         return random.choice(_FALLBACK_COMMENTS)
+
+
+def _select_topic_for_post(texts: list) -> str:
+    """投稿内容に最適なThreadsトピックキーワードをClaude APIで選択して返す。"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    post_body = "\n".join(texts)[:600]
+
+    if USERNAME == "bemolle_diet":
+        fallback_candidates = ["美容", "ダイエット", "エステ", "スキンケア", "健康"]
+        account_hint = "エステサロン・ダイエット・スキンケア・美容"
+    else:
+        fallback_candidates = ["ビジネス", "起業", "AI", "自動化", "経営"]
+        account_hint = "ビジネス・起業・AI・自動化・生産性"
+
+    if not api_key:
+        chosen = random.choice(fallback_candidates)
+        print(f"[topic] APIキー未設定 → フォールバック: '{chosen}'")
+        return chosen
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = f"""以下のThreads投稿に最もぴったりなトピック（話題カテゴリ）を1つだけ選んでください。
+アカウントのテーマ：{account_hint}
+
+【投稿内容】
+{post_body}
+
+【選び方の基準】
+・Threads内でそのキーワードで検索したときに関連コンテンツが出るような一般的なカテゴリ名
+・日本語1〜3語のキーワード（例：美容、ダイエット、起業、AI、Notion、スキンケア）
+・投稿の主題を最もよく表すもの
+
+キーワードだけ出力してください。説明・記号・改行は不要です。"""
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        topic = resp.content[0].text.strip()
+        topic = re.sub(r'[「」『』・\n\r]', '', topic).strip()
+        print(f"[topic] AI選択トピック: '{topic}'")
+        return topic
+    except Exception as e:
+        chosen = random.choice(fallback_candidates)
+        print(f"[topic] AI選択失敗 → フォールバック '{chosen}': {e}")
+        return chosen
 
 
 def _post_comment_to_url(page, post_url, comment_text):
@@ -1036,7 +1018,7 @@ def _open_reply_modal(page, post_url):
         raise RuntimeError("返信モーダルが開きませんでした")
 
 
-def post_to_threads(texts, debug=False, dry_run=False):
+def post_to_threads(texts, debug=False, dry_run=False, topic=""):
     """texts: list[str] または str。
     複数要素なら 1部目を単発投稿 → 自分の投稿に self-reply で 2部目, 3部目...と続けてツリー化。"""
     if isinstance(texts, str):
@@ -1061,7 +1043,7 @@ def post_to_threads(texts, debug=False, dry_run=False):
             print(f"[account] 投稿前アカウント確認: USERNAME={USERNAME}, SESSION_FILE={SESSION_FILE}")
             _verify_account(page)  # 先にアカウント確認（edit_profileに移動するのでcomposer前に実行）
             _open_composer(page)   # アカウント確認後にホームへ戻ってモーダルを開く
-            _set_topic(page, TOPIC)
+            _set_topic(page, topic)
             _input_text(page, texts[0])
             if dry_run:
                 print("[dry_run] 1部目の入力まで完了。Postは押さずに終了。")
@@ -1223,6 +1205,9 @@ def main():
         idx, text = select_post(time_slot)
         texts = [text] if isinstance(text, str) else list(text)
 
+    # 投稿内容に合ったトピックをAIで選択（dry_run時はフォールバック使用）
+    topic = _select_topic_for_post(texts)
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     mode = " [DRY-RUN]" if dry_run else ""
     kind = "ツリー" if len(texts) > 1 else "単発"
@@ -1244,7 +1229,7 @@ def main():
     last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
-            result = post_to_threads(texts, debug=dry_run, dry_run=dry_run)
+            result = post_to_threads(texts, debug=dry_run, dry_run=dry_run, topic=topic)
             post_verified = result.get("post_verified") if isinstance(result, dict) else None
             comment_results = result.get("comment_results", []) if isinstance(result, dict) else []
             last_exc = None
