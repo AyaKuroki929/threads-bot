@@ -103,7 +103,7 @@ jobs:
       - name: Random delay (human-like timing)
         if: steps.slot.outputs.dry != 'true'
         run: |
-          delay=$((RANDOM % 900))
+          delay=$((RANDOM % 300))
           echo "投稿まで ${delay}秒 待機（ランダム遅延）"
           sleep $delay
 
