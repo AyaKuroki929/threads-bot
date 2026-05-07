@@ -6,10 +6,12 @@ import sys
 import json
 import random
 import os
+import re
 import subprocess
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
@@ -25,8 +27,10 @@ COMMENTED_FILE = os.environ.get("COMMENTED_FILE", os.path.join(_BASE, "commented
 AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
 # 1回の実行でコメントするアカウント数の上限（0=全件）
 MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "0"))
-# 同じアカウントへの再コメント禁止期間（日数）。0=制限なし
-COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "0"))
+# プール内の未コメントアカウントがこの数を下回ったら自動発掘を実行
+COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "5"))
+# 自動発掘の検索キーワードファイル（JSON配列）
+COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 TOPIC         = os.environ.get("THREADS_TOPIC", "")
 
@@ -491,23 +495,65 @@ def _save_commented(data):
 
 
 def _already_commented_recently(commented, account):
-    """COMMENT_COOLDOWN_DAYS 以内にそのアカウントにコメント済みか。
-    COMMENT_COOLDOWN_DAYS=0 の場合は今日のみチェック（従来動作）。"""
-    if COMMENT_COOLDOWN_DAYS > 0:
-        cutoff = datetime.now() - timedelta(days=COMMENT_COOLDOWN_DAYS)
-        for k, v in commented.items():
-            if f"/{account}/" not in k:
-                continue
-            try:
-                commented_at = datetime.strptime(v[:10], "%Y-%m-%d")
-                if commented_at >= cutoff:
-                    return True
-            except ValueError:
-                pass
-        return False
-    else:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return any(f"/{account}/" in k and v.startswith(today) for k, v in commented.items())
+    """そのアカウントに過去一度でもコメント済みか（永久スキップ）。"""
+    return any(f"/{account}/" in k for k in commented.keys())
+
+
+def _discover_new_accounts(page, already_done_accounts, max_new=20):
+    """Threads検索で新しいアカウントを自動発掘する。
+    already_done_accounts: コメント済み or 既にプール内のアカウント名セット
+    戻り値: [{"account": ..., "axis": "自動発見", "note": ...}, ...]
+    """
+    if not os.path.exists(COMMENT_KEYWORDS_FILE):
+        print("[discover] キーワードファイルなし → スキップ")
+        return []
+    try:
+        with open(COMMENT_KEYWORDS_FILE, encoding="utf-8") as f:
+            keywords = json.load(f)
+    except Exception as e:
+        print(f"[discover] キーワード読み込み失敗: {e}")
+        return []
+
+    discovered = []
+    seen = set(already_done_accounts)
+    kw_list = keywords[:]
+    random.shuffle(kw_list)
+
+    for keyword in kw_list:
+        if len(discovered) >= max_new:
+            break
+        try:
+            search_url = f"https://www.threads.com/search?q={urllib.parse.quote(keyword)}&serp_type=default"
+            print(f"[discover] 検索中: {keyword}")
+            page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(4000)
+
+            links = page.eval_on_selector_all(
+                'a[href*="/post/"]',
+                'els => els.map(e => e.href)'
+            )
+            for link in links:
+                m = re.search(r'threads\.com/@([^/]+)/post/', link)
+                if not m:
+                    continue
+                account = m.group(1)
+                if account in seen or account == USERNAME:
+                    continue
+                seen.add(account)
+                discovered.append({
+                    "account": account,
+                    "axis": "自動発見",
+                    "note": f"検索キーワード: {keyword}"
+                })
+                if len(discovered) >= max_new:
+                    break
+
+            page.wait_for_timeout(random.randint(2000, 4000))
+        except Exception as e:
+            print(f"[discover] 検索失敗 ({keyword}): {e}")
+
+    print(f"[discover] 新規アカウント {len(discovered)} 件発見")
+    return discovered
 
 
 def _get_target_latest_post(page, account):
@@ -628,38 +674,60 @@ def _post_comment_to_url(page, post_url, comment_text):
 
 
 def _do_auto_comments(page, dry_run=False):
-    """コメントターゲット全件に自動コメント。今日コメント済みはスキップ。
+    """未コメントアカウントへ自動コメント。プール不足時は自動発掘。
     戻り値: [{account, status, url?}]"""
+    # プールファイルがなければ空リストで初期化
     if not os.path.exists(COMMENT_TARGETS_FILE):
-        return []
-    try:
-        with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
-            targets = json.load(f)
-    except Exception:
-        return []
+        targets = []
+    else:
+        try:
+            with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+                targets = json.load(f)
+        except Exception:
+            targets = []
 
     commented = _load_commented()
-    results = []
 
-    # MAX_COMMENTS_PER_RUN が設定されている場合、今日未コメントのアカウントからランダムに選ぶ
-    if MAX_COMMENTS_PER_RUN > 0:
-        eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
-        if len(eligible) > MAX_COMMENTS_PER_RUN:
-            targets = random.sample(eligible, MAX_COMMENTS_PER_RUN)
-            print(f"[comment] {len(eligible)}件中{MAX_COMMENTS_PER_RUN}件をランダム選択")
-        else:
-            targets = eligible
+    # 未コメントのアカウントを絞り込む
+    eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
+    pool_accounts = {t.get("account", "") for t in targets}
+
+    # 未コメントが COMMENT_MIN_POOL を下回ったら自動発掘
+    if len(eligible) < COMMENT_MIN_POOL:
+        already_known = pool_accounts | set(
+            re.search(r'/([^/]+)/', k).group(1)
+            for k in commented.keys()
+            if re.search(r'/([^/]+)/', k)
+        )
+        new_targets = _discover_new_accounts(page, already_known, max_new=20)
+        if new_targets:
+            targets = targets + new_targets
+            try:
+                with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(targets, f, ensure_ascii=False, indent=2)
+                print(f"[discover] {len(new_targets)} 件をプールに追加（合計 {len(targets)} 件）")
+            except Exception as e:
+                print(f"[discover] プール保存失敗: {e}")
+            eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
+
+    # 今回コメントするアカウントをランダム選択
+    n = MAX_COMMENTS_PER_RUN if MAX_COMMENTS_PER_RUN > 0 else len(eligible)
+    if len(eligible) > n:
+        targets = random.sample(eligible, n)
+        print(f"[comment] 未コメント{len(eligible)}件中{n}件をランダム選択")
+    else:
+        targets = eligible
+        if not targets:
+            print("[comment] コメント可能なアカウントなし")
+            return []
+
+    results = []
 
     for t in targets:
         account = t.get("account", "")
         if not account:
             continue
         try:
-            if _already_commented_recently(commented, account):
-                print(f"[comment] @{account} クールダウン中 → スキップ")
-                results.append({"account": account, "status": "skipped"})
-                continue
-
             post_url, post_text = _get_target_latest_post(page, account)
             if not post_url:
                 print(f"[comment] @{account} 最新投稿取得できず → スキップ")
