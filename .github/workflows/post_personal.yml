@@ -232,6 +232,6 @@ jobs:
             echo "no state changes"
           else
             git commit -m "state_personal: ${{ steps.params.outputs.name }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
-            git pull --rebase origin HEAD
+            git pull --rebase -X theirs origin HEAD
             git push
           fi
