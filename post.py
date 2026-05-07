@@ -60,20 +60,18 @@ def _verify_account(page):
     """ログイン中アカウントが USERNAME と一致するか確認。不一致なら即 SystemExit。
     投稿前に必ず呼ぶ。誤アカウントへの投稿を防ぐ最終防波堤。"""
     try:
-        # ナビゲーションに自分のプロフィールリンクがあるか確認
-        link = page.locator(f'a[href="/@{USERNAME}"]').first
-        if link.count() > 0:
-            print(f"[account] ✅ @{USERNAME} でログイン確認済み")
-            return
-        # ナビで見つからない場合は edit_profile にアクセスして URL で判断
-        page.goto(f"https://www.threads.com/@{USERNAME}/edit_profile", wait_until="domcontentloaded", timeout=20000)
-        if f"/@{USERNAME}" in page.url and "login" not in page.url:
-            print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit_profile）")
+        # /edit_profile（ユーザー名なし）にアクセス → ログイン中アカウントにリダイレクトされる
+        # /@bemolle_diet/edit_profile を直指定すると別アカウントでも同じURLになる場合があるため
+        page.goto("https://www.threads.com/edit_profile", wait_until="domcontentloaded", timeout=20000)
+        page.wait_for_timeout(1500)
+        _detect_login_required(page)
+        actual_url = page.url
+        if f"/@{USERNAME}/" in actual_url and "login" not in actual_url:
+            print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit_profile redirect）")
             return
         # ここまで来たら別アカウントでログインしている
-        actual_url = page.url
         print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / 実際のURL: {actual_url}")
-        print(f"[account] THREADS_SESSION[_PERSONAL] シークレットが正しいアカウントのセッションか確認してください。")
+        print(f"[account] THREADS_SESSION シークレットが @{USERNAME} のセッションか確認してください。")
         sys.exit(4)
     except SystemExit:
         raise
