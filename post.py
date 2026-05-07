@@ -35,14 +35,19 @@ class CookieExpiredError(Exception):
 
 
 def _detect_login_required(page):
-    """ログイン画面に飛ばされていないかチェック。飛ばされていたら CookieExpiredError。"""
-    login_selectors = [
+    """ログイン画面に飛ばされていないかチェック。飛ばされていたら CookieExpiredError。
+    a[href*="/login?"] は複数アカウントページにも存在するため使わない。
+    URLにloginが含まれるか、ログインフォーム入力欄が表示されているかで判定。"""
+    if "login" in page.url.lower():
+        raise CookieExpiredError(
+            f"Threadsのログインセッションが切れています（URL: {page.url}）。"
+            "Macで `python3 extract_cookies2.py && gh secret set THREADS_SESSION < session.json` を実行してください。"
+        )
+    login_form_selectors = [
         'input[autocomplete="username"]',
         'input[name="username"]',
-        'a[href="/login"]',
-        'a[href*="/login?"]',
     ]
-    for sel in login_selectors:
+    for sel in login_form_selectors:
         try:
             loc = page.locator(sel).first
             if loc.count() > 0 and loc.is_visible():
