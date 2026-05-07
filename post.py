@@ -571,8 +571,8 @@ def post_to_threads(texts, debug=False, dry_run=False):
 
         try:
             print(f"[account] 投稿前アカウント確認: USERNAME={USERNAME}, SESSION_FILE={SESSION_FILE}")
-            _open_composer(page)   # ここでログイン済みか確認 + ホームを開く
-            _verify_account(page)  # ログイン中アカウントが USERNAME と一致するか確認
+            _verify_account(page)  # 先にアカウント確認（edit_profileに移動するのでcomposer前に実行）
+            _open_composer(page)   # アカウント確認後にホームへ戻ってモーダルを開く
             _set_topic(page, TOPIC)
             _input_text(page, texts[0])
             if dry_run:
