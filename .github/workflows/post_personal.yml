@@ -49,6 +49,8 @@ jobs:
       THREADS_TOPIC: ビジネス＆起業家
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
       AUTO_COMMENT: '1'
+      MAX_COMMENTS_PER_RUN: '2'
+      COMMENT_COOLDOWN_DAYS: '30'
       COMMENTED_FILE: commented_posts_personal.json
       COMMENT_MIN_POOL: '5'
       COMMENT_KEYWORDS_FILE: comment_search_keywords_personal.json
