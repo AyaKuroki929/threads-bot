@@ -69,21 +69,22 @@ def _verify_account(page):
         page.goto("https://www.threads.com", wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(3000)
         _detect_login_required(page)
-        link = page.locator(f'a[href="/@{USERNAME}"]').first
+        # href属性にユーザー名が含まれるリンクを広く探す（相対・絶対URL両対応）
+        link = page.locator(f'a[href*="@{USERNAME}"]').first
         if link.count() > 0:
             print(f"[account] ✅ @{USERNAME} でログイン確認済み")
             return
         # HTMLにユーザー名が含まれるか確認（ナビ構造変化への保険）
         content = page.content()
-        if f'"username":"{USERNAME}"' in content or f'"@{USERNAME}"' in content:
+        if USERNAME in content:
             print(f"[account] ✅ @{USERNAME} でログイン確認済み（HTML検出）")
             return
-        # 別アカウントでログインしている
-        nav_links = page.locator('nav a[href^="/@"]')
+        # 別アカウントでログインしている（ログ用にどのアカウントか拾う）
+        all_links = page.locator('a[href*="/@"]')
         actual_user = "不明"
-        for i in range(min(nav_links.count(), 10)):
-            href = nav_links.nth(i).get_attribute("href") or ""
-            if href.startswith("/@") and "/post/" not in href:
+        for i in range(min(all_links.count(), 20)):
+            href = all_links.nth(i).get_attribute("href") or ""
+            if "/@" in href and "/post/" not in href and "/explore" not in href:
                 actual_user = href
                 break
         print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / 検出: {actual_user}")
