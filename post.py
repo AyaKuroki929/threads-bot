@@ -29,8 +29,6 @@ AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
 MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "0"))
 # プール内の未コメントアカウントがこの数を下回ったら自動発掘を実行
 COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "5"))
-# 同一アカウントへの再コメント禁止期間（日数）。0=永久スキップ、30=30日後に再び対象
-COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "0"))
 # 自動発掘の検索キーワードファイル（JSON配列）
 COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -537,20 +535,9 @@ def _check_account_exists(page, account):
 
 
 def _already_commented_recently(commented, account):
-    """そのアカウントにクールダウン期間内にコメント済みか。
-    COMMENT_COOLDOWN_DAYS=0: 永久スキップ（デフォルト）
-    COMMENT_COOLDOWN_DAYS>0: N日以内にコメントした場合のみスキップ（N日後に再び対象になる）"""
-    for k, v in commented.items():
-        if f"/{account}/" in k:
-            if COMMENT_COOLDOWN_DAYS <= 0:
-                return True
-            try:
-                last_dt = datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
-                if (datetime.now() - last_dt).days < COMMENT_COOLDOWN_DAYS:
-                    return True
-            except Exception:
-                return True  # パース失敗→安全側でスキップ
-    return False
+    """そのアカウントに過去一度でもコメント済みか（永久スキップ）。
+    同じアカウントへの重複コメントを完全に防止する。"""
+    return any(f"/{account}/" in k for k in commented.keys())
 
 
 def _discover_new_accounts(page, already_done_accounts, max_new=20):
