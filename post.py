@@ -1121,6 +1121,8 @@ def _send_line_failure_notify(reason: str, slot: str):
     slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夕 18:00", "evening": "夜 21:00"}.get(slot, slot)
     if reason == "post":
         msg = f"⚠️ 投稿未確認（{slot_label}）\n@{USERNAME}\n\n投稿ボタンは押しましたが、Threadsに反映されていません。手動確認をお願いします。"
+    elif reason == "no_comment_targets":
+        msg = f"⚠️ コメント対象なし（{slot_label}）\n@{USERNAME}\n\nコメントできるアカウントがプールにありません。キーワード検索でも新規発掘できませんでした。"
     else:
         msg = f"⚠️ 自動コメント全件失敗（{slot_label}）\n@{USERNAME}\n\n投稿は完了しましたが、他アカウントへのコメントに全件失敗しました。"
     try:
@@ -1289,12 +1291,16 @@ def main():
         record_success(time_slot)
         schedule_next_wake(time_slot)
 
-        # コメントが全件失敗していた場合のみ通知
-        if AUTO_COMMENT and comment_results:
-            ok_count = sum(1 for r in comment_results if r.get("status") == "ok")
-            if ok_count == 0:
-                print("[warn] 自動コメントが全件失敗しました")
-                _send_line_failure_notify("comment", time_slot)
+        # コメント0件（プール枯渇・発掘失敗）または全件失敗の場合に通知
+        if AUTO_COMMENT:
+            if not comment_results:
+                print("[warn] コメント対象アカウントなし（プール枯渇 or 発掘失敗）")
+                _send_line_failure_notify("no_comment_targets", time_slot)
+            else:
+                ok_count = sum(1 for r in comment_results if r.get("status") == "ok")
+                if ok_count == 0:
+                    print("[warn] 自動コメントが全件失敗しました")
+                    _send_line_failure_notify("comment", time_slot)
 
 
 if __name__ == "__main__":
