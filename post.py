@@ -460,12 +460,15 @@ def _set_topic(page, topic: str):
             '[aria-label*="トピック"]',
             '[aria-label*="Topic"]',
             '[aria-label*="topic"]',
+            '[aria-label*="話題"]',
             'div[role="button"]:has-text("トピックを追加")',
             'div[role="button"]:has-text("Add topic")',
             '[role="button"]:has-text("トピック")',
             'button:has-text("トピック")',
             'span:has-text("トピックを追加")',
+            'span:has-text("話題を追加")',
             '[data-testid*="topic"]',
+            '[data-testid*="theme"]',
         ]
 
         def _find_topic_btn(scope):
@@ -491,8 +494,9 @@ def _set_topic(page, topic: str):
                     more_btn.click()
                     page.wait_for_timeout(2000)
                     break
-            # ダイアログ内を再探索し、なければページ全体も探す
-            topic_btn = _find_topic_btn(dialog)
+            # 展開後は最新ダイアログを再取得（新パネルが別レイヤーで出る場合があるため）
+            latest_dialog = page.locator('div[role="dialog"]').last
+            topic_btn = _find_topic_btn(latest_dialog)
             if topic_btn is None:
                 topic_btn = _find_topic_btn(page)
                 if topic_btn:
@@ -500,10 +504,10 @@ def _set_topic(page, topic: str):
 
         if topic_btn is None:
             try:
-                # デバッグ用: ページ上の全ボタンテキストを出力
-                all_btns = page.locator('[role="button"]').all()
-                btn_texts = [b.text_content()[:30] for b in all_btns if b.is_visible()]
-                print(f"[topic] ボタンが見つかりません。ページ内button一覧: {btn_texts[:20]}")
+                # デバッグ用: 展開後ダイアログ内ボタン一覧
+                latest_dialog = page.locator('div[role="dialog"]').last
+                btn_texts = [b.inner_text()[:30] for b in latest_dialog.locator('[role="button"]').all() if b.is_visible()]
+                print(f"[topic] ダイアログ内ボタン: {btn_texts[:30]}")
             except Exception:
                 pass
             print("[topic] トピックなしで続行。")
