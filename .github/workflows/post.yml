@@ -50,6 +50,7 @@ jobs:
       issues: write
     env:
       TZ: Asia/Tokyo
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,6 +106,7 @@ jobs:
           exit $ec
 
       - name: Create Account-Mismatch alert (only on exit code 4)
+        id: alert_mismatch
         if: failure() && steps.post.outputs.exit_code == '4'
         uses: actions/github-script@v7
         with:
@@ -119,6 +121,7 @@ jobs:
             })
             if (existing.data.length > 0) {
               console.log('account-mismatch Issue 既存のためskip:', existing.data[0].html_url)
+              core.setOutput('created', 'false')
               return
             }
             await github.rest.issues.create({
@@ -132,9 +135,8 @@ jobs:
                 ``,
                 `## やること（Macのターミナルで）`,
                 `\`\`\`bash`,
-                `# Chromeで @bemolle_diet にログインした状態で実行`,
                 `cd ~/threads_bot`,
-                `python3 extract_cookies2.py`,
+                `python3 extract_cookies2.py --profile 3`,
                 `gh secret set THREADS_SESSION < session.json`,
                 `\`\`\``,
                 ``,
@@ -142,15 +144,24 @@ jobs:
               ].join('\n'),
               labels: ['account-mismatch']
             })
+            core.setOutput('created', 'true')
+
+      - name: LINE通知（アカウント不一致）
+        if: failure() && steps.alert_mismatch.outputs.created == 'true'
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 ベモーレThreads 停止\n\nアカウント不一致が検出されました。\n\n📱 GitHub Issuesを確認して対応してください。\n\ncd ~/threads_bot\npython3 extract_cookies2.py --profile 3\ngh secret set THREADS_SESSION < session.json"}]}'
 
       - name: Create Cookie-Expired alert (only on exit code 3)
+        id: alert_cookie
         if: failure() && steps.post.outputs.exit_code == '3'
         uses: actions/github-script@v7
         with:
           script: |
             const today = new Date().toLocaleDateString('ja-JP', {timeZone: 'Asia/Tokyo'})
             const slot = '${{ steps.slot.outputs.name }}'
-            // 既存の cookie-expired Issue があるかチェック（重複防止）
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -160,39 +171,41 @@ jobs:
             })
             if (existing.data.length > 0) {
               console.log('cookie-expired Issue 既存のためskip:', existing.data[0].html_url)
+              core.setOutput('created', 'false')
               return
             }
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🔑 Threadsログイン切れ - cookie再発行が必要 (${today})`,
+              title: `🔑 ベモーレThreads ログイン切れ - cookie再発行が必要 (${today})`,
               body: [
-                `Threads自動投稿が **ログイン切れ** で停止しました（${today} ${slot}）。`,
+                `ベモーレアカウント(@bemolle_diet)のThreads自動投稿が **ログイン切れ** で停止しました（${today} ${slot}）。`,
                 ``,
                 `## やること（Macのターミナルで）`,
                 `\`\`\`bash`,
                 `cd ~/threads_bot`,
-                `python3 extract_cookies2.py`,
+                `python3 extract_cookies2.py --profile 3`,
                 `gh secret set THREADS_SESSION < session.json`,
                 `\`\`\``,
-                ``,
-                `## それぞれの意味`,
-                `1. ChromeのThreadsログイン状態からcookieを抽出`,
-                `2. 抽出したcookieをGitHubのSecretに登録`,
                 ``,
                 `完了後、本workflowを手動再実行：`,
                 `\`\`\``,
                 `gh workflow run post.yml -f slot=${slot} -f dry_run=false`,
                 `\`\`\``,
                 ``,
-                `## 失敗時のトラブルシューティング`,
-                `- ChromeでThreadsを手動ログインし直してから extract_cookies2.py を再実行`,
-                `- 詳細は ~/threads_bot/TROUBLESHOOTING.md`,
-                ``,
                 `対応完了したらこのIssueをcloseしてください。`,
               ].join('\n'),
               labels: ['cookie-expired']
             })
+            core.setOutput('created', 'true')
+
+      - name: LINE通知（ログイン切れ）
+        if: failure() && steps.alert_cookie.outputs.created == 'true'
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🔑 ベモーレThreads 停止\n\nログイン切れで投稿できなくなりました。\n\n📱 対応してください：\n\ncd ~/threads_bot\npython3 extract_cookies2.py --profile 3\ngh secret set THREADS_SESSION < session.json"}]}'
 
       - name: Commit state files
         if: success() && steps.slot.outputs.dry != 'true'

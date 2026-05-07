@@ -7,6 +7,7 @@ import json
 import shutil
 import os
 import time
+import argparse
 
 try:
     from Crypto.Cipher import AES
@@ -16,8 +17,12 @@ except ImportError:
     from Crypto.Cipher import AES
     from Crypto.Protocol.KDF import PBKDF2
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--profile', default='1', help='Chrome profile number (1=personal, 3=bemolle_diet)')
+args = parser.parse_args()
+
 CHROME_COOKIES_PATH = os.path.expanduser(
-    "~/Library/Application Support/Google/Chrome/Profile 1/Cookies"
+    f"~/Library/Application Support/Google/Chrome/Profile {args.profile}/Cookies"
 )
 TEMP_COOKIES = "/tmp/Cookies_copy"
 

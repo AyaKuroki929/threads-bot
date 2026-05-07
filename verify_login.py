@@ -2,9 +2,13 @@
 session.jsonが有効かを確認（ヘッドレスでthreads.comを開いてログイン状態を見る）
 """
 import os
+import argparse
 from playwright.sync_api import sync_playwright
 
-SESSION_FILE = os.path.join(os.path.dirname(__file__), "session.json")
+parser = argparse.ArgumentParser()
+parser.add_argument('--session', default=os.path.join(os.path.dirname(__file__), "session.json"))
+args = parser.parse_args()
+SESSION_FILE = args.session
 
 def verify():
     with sync_playwright() as p:
