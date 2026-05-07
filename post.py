@@ -447,24 +447,26 @@ def _set_topic(page, topic: str):
     try:
         dialog = page.locator('div[role="dialog"]').last
 
-        def _find_topic_btn():
-            for sel in [
-                '[aria-label*="トピック"]',
-                '[aria-label*="Topic"]',
-                '[aria-label*="topic"]',
-                'div[role="button"]:has-text("トピックを追加")',
-                'div[role="button"]:has-text("Add topic")',
-                '[role="button"]:has-text("トピック")',
-                'button:has-text("トピック")',
-                'span:has-text("トピックを追加")',
-                '[data-testid*="topic"]',
-            ]:
-                loc = dialog.locator(sel).first
+        TOPIC_SELS = [
+            '[aria-label*="トピック"]',
+            '[aria-label*="Topic"]',
+            '[aria-label*="topic"]',
+            'div[role="button"]:has-text("トピックを追加")',
+            'div[role="button"]:has-text("Add topic")',
+            '[role="button"]:has-text("トピック")',
+            'button:has-text("トピック")',
+            'span:has-text("トピックを追加")',
+            '[data-testid*="topic"]',
+        ]
+
+        def _find_topic_btn(scope):
+            for sel in TOPIC_SELS:
+                loc = scope.locator(sel).first
                 if loc.count() > 0 and loc.is_visible():
                     return loc
             return None
 
-        topic_btn = _find_topic_btn()
+        topic_btn = _find_topic_btn(dialog)
 
         # 直接見つからない場合は「もっと見る」を展開してから再探索
         if topic_btn is None:
@@ -478,15 +480,21 @@ def _set_topic(page, topic: str):
                 if more_btn.count() > 0 and more_btn.is_visible():
                     print("[topic] 「もっと見る」を展開します")
                     more_btn.click()
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(2000)
                     break
-            topic_btn = _find_topic_btn()
+            # ダイアログ内を再探索し、なければページ全体も探す
+            topic_btn = _find_topic_btn(dialog)
+            if topic_btn is None:
+                topic_btn = _find_topic_btn(page)
+                if topic_btn:
+                    print("[topic] ページ全体からトピックボタンを発見")
 
         if topic_btn is None:
             try:
-                btns = dialog.locator('[role="button"]').all()
-                btn_texts = [b.text_content()[:30] for b in btns if b.is_visible()]
-                print(f"[topic] ボタンが見つかりません。dialog内のbutton一覧: {btn_texts[:15]}")
+                # デバッグ用: ページ上の全ボタンテキストを出力
+                all_btns = page.locator('[role="button"]').all()
+                btn_texts = [b.text_content()[:30] for b in all_btns if b.is_visible()]
+                print(f"[topic] ボタンが見つかりません。ページ内button一覧: {btn_texts[:20]}")
             except Exception:
                 pass
             print("[topic] トピックなしで続行。")
@@ -1079,7 +1087,7 @@ def _send_line_notify(slot: str, texts: list, comment_results: list = None):
         except Exception:
             pass
 
-    msg = f"📱 Threads投稿完了（{slot_label}）\n\n{content}{targets_msg}"
+    msg = f"📱 Threads投稿完了（{slot_label}）\n@{USERNAME}\n\n{content}{targets_msg}"
     try:
         body = {"messages": [{"type": "text", "text": msg}]}
         req = urllib.request.Request(
