@@ -385,7 +385,11 @@ def _input_text(page, text):
     textarea = page.locator('[contenteditable="true"]').first
     textarea.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
-    textarea.click()
+    try:
+        textarea.click(timeout=5000)
+    except Exception:
+        # オーバーレイに遮られた場合は force click で突破
+        textarea.click(force=True)
     page.wait_for_timeout(600)
     for i, line in enumerate(text.split("\n")):
         if i > 0:
@@ -712,6 +716,23 @@ def _generate_comment(post_text: str, account_note: str) -> str:
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
+        # トークン使用量をログに記録
+        try:
+            log_file = os.path.join(_BASE, "api_usage_log.json")
+            entries = []
+            if os.path.exists(log_file):
+                with open(log_file, encoding="utf-8") as f:
+                    entries = json.load(f)
+            entries.append({
+                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "user": USERNAME,
+                "in": resp.usage.input_tokens,
+                "out": resp.usage.output_tokens,
+            })
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(entries, f, ensure_ascii=False)
+        except Exception:
+            pass
         return resp.content[0].text.strip()
     except Exception as e:
         print(f"[comment] コメント生成失敗 → フォールバック: {e}")
