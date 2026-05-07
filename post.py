@@ -518,6 +518,26 @@ def _save_commented(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _check_account_exists(page, account):
+    """アカウントが実在し、投稿が1件以上あるか確認する。
+    存在しない・投稿0件・タイムアウトはすべて False を返す。"""
+    try:
+        page.goto(f"https://www.threads.com/@{account}",
+                  wait_until="domcontentloaded", timeout=15000)
+        page.wait_for_timeout(2000)
+        url = page.url
+        # 404 や not-found にリダイレクトされたら存在しない
+        if "404" in url or "not-found" in url or "login" in url.lower():
+            return False
+        # 投稿が1件以上あれば実在判定
+        for sel in ('div[data-pressable-container="true"]', 'article'):
+            if page.locator(sel).count() > 0:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _already_commented_recently(commented, account):
     """そのアカウントに過去一度でもコメント済みか（永久スキップ）。"""
     return any(f"/{account}/" in k for k in commented.keys())
@@ -556,21 +576,30 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
                 'a[href*="/post/"]',
                 'els => els.map(e => e.href)'
             )
+            candidates = []
             for link in links:
                 m = re.search(r'threads\.com/@([^/]+)/post/', link)
                 if not m:
                     continue
                 account = m.group(1)
-                if account in seen or account == USERNAME:
-                    continue
-                seen.add(account)
-                discovered.append({
-                    "account": account,
-                    "axis": "自動発見",
-                    "note": f"検索キーワード: {keyword}"
-                })
+                if account not in seen and account != USERNAME:
+                    seen.add(account)
+                    candidates.append(account)
+
+            # 実在確認してから追加
+            for account in candidates:
                 if len(discovered) >= max_new:
                     break
+                if _check_account_exists(page, account):
+                    print(f"[discover] @{account} 実在確認 ✅ → プール追加")
+                    discovered.append({
+                        "account": account,
+                        "axis": "自動発見",
+                        "note": f"検索キーワード: {keyword}",
+                        "verified": True
+                    })
+                else:
+                    print(f"[discover] @{account} 存在しない/投稿なし → スキップ")
 
             page.wait_for_timeout(random.randint(2000, 4000))
         except Exception as e:
@@ -636,7 +665,7 @@ def _generate_comment(post_text: str, account_note: str) -> str:
     if USERNAME == "bemolle_diet":
         persona = "大阪でエステサロンを経営している、美容と健康に詳しい30代後半の女性"
     else:
-        persona = "美容サロンオーナー兼AI自動化実践者（@aya_kuroki_0929）"
+        persona = "大阪でエステサロンを経営している、業務効率化と生産性向上に取り組む30代後半の女性"
 
     try:
         import anthropic
@@ -723,6 +752,33 @@ def _do_auto_comments(page, dry_run=False):
     commented = _load_commented()
 
     # 未コメントのアカウントを絞り込む
+    # verified フィールドがないアカウントを実在確認してプールをクリーンアップ
+    unverified = [t for t in targets if t.get("verified") is None]
+    if unverified:
+        print(f"[verify] 未確認アカウント {len(unverified)} 件を実在確認中...")
+        cleaned = []
+        pool_changed = False
+        for t in targets:
+            if t.get("verified") is None:
+                account = t.get("account", "")
+                if account and _check_account_exists(page, account):
+                    t["verified"] = True
+                    cleaned.append(t)
+                    print(f"[verify] @{account} ✅ 実在確認")
+                else:
+                    print(f"[verify] @{account} ❌ 存在しない → プールから削除")
+                pool_changed = True
+            else:
+                cleaned.append(t)
+        if pool_changed:
+            targets = cleaned
+            try:
+                with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(targets, f, ensure_ascii=False, indent=2)
+                print(f"[verify] プール更新完了（{len(targets)} 件）")
+            except Exception as e:
+                print(f"[verify] プール保存失敗: {e}")
+
     eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
     pool_accounts = {t.get("account", "") for t in targets}
 
