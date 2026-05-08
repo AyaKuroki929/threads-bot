@@ -24,16 +24,23 @@ echo "=== $(date) regen_personal start ===" >> "$LOG"
 
 PROMPT='あなたは黒木彩さん（@aya_kuroki_0929）の個人Threads投稿を担当しています。以下を実行してください。
 
-# 必ず参照する2つのソース
+# 参照するソース（この順番で必ず読む）
 
-## 1. /Users/ayakuroki/threads_bot/GENERATE_RULES_personal.md
-トーン・3本柱・実体験ソース・文体ルール等を把握。
+## 1. GENERATE_RULES_personal.md（ルール全文）
+/Users/ayakuroki/threads_bot/GENERATE_RULES_personal.md を読む。
+投稿哲学・トーン・3本柱・文体ルール・禁則を全て把握する。
 
-## 2. Notion ネタ帳（最優先）
-黒木さんがメモした最新ネタがあればそれを優先使用。
+## 2. Cloudレポート（事実の倉庫）
+黒木さんが実際に作ったもの・やってきた全プロジェクトが記録されている。
+- page_id: `351e55d8-9092-8051-88ff-d2c7930d92ec`
+- mcp__notion__API-get-block-children で参照（複数ページ取得が必要）
+- ここから「どんな経験をしてきた人か」を把握する素材として使う
+
+## 3. ネタ帳（感情・反応・気づき）
+Cloudレポートに載らない「そのとき何を感じたか・何に気づいたか」が書いてある。
 - page_id: `358e55d8-9092-81b6-8842-e7fbaadf2381`
 - mcp__notion__API-get-block-children で参照
-- ネタがない場合はGENERATE_RULES_personal.mdの「実体験ソース」から生成
+- 事実に「人間の温度」を加える素材として使う
 
 # やること
 
@@ -49,8 +56,9 @@ PROMPT='あなたは黒木彩さん（@aya_kuroki_0929）の個人Threads投稿�
 5. 完了後、標準出力に「morning +N / evening +N」の1行サマリのみを出力
 
 # 重要な禁則
-- GENERATE_RULES_personal.mdの「実体験ソース」に無いエピソードを創作しない
-- Notionネタ帳にメモがあればそれを最優先で使う
+- Cloudレポートやネタ帳に無いエピソードを創作しない
+- 「何をしたか」をそのまま書かない。「どんな人か・どんな感覚で生きてるか」が伝わるように変換する
+- 機械的な投稿・やったことを列挙するだけの投稿・説明口調の投稿は作らない
 - 形式ワード禁止・AI臭排除
 - 3点リーダーは「…」（1個）、「……」NG
 - タメ口禁止
