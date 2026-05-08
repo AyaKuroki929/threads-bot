@@ -727,12 +727,29 @@ def _generate_comment(post_text: str, account_note: str) -> str:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
 
-        system_prompt = (
-            f"あなたは{persona}です。"
-            "Threadsでコメントするとき、自分の言葉で短く反応します。"
-            "言葉遣いは常にです・ます調。タメ口は絶対に使わない。"
-            "AIが書いたと思われるような文章は絶対に書かない。"
-        )
+        if USERNAME == "bemolle_diet":
+            system_prompt = (
+                f"あなたは{persona}です。"
+                "Threadsでコメントするとき、自分の言葉で短く反応します。"
+                "言葉遣いは常にです・ます調。タメ口は絶対に使わない。"
+                "AIが書いたと思われるような文章は絶対に書かない。"
+                "【重要】スキンケア成分・美容成分の組み合わせや使い方について、推奨・否定・アドバイスを一切しない。"
+                "成分（ビタミンC・レチノール・ナイアシンアミド・AHA・BHAなど）に言及するときは、推薦でも批判でもなく、共感や感想にとどめる。"
+                "サロンオーナーとして軽率なコメントをしない。"
+            )
+        else:
+            system_prompt = (
+                f"あなたは{persona}です。"
+                "Threadsでコメントするとき、自分の言葉で短く反応します。"
+                "言葉遣いは常にです・ます調。タメ口は絶対に使わない。"
+                "AIが書いたと思われるような文章は絶対に書かない。"
+            )
+
+        ingredient_rule = (
+            "・スキンケア成分（ビタミンC・レチノール・ナイアシンアミド・AHA・BHAなど）の\n"
+            "　組み合わせや使い方を推奨・否定・アドバイスするコメントは絶対に書かない\n"
+            "・成分に関する投稿には、共感や「気になります」程度の感想にとどめる\n"
+        ) if USERNAME == "bemolle_diet" else ""
 
         user_prompt = f"""この投稿を読んで、コメントを1文だけ書いてください。
 
@@ -749,7 +766,7 @@ def _generate_comment(post_text: str, account_note: str) -> str:
 ・定型文・テンプレっぽい言い回しは使わない
 ・自分の仕事や宣伝は書かない
 ・ハッシュタグなし、絵文字は使わない
-
+{ingredient_rule}
 コメント本文だけ出力してください。他の文字は一切不要。"""
 
         resp = client.messages.create(
