@@ -27,6 +27,7 @@ jobs:
     timeout-minutes: 5
     env:
       TZ: Asia/Tokyo
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +47,8 @@ jobs:
             VALID_START=0; VALID_END=24
           else
             case "${{ github.event.schedule }}" in
-              "30 23 * * *"|"0 0 * * *"|"30 0 * * *") SLOT="morning"; VALID_START=5;  VALID_END=11 ;;
-              "30 4 * * *"|"0 5 * * *"|"30 5 * * *")  SLOT="noon";    VALID_START=11; VALID_END=17 ;;
+              "30 23 * * *"|"0 0 * * *"|"30 0 * * *") SLOT="morning"; VALID_START=5;  VALID_END=13 ;;
+              "30 4 * * *"|"0 5 * * *"|"30 5 * * *")  SLOT="noon";    VALID_START=11; VALID_END=19 ;;
               "30 13 * * *"|"0 14 * * *"|"30 14 * * *") SLOT="evening"; VALID_START=17; VALID_END=24 ;;
               *) SLOT="evening"; VALID_START=17; VALID_END=24 ;;
             esac
@@ -158,7 +159,79 @@ jobs:
               labels: ['heartbeat-alert']
             })
 
+      - name: Verify last_run_personal.json
+        if: steps.slot.outputs.skip != 'true'
+        id: verify_personal
+        run: |
+          SLOT="${{ steps.slot.outputs.name }}"
+          TODAY="${{ steps.slot.outputs.today }}"
+          if [ ! -f last_run_personal.json ]; then
+            echo "ok=false" >> $GITHUB_OUTPUT
+            echo "reason=last_run_personal.json not found" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          LAST=$(python3 -c "import json; print(json.load(open('last_run_personal.json')).get('$SLOT', ''))")
+          echo "[heartbeat-personal] $SLOT today=$TODAY last_recorded=$LAST"
+          if [[ "$LAST" == "$TODAY"* ]]; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "ok=false" >> $GITHUB_OUTPUT
+            echo "reason=last personal $SLOT recorded: '$LAST', expected today=$TODAY" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Auto-recovery (personal) - trigger post_personal.yml if missing
+        if: steps.slot.outputs.skip != 'true' && steps.verify_personal.outputs.ok != 'true'
+        id: recovery_personal
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const slot = '${{ steps.slot.outputs.name }}'
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'post_personal.yml',
+                ref: 'main',
+                inputs: { slot: slot, dry_run: 'false' }
+              })
+              console.log(`[recovery personal] post_personal.yml triggered for ${slot}`)
+              core.setOutput('triggered', 'true')
+            } catch (e) {
+              console.log(`[recovery personal] trigger failed: ${e.message}`)
+              core.setOutput('triggered', 'false')
+              core.setOutput('error', e.message)
+            }
+
+      - name: LINE通知（heartbeat検知）
+        if: |
+          always() &&
+          steps.slot.outputs.skip != 'true' &&
+          (steps.verify.outputs.ok != 'true' || steps.verify_personal.outputs.ok != 'true')
+        run: |
+          MSG=""
+          if [ "${{ steps.verify.outputs.ok }}" != "true" ]; then
+            MSG="${MSG}⚠️ ベモーレ ${{ steps.slot.outputs.name }} 投稿未確認\n"
+            if [ "${{ steps.recovery.outputs.triggered }}" = "true" ]; then
+              MSG="${MSG}→ 自動リカバリ発動済み\n"
+            else
+              MSG="${MSG}→ リカバリ失敗（手動対応が必要）\n"
+            fi
+          fi
+          if [ "${{ steps.verify_personal.outputs.ok }}" != "true" ]; then
+            MSG="${MSG}⚠️ 個人 ${{ steps.slot.outputs.name }} 投稿未確認\n"
+            if [ "${{ steps.recovery_personal.outputs.triggered }}" = "true" ]; then
+              MSG="${MSG}→ 自動リカバリ発動済み\n"
+            else
+              MSG="${MSG}→ リカバリ失敗（手動対応が必要）\n"
+            fi
+          fi
+          MSG="${MSG}\nhttps://github.com/AyaKuroki929/threads-bot/actions"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+
       - name: Summary
         if: always()
         run: |
-          echo "[heartbeat] slot=${{ steps.slot.outputs.name }} ok=${{ steps.verify.outputs.ok }} recovery_triggered=${{ steps.recovery.outputs.triggered }}"
+          echo "[heartbeat] slot=${{ steps.slot.outputs.name }} bemolle_ok=${{ steps.verify.outputs.ok }} personal_ok=${{ steps.verify_personal.outputs.ok }} recovery_bemolle=${{ steps.recovery.outputs.triggered }} recovery_personal=${{ steps.recovery_personal.outputs.triggered }}"

@@ -223,6 +223,16 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"messages":[{"type":"text","text":"🔑 個人Threads 停止\n\nログイン切れで投稿できなくなりました。\n\n📱 対応してください：\n\ncd ~/threads_bot\npython3 extract_cookies2.py --profile 1\ngh secret set THREADS_SESSION_PERSONAL < session.json"}]}'
 
+      - name: LINE通知（予期せぬエラー）
+        if: failure() && steps.post.outputs.exit_code != '3' && steps.post.outputs.exit_code != '4' && steps.post.conclusion != 'success'
+        run: |
+          SLOT="${{ steps.params.outputs.name }}"
+          EC="${{ steps.post.outputs.exit_code }}"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 個人Threads 予期せぬエラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\n投稿できなかった可能性があります。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+
       - name: Commit state files
         if: success() && steps.params.outputs.dry != 'true'
         run: |
