@@ -1009,16 +1009,10 @@ def _open_composer(page):
     ]
     for sel in opener_selectors:
         loc = page.locator(sel).first
-        cnt = loc.count()
-        vis = loc.is_visible() if cnt > 0 else False
-        print(f"[composer_debug] {sel!r}: count={cnt}, visible={vis}")
-        if cnt > 0 and vis:
+        if loc.count() > 0 and loc.is_visible():
             loc.click()
             page.wait_for_timeout(2500)
             return
-    # 診断: ページURL・タイトル・スクリーンショット保存
-    print(f"[composer_debug] URL={page.url}, title={page.title()}")
-    page.screenshot(path="composer_debug.png")
     raise RuntimeError("投稿コンポーザーを開けませんでした")
 
 

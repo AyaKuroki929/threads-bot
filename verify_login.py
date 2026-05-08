@@ -23,11 +23,27 @@ def verify():
         print(f"URL: {url}")
         print(f"Title: {title}")
 
-        # ログイン中なら投稿ボタン or プロフィールアイコンが見える
+        # パスワード変更後に出る再認証モーダルを最優先で検出
+        reauth_selectors = [
+            'button:has-text("Continue with Instagram")',
+            'a:has-text("Continue with Instagram")',
+            'div[role="button"]:has-text("Continue with Instagram")',
+        ]
+        for sel in reauth_selectors:
+            if page.locator(sel).first.count() > 0:
+                print("❌ 再認証モーダル検出（Say more with Threads）")
+                print("   → Chromeでthreads.comを開き「Continue with Instagram」をクリックして")
+                print("     新しいパスワードでログインし直してから、もう一度extract_cookies2.pyを実行してください")
+                page.screenshot(path="verify.png", full_page=False)
+                print("スクリーンショット保存: verify.png")
+                browser.close()
+                return False
+
+        # ログイン済みなら投稿ボタンが見える
         logged_in_selectors = [
-            'a[href="/intent/post"]',
-            '[aria-label*="新しい"]',
             '[aria-label*="Create"]',
+            '[aria-label*="新しい"]',
+            'a[href="/intent/post"]',
             'a[href^="/@"]',
         ]
         found = None
@@ -38,15 +54,18 @@ def verify():
 
         if found:
             print(f"✅ ログイン状態を確認：{found}")
+            page.screenshot(path="verify.png", full_page=False)
+            print("スクリーンショット保存: verify.png")
+            browser.close()
+            return True
         else:
-            print("❌ ログインできていません。ログイン画面の可能性。")
-            # ログインボタンがあるか
+            print("❌ ログインできていません。")
             if page.locator('text=/ログイン|Log in/').first.is_visible():
-                print("   → ログインボタンが見えています")
-
-        page.screenshot(path="verify.png", full_page=False)
-        print("スクリーンショット保存: verify.png")
-        browser.close()
+                print("   → ログインボタンが見えています（セッション切れ）")
+            page.screenshot(path="verify.png", full_page=False)
+            print("スクリーンショット保存: verify.png")
+            browser.close()
+            return False
 
 if __name__ == "__main__":
     verify()
