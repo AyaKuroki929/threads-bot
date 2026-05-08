@@ -235,6 +235,8 @@ jobs:
             echo "no state changes"
           else
             git commit -m "state_personal: ${{ steps.params.outputs.name }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
-            git rebase FETCH_HEAD 2>/dev/null || git rebase --abort 2>/dev/null || true
-            git push
+            for i in 1 2 3; do
+              git pull --rebase -X theirs origin main 2>/dev/null || git rebase --abort 2>/dev/null || true
+              git push && break || sleep 3
+            done
           fi
