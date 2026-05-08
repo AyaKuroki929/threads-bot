@@ -656,13 +656,31 @@ _FALLBACK_COMMENTS = [
 ]
 
 
+_SENTENCE_ENDINGS = ("。", "！", "？", "…", "♪", "〜", "ね", "よ", "わ", "な", "か")
+
+def _trim_to_complete_sentence(text: str) -> str:
+    """文章が途中で切れていたら、最後の文末記号で切り捨てる。"""
+    text = text.strip()
+    if not text:
+        return text
+    # 既に文末で終わっていればそのまま
+    if text[-1] in "。！？…♪〜」』）":
+        return text
+    # 最後の文末記号を探して、そこで切る
+    for end_char in ("。", "！", "？", "…"):
+        idx = text.rfind(end_char)
+        if idx != -1:
+            return text[:idx + 1]
+    # 文末記号がなければそのまま返す（短い文の可能性）
+    return text
+
+
 def _generate_comment(post_text: str, account_note: str) -> str:
     """投稿内容に合ったコメントをClaude APIで生成。APIキー未設定はフォールバック。"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key or not post_text.strip():
         return random.choice(_FALLBACK_COMMENTS)
 
-    # アカウントごとのペルソナ
     if USERNAME == "bemolle_diet":
         persona = "大阪でエステサロンを経営している、美容と健康に詳しい30代後半の女性"
     else:
@@ -674,31 +692,32 @@ def _generate_comment(post_text: str, account_note: str) -> str:
 
         system_prompt = (
             f"あなたは{persona}です。"
-            "Threadsで他の人の投稿にコメントするとき、自分の言葉で短く反応します。"
-            "言葉遣いは常にです・ます調（敬語）。タメ口は絶対に使わない。"
+            "Threadsでコメントするとき、自分の言葉で短く反応します。"
+            "言葉遣いは常にです・ます調。タメ口は絶対に使わない。"
+            "AIが書いたと思われるような文章は絶対に書かない。"
         )
 
-        user_prompt = f"""この投稿を読んで、一言コメントしてください。
+        user_prompt = f"""この投稿を読んで、コメントを1文だけ書いてください。
 
-{post_text[:350]}
+{post_text[:300]}
 
 ---
-守ること：
-・です・ます調（敬語）で書く。タメ口にならない
-・読んで最初に感じたことを書く。考えすぎない
-・10〜35文字くらい。短くていい。長くしない
-・投稿の中の具体的な言葉（数字・エピソード・フレーズ）を拾って反応する
-・「参考になります」「勉強になりました」「素晴らしいですね」は絶対に使わない
+絶対に守ること：
+・必ず文章を完結させる。「〜と感」「〜ので」など途中で終わらない
+・1文で完結。25文字以内が理想。どんなに長くても40文字まで
+・です・ます調（敬語）で書く
+・投稿の中の具体的な言葉（数字・固有名詞・エピソード）を1つ拾って反応する
+・「参考になります」「勉強になりました」「素晴らしいですね」「すごいですね」は使わない
 ・「とても」「非常に」「大変」などの強調語は使わない
-・「〜ですね」ばかり繰り返さない。語尾に変化をつける
+・定型文・テンプレっぽい言い回しは使わない
 ・自分の仕事や宣伝は書かない
-・ハッシュタグなし、絵文字は1個まで（なくてもOK）
+・ハッシュタグなし、絵文字は使わない
 
-コメント本文だけ出力してください。"""
+コメント本文だけ出力してください。他の文字は一切不要。"""
 
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=120,
+            max_tokens=80,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
@@ -719,7 +738,12 @@ def _generate_comment(post_text: str, account_note: str) -> str:
                 json.dump(entries, f, ensure_ascii=False)
         except Exception:
             pass
-        return resp.content[0].text.strip()
+
+        comment = _trim_to_complete_sentence(resp.content[0].text.strip())
+        # 空になったかチェック
+        if not comment:
+            return random.choice(_FALLBACK_COMMENTS)
+        return comment
     except Exception as e:
         print(f"[comment] コメント生成失敗 → フォールバック: {e}")
         return random.choice(_FALLBACK_COMMENTS)
