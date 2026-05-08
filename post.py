@@ -997,7 +997,7 @@ def _open_composer(page):
     page.wait_for_timeout(3000)
     _detect_login_required(page)
     page.goto("https://www.threads.com", wait_until="domcontentloaded")
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(7000)
     _detect_login_required(page)   # cookie切れならここで CookieExpiredError
     opener_selectors = [
         'div[role="button"]:has-text("What\'s new?")',
@@ -1007,12 +1007,18 @@ def _open_composer(page):
         '[aria-label*="新しい"]',
         'a[href="/intent/post"]',
     ]
+    # CI headless環境ではis_visible()がFalseになる場合があるためforce clickで対応
     for sel in opener_selectors:
         loc = page.locator(sel).first
-        if loc.count() > 0 and loc.is_visible():
-            loc.click()
-            page.wait_for_timeout(2500)
-            return
+        if loc.count() > 0:
+            try:
+                loc.scroll_into_view_if_needed()
+                page.wait_for_timeout(500)
+                loc.click(force=True)
+                page.wait_for_timeout(2500)
+                return
+            except Exception:
+                continue
     raise RuntimeError("投稿コンポーザーを開けませんでした")
 
 
