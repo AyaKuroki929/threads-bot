@@ -235,9 +235,10 @@ jobs:
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 個人Threads 予期せぬエラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\n投稿できなかった可能性があります。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
 
       - name: セッション Cookie 自動更新（Mac不要の自己更新）
-        if: success() && steps.params.outputs.dry != 'true'
+        if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'
+        continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           if [ -f session_refreshed.json ]; then
             python3 -c "import json; d=json.load(open('session_refreshed.json')); uid=next((c['value'] for c in d.get('cookies',[]) if c['name']=='ds_user_id'),''); print('refreshed uid:', uid)"
@@ -248,7 +249,7 @@ jobs:
           fi
 
       - name: Commit state files
-        if: success() && steps.params.outputs.dry != 'true'
+        if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
