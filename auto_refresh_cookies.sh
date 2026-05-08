@@ -10,12 +10,12 @@ LOG_FILE="cookie_refresh.log"
 REPO="AyaKuroki929/threads-bot"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 LAST_RUN_FILE=".cookie_refresh_last_run"
-REFRESH_INTERVAL_HOURS=72  # 72時間以内に更新済みならスキップ
+REFRESH_INTERVAL_HOURS=20  # 20時間以内に更新済みならスキップ（実質1日1回）
 
 log() { echo "[$TIMESTAMP] $*" >> "$LOG_FILE"; }
 log "==== cookie refresh start ===="
 
-# 72時間以内に更新済みならスキップ（launchd の複数スケジュールによる重複実行防止）
+# 20時間以内に更新済みならスキップ（launchd の複数スケジュールによる重複実行防止）
 if [ -f "$LAST_RUN_FILE" ]; then
     last_run=$(cat "$LAST_RUN_FILE")
     now=$(date +%s)
@@ -114,6 +114,17 @@ print(uid)
     fi
 
     log "SUCCESS[$account]: Cookie更新完了 (${cookie_count}件)"
+
+    # 成功時：関連する open Issue があればクローズ（次回失敗時のLINE通知を復活させる）
+    for label in "cookie-expired" "account-mismatch-personal" "cookie-expired-personal"; do
+        open_issue=$(/opt/homebrew/bin/gh issue list --repo "$REPO" --state open --label "$label" --json number --jq '.[0].number' 2>/dev/null || echo "")
+        if [ -n "$open_issue" ]; then
+            /opt/homebrew/bin/gh issue close "$open_issue" --repo "$REPO" \
+                --comment "[$account] Cookie自動更新成功。Issue自動クローズ。" >> "$LOG_FILE" 2>&1 && \
+                log "Issue #$open_issue を自動クローズ"
+        fi
+    done
+
     return 0
 }
 

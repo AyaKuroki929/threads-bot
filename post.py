@@ -1150,6 +1150,15 @@ def post_to_threads(texts, debug=False, dry_run=False, topic=""):
             if AUTO_COMMENT:
                 print("[comment] 自動コメント開始...")
                 comment_results = _do_auto_comments(page, dry_run=dry_run)
+
+            # 投稿成功後：Playwright が取得した最新 Cookie をファイルに保存
+            # GitHub Actions がこれを読んで Secret を上書きすることで Mac 不要の自動更新が実現する
+            try:
+                context.storage_state(path="session_refreshed.json")
+                print(f"[session] 最新 Cookie を session_refreshed.json に保存しました")
+            except Exception as e:
+                print(f"[session] Cookie 保存スキップ: {e}")
+
             return {"post_verified": post_verified, "comment_results": comment_results}
         finally:
             browser.close()
