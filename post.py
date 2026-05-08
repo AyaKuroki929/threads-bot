@@ -990,7 +990,12 @@ def _do_auto_comments(page, dry_run=False):
 
 
 def _open_composer(page):
-    """ホームから新規投稿モーダルを開く。"""
+    """ホームから新規投稿モーダルを開く。
+    プロフィールページに先に遷移してセッションを確立してからホームへ戻る。
+    CI環境(Ubuntu)でいきなりホームを開くとセッションが半壊状態になる問題の回避策。"""
+    page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded")
+    page.wait_for_timeout(3000)
+    _detect_login_required(page)
     page.goto("https://www.threads.com", wait_until="domcontentloaded")
     page.wait_for_timeout(5000)
     _detect_login_required(page)   # cookie切れならここで CookieExpiredError
