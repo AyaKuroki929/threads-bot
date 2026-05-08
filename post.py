@@ -993,9 +993,11 @@ def _open_composer(page):
     """ホームから新規投稿モーダルを開く。
     プロフィールページに先に遷移してセッションを確立してからホームへ戻る。
     CI環境(Ubuntu)でいきなりホームを開くとセッションが半壊状態になる問題の回避策。"""
-    page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded")
-    page.wait_for_timeout(3000)
-    _detect_login_required(page)
+    # 既にプロフィールページにいない場合のみ遷移（_verify_accountのUI確認後の二重遷移を避ける）
+    if f"/@{USERNAME}" not in page.url:
+        page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        _detect_login_required(page)
     page.goto("https://www.threads.com", wait_until="domcontentloaded")
     page.wait_for_timeout(7000)
     _detect_login_required(page)   # cookie切れならここで CookieExpiredError
@@ -1019,6 +1021,16 @@ def _open_composer(page):
                 return
             except Exception:
                 continue
+    # フォールバック: /intent/post に直接遷移してモーダルを開く
+    print("[composer] ホームからの起動に失敗。/intent/post へ直接遷移します")
+    page.goto("https://www.threads.com/intent/post", wait_until="domcontentloaded")
+    page.wait_for_timeout(3000)
+    _detect_login_required(page)
+    # テキスト入力エリアが表示されていれば成功
+    textbox = page.locator('[contenteditable="true"]').first
+    if textbox.count() > 0:
+        print("[composer] /intent/post から起動成功")
+        return
     raise RuntimeError("投稿コンポーザーを開けませんでした")
 
 

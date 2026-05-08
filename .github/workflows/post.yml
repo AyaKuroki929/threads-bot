@@ -59,6 +59,7 @@ jobs:
       COMMENTED_FILE: commented_posts.json
       COMMENT_KEYWORDS_FILE: comment_search_keywords.json
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EXPECTED_USER_ID: '73523451930'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
