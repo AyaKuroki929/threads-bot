@@ -76,10 +76,30 @@ def _detect_login_required(page):
 def _verify_account(page):
     """ログイン中アカウントが USERNAME と一致するか確認。不一致なら即 SystemExit。
     投稿前に必ず呼ぶ。誤アカウントへの投稿を防ぐ最終防波堤。"""
+    # ① Cookie の ds_user_id で確認（UI変更に左右されない最優先チェック）
+    expected_uid = os.environ.get("EXPECTED_USER_ID", "")
+    if expected_uid:
+        try:
+            cookies = page.context.cookies()
+            actual_uid = next(
+                (c["value"] for c in cookies
+                 if c["name"] == "ds_user_id" and "threads" in c.get("domain", "")),
+                ""
+            )
+            if actual_uid == expected_uid:
+                print(f"[account] ✅ @{USERNAME} でログイン確認済み（ds_user_id: {actual_uid}）")
+                return
+            if actual_uid:
+                print(f"[account] ❌ アカウント不一致（cookie）。期待UID={expected_uid} / 実際={actual_uid}")
+                sys.exit(4)
+            # actual_uid が空の場合は ② へフォールスルー
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[account] ⚠️ Cookie確認失敗、UIチェックにフォールバック: {e}")
+
+    # ② ブラウザUIで確認（ds_user_id が取れなかった場合のフォールバック）
     try:
-        # ホームにアクセスしてナビのプロフィールリンクで確認（最も確実な方法）
-        # 自分のプロフィールページにアクセスし「プロフィールを編集」ボタンで確認
-        # このボタンは自分のプロフィールにしか表示されないため確実
         page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(4000)
         _detect_login_required(page)
@@ -95,7 +115,6 @@ def _verify_account(page):
             if loc.count() > 0:
                 print(f"[account] ✅ @{USERNAME} でログイン確認済み（edit button）")
                 return
-        # 編集ボタンがない = 自分のプロフィールではない
         actual_url = page.url
         print(f"[account] ❌ アカウント不一致。期待: @{USERNAME} / URL: {actual_url}")
         print(f"[account] THREADS_SESSION シークレットが @{USERNAME} のセッションか確認してください。")
@@ -105,7 +124,6 @@ def _verify_account(page):
     except CookieExpiredError:
         raise
     except Exception as e:
-        # 確認できなかった場合は警告のみ（投稿は続行）
         print(f"[account] ⚠️ アカウント確認スキップ（確認不能）: {e}")
 
 

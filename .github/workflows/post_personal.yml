@@ -54,6 +54,7 @@ jobs:
       COMMENT_MIN_POOL: '5'
       COMMENT_KEYWORDS_FILE: comment_search_keywords_personal.json
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EXPECTED_USER_ID: '63084943935'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
