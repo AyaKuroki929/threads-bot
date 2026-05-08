@@ -49,7 +49,8 @@ class CookieExpiredError(Exception):
 def _detect_login_required(page):
     """ログイン画面に飛ばされていないかチェック。飛ばされていたら CookieExpiredError。
     a[href*="/login?"] は複数アカウントページにも存在するため使わない。
-    URLにloginが含まれるか、ログインフォーム入力欄が表示されているかで判定。"""
+    URLにloginが含まれるか、ログインフォーム入力欄が表示されているかで判定。
+    パスワード変更後に出る "Say more with Threads" 再認証モーダルも検出する。"""
     if "login" in page.url.lower():
         raise CookieExpiredError(
             f"Threadsのログインセッションが切れています（URL: {page.url}）。"
@@ -66,6 +67,24 @@ def _detect_login_required(page):
                 raise CookieExpiredError(
                     f"Threadsのログインセッションが切れています（{sel} 検出）。"
                     "Macで `python3 extract_cookies2.py && gh secret set THREADS_SESSION < session.json` を実行してください。"
+                )
+        except CookieExpiredError:
+            raise
+        except Exception:
+            continue
+    # パスワード変更後のセッション半壊状態で出る再認証モーダルを検出
+    reauth_selectors = [
+        'button:has-text("Continue with Instagram")',
+        'a:has-text("Continue with Instagram")',
+        'div[role="button"]:has-text("Continue with Instagram")',
+    ]
+    for sel in reauth_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                raise CookieExpiredError(
+                    "Threads再認証モーダルが表示されました（セッション半壊）。"
+                    "Chrome Profile でThreadsに再ログイン後、cookie を再取得してください。"
                 )
         except CookieExpiredError:
             raise
