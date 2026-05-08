@@ -698,7 +698,7 @@ def _generate_comment(post_text: str, account_note: str) -> str:
 
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=60,
+            max_tokens=120,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]
         )
