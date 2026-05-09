@@ -1101,8 +1101,9 @@ def _get_latest_post_url(page, after_reply=False):
     return href
 
 
-def _check_latest_post_is_recent(page, max_age_min=10):
-    """プロフィールページで最新投稿が max_age_min 分以内か確認。None=確認不能。"""
+def _check_latest_post_is_recent(page, max_age_min=20):
+    """プロフィールページで最新投稿が max_age_min 分以内か確認。None=確認不能。
+    60分超の場合はプロフィールキャッシュ未更新の可能性が高いため None を返す。"""
     try:
         from datetime import timezone
         articles = page.locator('div[data-pressable-container="true"]')
@@ -1119,6 +1120,10 @@ def _check_latest_post_is_recent(page, max_age_min=10):
         post_dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
         age_min = (datetime.now(timezone.utc) - post_dt).total_seconds() / 60
         print(f"[verify] 最新投稿 {age_min:.1f}分前")
+        if age_min > 60:
+            # 60分超 = プロフィールが未更新の可能性大。確認不能として扱う
+            print("[verify] 60分超のため確認不能（プロフィール未更新の可能性）→ None")
+            return None
         return age_min <= max_age_min
     except Exception as e:
         print(f"[verify] タイムスタンプ確認失敗（続行）: {e}")
@@ -1207,7 +1212,8 @@ def post_to_threads(texts, debug=False, dry_run=False, topic=""):
                     print(f"[debug] {i}部目URL: {current_url}")
             else:
                 # 単発投稿: プロフィールへ移動してタイムスタンプ確認
-                page.wait_for_timeout(3000)
+                # 15秒待機：/intent/post 経由の場合、プロフィールに反映されるまで時間がかかるため
+                page.wait_for_timeout(15000)
                 try:
                     _get_latest_post_url(page)  # プロフィールページへ移動
                     post_verified = _check_latest_post_is_recent(page)
