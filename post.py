@@ -573,10 +573,17 @@ def _check_account_exists(page, account):
         return False
 
 
-def _already_commented_recently(commented, account):
-    """そのアカウントに過去一度でもコメント済みか（永久スキップ）。
-    同じアカウントへの重複コメントを完全に防止する。"""
-    return any(f"/{account}/" in k for k in commented.keys())
+def _already_commented_recently(commented, account, days=30):
+    """そのアカウントに過去 days 日以内にコメント済みか。
+    days 日を超えていれば再コメント可能（プール枯渇防止）。"""
+    keys = [k for k in commented.keys() if f"/{account}/" in k]
+    if not keys:
+        return False
+    try:
+        latest = max(datetime.strptime(commented[k], "%Y-%m-%d %H:%M:%S") for k in keys)
+        return (datetime.now() - latest).days < days
+    except Exception:
+        return True
 
 
 def _discover_new_accounts(page, already_done_accounts, max_new=20):
@@ -932,11 +939,15 @@ def _do_auto_comments(page, dry_run=False):
 
     # 未コメントが COMMENT_MIN_POOL を下回ったら自動発掘
     if len(eligible) < COMMENT_MIN_POOL:
-        already_known = pool_accounts | set(
+        # 発掘除外対象：プール内アカウント + 30日以内にコメント済みのアカウント
+        # （30日超の既コメント済みは再発掘対象に戻す）
+        recently_blocked = {
             re.search(r'/([^/]+)/', k).group(1)
             for k in commented.keys()
             if re.search(r'/([^/]+)/', k)
-        )
+            and _already_commented_recently(commented, re.search(r'/([^/]+)/', k).group(1))
+        }
+        already_known = pool_accounts | recently_blocked
         new_targets = _discover_new_accounts(page, already_known, max_new=COMMENT_DISCOVER_MAX)
         if new_targets:
             targets = targets + new_targets
