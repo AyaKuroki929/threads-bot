@@ -1,0 +1,100 @@
+name: Anthropic API 月次レポート
+
+on:
+  schedule:
+    # 28〜31日の 9:00 JST = UTC 0:00 に発火。スクリプト内で月末のみ実行。
+    - cron: '0 0 28-31 * *'
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: Asia/Tokyo
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate and send report
+        run: |
+          python3 << 'EOF'
+          import json, os, urllib.request
+          from datetime import datetime, timedelta
+          import calendar
+
+          # 月末以外はスキップ（28〜31日に発火するcronの誤発火防止）
+          today = datetime.now()
+          last_day = calendar.monthrange(today.year, today.month)[1]
+          if today.day != last_day:
+              print(f"[skip] 今日は{today.day}日。月末({last_day}日)ではないのでスキップ。")
+              exit(0)
+
+          log_file = "api_usage_log.json"
+          line_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+
+          # 今月1日〜末日で集計
+          month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+          entries = []
+          if os.path.exists(log_file):
+              with open(log_file, encoding="utf-8") as f:
+                  entries = json.load(f)
+
+          month_entries = [
+              e for e in entries
+              if datetime.strptime(e["ts"], "%Y-%m-%d %H:%M:%S") >= month_start
+          ]
+
+          total_in  = sum(e["in"]  for e in month_entries)
+          total_out = sum(e["out"] for e in month_entries)
+          count     = len(month_entries)
+
+          # Haiku 4.5 料金: $0.80/MTok入力, $4.00/MTok出力
+          cost_usd = (total_in * 0.80 + total_out * 4.00) / 1_000_000
+          cost_jpy = cost_usd * 150
+
+          # アカウント別集計
+          bemolle_count  = sum(1 for e in month_entries if e.get("user") == "bemolle_diet")
+          personal_count = sum(1 for e in month_entries if e.get("user") == "aya_kuroki_0929")
+
+          month_label = today.strftime("%Y年%-m月")
+
+          msg = (
+              f"📊 Anthropic API 月次レポート\n"
+              f"{month_label}（1日〜{last_day}日）\n\n"
+              f"コメント生成: {count}回\n"
+              f"  @bemolle_diet: {bemolle_count}回\n"
+              f"  @aya_kuroki_0929: {personal_count}回\n\n"
+              f"使用トークン\n"
+              f"  入力: {total_in:,}\n"
+              f"  出力: {total_out:,}\n\n"
+              f"推定コスト: ${cost_usd:.4f}（約{cost_jpy:.1f}円）"
+          )
+
+          if count == 0:
+              msg += "\n\n⚠️ 今月はコメント生成0回です。APIが正常か確認してください。"
+
+          print(msg)
+
+          if line_token:
+              payload = json.dumps({
+                  "messages": [{"type": "text", "text": msg}]
+              }).encode("utf-8")
+              req = urllib.request.Request(
+                  "https://api.line.me/v2/bot/message/broadcast",
+                  data=payload,
+                  headers={
+                      "Authorization": f"Bearer {line_token}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST"
+              )
+              with urllib.request.urlopen(req) as r:
+                  print("LINE送信:", r.status)
+          EOF
