@@ -1401,16 +1401,14 @@ def main():
         record_success(time_slot)
         schedule_next_wake(time_slot)
 
-        # コメント0件（プール枯渇・発掘失敗）または全件失敗の場合に通知
+        # コメント結果はログのみ（対応不要のため通知しない）
         if AUTO_COMMENT:
             if not comment_results:
                 print("[warn] コメント対象アカウントなし（プール枯渇 or 発掘失敗）")
-                _send_line_failure_notify("no_comment_targets", time_slot)
             else:
                 ok_count = sum(1 for r in comment_results if r.get("status") == "ok")
                 if ok_count == 0:
                     print("[warn] 自動コメントが全件失敗しました")
-                    _send_line_failure_notify("comment", time_slot)
 
 
 if __name__ == "__main__":
