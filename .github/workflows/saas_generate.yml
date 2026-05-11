@@ -28,7 +28,9 @@ jobs:
           pip install anthropic gspread google-auth
 
       - name: Write Google Service Account
-        run: echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > google_service_account.json
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
 
       - name: Generate posts for all salons
         if: ${{ github.event.inputs.salon_name == '' }}
