@@ -1,0 +1,46 @@
+name: SaaS - サロン自動投稿
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 毎日 AM9時(JST) - 朝投稿
+    - cron: '0 11 * * *'  # 毎日 PM8時(JST) - 夜投稿
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: '投稿スロット（morning / evening）'
+        required: true
+        default: 'morning'
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Post (scheduled morning)
+        if: github.event_name == 'schedule' && github.event.schedule == '0 0 * * *'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 post_saas.py morning
+
+      - name: Post (scheduled evening)
+        if: github.event_name == 'schedule' && github.event.schedule == '0 11 * * *'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 post_saas.py evening
+
+      - name: Post (manual)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 post_saas.py ${{ github.event.inputs.slot }}
