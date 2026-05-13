@@ -152,9 +152,9 @@ def already_posted_today(time_slot):
     範囲外（例: evening が深夜0時に記録）は遅延発火扱いで無効 → 正規時間帯に再発火させる。
 
     JST時間帯：
-    - morning: 5:00〜10:59
-    - noon:    11:00〜16:59
-    - evening: 17:00〜23:59
+    - morning: 5:00〜9:59
+    - noon:    11:00〜13:59
+    - evening: 17:00〜22:59
     """
     if not os.path.exists(LAST_RUN_FILE):
         return False
@@ -177,11 +177,11 @@ def already_posted_today(time_slot):
         return False
 
     valid_hours = {
-        "morning":  (5, 11),
-        "morning2": (8, 12),
-        "noon":     (11, 17),
-        "evening2": (16, 20),
-        "evening":  (17, 24),
+        "morning":  (5, 10),
+        "morning2": (8, 11),
+        "noon":     (11, 14),
+        "evening2": (16, 19),
+        "evening":  (17, 23),
     }
     h_start, h_end = valid_hours.get(time_slot, (0, 24))
     return h_start <= last_dt.hour < h_end
@@ -189,11 +189,11 @@ def already_posted_today(time_slot):
 
 # slotごとの「現在時刻が投稿していい時間帯か」判定用（同じテーブル）
 SLOT_VALID_HOURS = {
-    "morning":  (5, 11),
-    "morning2": (8, 12),
-    "noon":     (11, 17),
-    "evening2": (16, 20),
-    "evening":  (17, 24),
+    "morning":  (5, 10),
+    "morning2": (8, 11),
+    "noon":     (11, 14),
+    "evening2": (16, 19),
+    "evening":  (17, 23),
 }
 
 
@@ -699,6 +699,28 @@ _FALLBACK_COMMENTS = [
     "読んでよかったです。",
 ]
 
+# この投稿トピックへのコメントはブランドイメージ保護のため一切しない
+_NEGATIVE_IMPRESSION_SKIP_WORDS = [
+    # 体臭・においの問題
+    "臭い", "臭う", "におい", "ニオイ", "頭皮臭", "体臭", "口臭", "腋臭",
+    "わきが", "ワキガ", "加齢臭", "足臭", "足の臭", "汗臭",
+    # 衛生・皮膚問題
+    "水虫", "たむし",
+    # 消化器系
+    "便秘", "下痢", "おなら", "放屁",
+    # 失禁
+    "尿漏れ", "失禁",
+    # 経済的困窮
+    "生活保護", "自己破産", "多重債務",
+]
+
+# 病気・死に関する投稿：励ましコメントのみ許可（スキップはしない）
+_ILLNESS_DEATH_WORDS = [
+    "病気", "闘病", "余命", "末期", "入院中", "手術前", "手術後",
+    "亡くなった", "亡くなりました", "他界", "逝去", "訃報", "ご逝去",
+    "ホスピス", "緩和ケア",
+]
+
 
 _SENTENCE_ENDINGS = ("。", "！", "？", "…", "♪", "〜", "ね", "よ", "わ", "な", "か")
 
@@ -718,6 +740,12 @@ def _trim_to_complete_sentence(text: str) -> str:
     # 文末記号がなければそのまま返す（短い文の可能性）
     return text
 
+
+_BOT_REVEAL_PATTERNS = [
+    "投稿内容が表示", "表示されていない", "お知らせください", "コメントを書くことができません",
+    "投稿のテキスト", "投稿内容を", "内容が見えません", "テキストを教えて",
+    "投稿が表示", "確認できません", "内容が確認",
+]
 
 def _generate_comment(post_text: str, account_note: str) -> str:
     """投稿内容に合ったコメントをClaude APIで生成。APIキー未設定はフォールバック。"""
@@ -768,10 +796,12 @@ def _generate_comment(post_text: str, account_note: str) -> str:
 
 ---
 絶対に守ること：
+・投稿内容が短くても不明でも、必ずコメント本文を1文出力する。「コメントできません」「内容が見えません」「テキストをお知らせください」などのメタ発言は絶対に禁止
 ・必ず文章を完結させる。「〜と感」「〜ので」など途中で終わらない
 ・1文で完結。25文字以内が理想。どんなに長くても40文字まで
 ・です・ます調（敬語）で書く
-・投稿の中の具体的な言葉（数字・固有名詞・エピソード）を1つ拾って反応する
+・投稿全体の意図・トーンを読んで反応する（疑問文なら「気になりますよね」、体験談なら感想、主張なら共感など）
+・投稿の内容を事実として断定・言い換えるコメントは絶対に書かない。必ず感想・疑問・共感にとどめる
 ・「参考になります」「勉強になりました」「素晴らしいですね」「すごいですね」は使わない
 ・「とても」「非常に」「大変」などの強調語は使わない
 ・定型文・テンプレっぽい言い回しは使わない
@@ -807,8 +837,11 @@ def _generate_comment(post_text: str, account_note: str) -> str:
             pass
 
         comment = _trim_to_complete_sentence(resp.content[0].text.strip())
-        # 空になったかチェック
-        if not comment:
+        # 空・長すぎる（60文字超はメタ発言の可能性）・ボット丸出しワードはフォールバック
+        if (not comment
+                or len(comment) > 50
+                or any(p in comment for p in _BOT_REVEAL_PATTERNS)):
+            print(f"[comment] 生成コメント不適切 → フォールバック: {comment!r}")
             return random.choice(_FALLBACK_COMMENTS)
         return comment
     except Exception as e:
@@ -997,6 +1030,23 @@ def _do_auto_comments(page, dry_run=False):
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
+            # 投稿本文が短すぎる（10文字未満）はコメントしない
+            if len(post_text.strip()) < 10:
+                print(f"[comment] @{account} 投稿が短すぎる（{len(post_text.strip())}文字） → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
+            # ブランドイメージ保護・不適切トピックはスキップ
+            if any(w in post_text for w in _NEGATIVE_IMPRESSION_SKIP_WORDS):
+                print(f"[comment] @{account} マイナス印象トピック → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
+            if any(w in post_text for w in _ILLNESS_DEATH_WORDS):
+                print(f"[comment] @{account} 病気・死関連 → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
             # 投稿内容に合ったコメントをClaude APIで生成
             account_note = t.get("note", "")
             comment_text = _generate_comment(post_text, account_note)
@@ -1065,6 +1115,14 @@ def _open_composer(page):
     if textbox.count() > 0:
         print("[composer] /intent/post から起動成功")
         return
+    # デバッグ用スクリーンショット（失敗時）
+    try:
+        page.screenshot(path="/tmp/composer_fail.png", full_page=True)
+        print(f"[debug] screenshot saved: /tmp/composer_fail.png  URL={page.url}")
+        print(f"[debug] body divs={page.locator('div').count()} buttons={page.locator('[role=button]').count()}")
+        print(f"[debug] page html (500chars): {page.content()[:500]}")
+    except Exception as _e:
+        print(f"[debug] screenshot failed: {_e}")
     raise RuntimeError("投稿コンポーザーを開けませんでした")
 
 
