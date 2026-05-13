@@ -1,0 +1,62 @@
+name: Threads Weekly Research
+
+on:
+  schedule:
+    # 毎週月曜 JST 10:00 = UTC 1:00
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      TZ: Asia/Tokyo
+      SESSION_FILE: session_personal.json
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install playwright anthropic
+          python -m playwright install --with-deps chromium
+
+      - name: Restore session
+        env:
+          SESSION: ${{ secrets.THREADS_SESSION_PERSONAL }}
+        run: printf '%s' "$SESSION" > session_personal.json
+
+      - name: Run research
+        run: python3 research_threads.py
+
+      - name: Commit report
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-research-bot"
+          git add research_reports/
+          if git diff --staged --quiet; then
+            echo "no new report"
+          else
+            git commit -m "research: $(TZ=Asia/Tokyo date '+%Y-%m-%d') 週次Threads分析レポート"
+            git pull --rebase origin main 2>/dev/null || true
+            git push
+            # LINE通知
+            REPORT_DATE=$(TZ=Asia/Tokyo date '+%Y-%m-%d')
+            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"📊 週次Threadsリサーチ完了（${REPORT_DATE}）\n\nresearch_reports/ にレポートが保存されました。\n投稿ルールの改善ヒントをご確認ください。\n\nhttps://github.com/AyaKuroki929/threads-bot/tree/main/research_reports\"}]}"
+          fi
