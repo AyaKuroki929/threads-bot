@@ -1126,11 +1126,11 @@ def _open_composer(page):
     raise RuntimeError("投稿コンポーザーを開けませんでした")
 
 
-def _get_latest_post_url(page, after_reply=False):
+def _get_latest_post_url(page, after_reply=False, previous_url=None):
     """1部目投稿後（after_reply=False）はプロフィール最上位から取得。
-    返信投稿後（after_reply=True）は今いるチェーン詳細ページから自分の最新投稿URLを拾う。
-    プロフィールから取るとチェーンの頭（=1部目）が返ってくるため、3部目以降が
-    1部目への兄弟返信になりツリーが分裂する不具合を防ぐ。"""
+    previous_url が指定されている場合はURLが変わるまでリトライし、
+    プロフィールキャッシュによる旧URL誤取得を防ぐ。
+    返信投稿後（after_reply=True）は今いるチェーン詳細ページから自分の最新投稿URLを拾う。"""
     if after_reply:
         page.wait_for_timeout(3500)
         locator = page.locator(f'a[href*="/@{USERNAME}/post/"]')
@@ -1146,23 +1146,40 @@ def _get_latest_post_url(page, after_reply=False):
             raise RuntimeError("チェーン詳細から有効なpost URLを取得できません")
         return seen[-1]
 
-    page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded")
-    page.wait_for_timeout(3500)
-    articles = page.locator('div[data-pressable-container="true"]')
-    if articles.count() == 0:
-        articles = page.locator('article')
-    if articles.count() == 0:
-        raise RuntimeError("最新投稿が見つかりません")
-    first = articles.first
-    first.scroll_into_view_if_needed()
-    page.wait_for_timeout(300)
-    time_link = first.locator('time').first
-    if time_link.count() == 0:
-        raise RuntimeError("最新投稿のtimeリンクが見つかりません")
-    href = time_link.evaluate("el => el.closest('a')?.href")
-    if not href:
-        raise RuntimeError("最新投稿のhrefが取得できません")
-    return href
+    # /intent/post 経由で投稿した場合、投稿後にそのポストページへリダイレクトされることがある
+    if f"/@{USERNAME}/post/" in page.url:
+        direct_url = page.url.split("?")[0].rstrip("/")
+        print(f"[debug] 投稿後ページから直接URL取得: {direct_url}")
+        return direct_url
+
+    # プロフィールページから取得。previous_url が変わるまで最大5回リトライ
+    wait_seq = [5000, 8000, 12000, 16000, 20000]
+    for attempt, wait_ms in enumerate(wait_seq):
+        page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded")
+        page.wait_for_timeout(wait_ms)
+        articles = page.locator('div[data-pressable-container="true"]')
+        if articles.count() == 0:
+            articles = page.locator('article')
+        if articles.count() == 0:
+            print(f"[debug] プロフィールに記事なし（attempt {attempt + 1}/{len(wait_seq)}）")
+            continue
+        first = articles.first
+        first.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        time_link = first.locator('time').first
+        if time_link.count() == 0:
+            print(f"[debug] timeリンクなし（attempt {attempt + 1}/{len(wait_seq)}）")
+            continue
+        href = time_link.evaluate("el => el.closest('a')?.href")
+        if not href:
+            continue
+        if previous_url and href == previous_url:
+            print(f"[debug] プロフィール未更新（attempt {attempt + 1}/{len(wait_seq)}）: {href}")
+            continue
+        print(f"[debug] 最新投稿URL取得（attempt {attempt + 1}）: {href}")
+        return href
+
+    raise RuntimeError(f"プロフィールに新投稿が{len(wait_seq)}回試行しても反映されませんでした")
 
 
 def _check_latest_post_is_recent(page, max_age_min=20):
@@ -1250,6 +1267,25 @@ def post_to_threads(texts, debug=False, dry_run=False, topic=""):
         try:
             print(f"[account] 投稿前アカウント確認: USERNAME={USERNAME}, SESSION_FILE={SESSION_FILE}")
             _verify_account(page)  # 先にアカウント確認（edit_profileに移動するのでcomposer前に実行）
+
+            # ツリー投稿用：投稿前の最新URLを記録（後でプロフィール更新を確認するため）
+            pre_post_url = None
+            if len(texts) > 1:
+                try:
+                    if f"/@{USERNAME}" not in page.url:
+                        page.goto(f"https://www.threads.com/@{USERNAME}", wait_until="domcontentloaded")
+                        page.wait_for_timeout(2000)
+                    arts = page.locator('div[data-pressable-container="true"]')
+                    if arts.count() == 0:
+                        arts = page.locator('article')
+                    if arts.count() > 0:
+                        tl = arts.first.locator('time').first
+                        if tl.count() > 0:
+                            pre_post_url = tl.evaluate("el => el.closest('a')?.href")
+                            print(f"[tree] 投稿前最新URL（基準）: {pre_post_url}")
+                except Exception as _e:
+                    print(f"[tree] 投稿前URL取得失敗（続行）: {_e}")
+
             _open_composer(page)   # アカウント確認後にホームへ戻ってモーダルを開く
             _set_topic(page, topic)
             _input_text(page, texts[0])
@@ -1262,8 +1298,7 @@ def post_to_threads(texts, debug=False, dry_run=False, topic=""):
 
             post_verified = True  # ツリー投稿は _get_latest_post_url が検証を兼ねる
             if len(texts) > 1:
-                page.wait_for_timeout(3000)
-                current_url = _get_latest_post_url(page)
+                current_url = _get_latest_post_url(page, previous_url=pre_post_url)
                 print(f"[debug] 1部目URL: {current_url}")
 
                 for i, text in enumerate(texts[1:], start=2):
