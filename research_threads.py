@@ -93,9 +93,10 @@ def _search_top_posts(page, keyword, max_scroll=3):
     return posts[:8]
 
 
-def _fetch_account_posts(page, username, max_posts=5):
-    """アカウントのプロフィールから最新投稿を収集する。"""
+def _fetch_account_posts(page, username, max_posts=10):
+    """アカウントのプロフィールから最新投稿を収集する。投稿頻度も推定する。"""
     posts = []
+    timestamps = []
     try:
         page.goto(
             f"https://www.threads.com/@{username}",
@@ -107,6 +108,12 @@ def _fetch_account_posts(page, username, max_posts=5):
         for i in range(min(containers.count(), max_posts)):
             try:
                 raw = containers.nth(i).inner_text()
+                # 相対時刻を抽出（「1時間前」「3日前」など）
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if re.search(r'(\d+)(秒|分|時間|日|週|ヶ月|年)前', line):
+                        timestamps.append(line)
+                        break
                 lines = [l.strip() for l in raw.splitlines()
                          if len(l.strip()) > 20 and not l.strip().startswith("http")]
                 text = " ".join(lines)[:400]
@@ -116,6 +123,23 @@ def _fetch_account_posts(page, username, max_posts=5):
                 pass
     except Exception as e:
         print(f"[research] @{username} プロフィール取得失敗: {e}")
+
+    # 投稿頻度を推定（7日以内の投稿数から）
+    posts_in_7days = 0
+    for ts in timestamps:
+        m = re.search(r'(\d+)(秒|分|時間|日|週)前', ts)
+        if m:
+            n, unit = int(m.group(1)), m.group(2)
+            days = {"秒": 0, "分": 0, "時間": n/24, "日": n, "週": n*7}.get(unit, 999)
+            if days <= 7:
+                posts_in_7days += 1
+
+    freq_per_day = round(posts_in_7days / 7, 1) if posts_in_7days > 0 else None
+    if freq_per_day is not None:
+        print(f"[research] @{username}: 推定 {freq_per_day}本/日（7日以内{posts_in_7days}本）")
+        for p in posts:
+            p["freq_per_day"] = freq_per_day
+
     return posts
 
 
@@ -178,20 +202,32 @@ def analyze_and_generate_rules(all_posts):
 
     def fmt(posts):
         return "\n\n---\n\n".join(
-            f"[@{p.get('username','?')} / {p.get('keyword','')}]\n{p['text']}"
+            f"[@{p.get('username','?')} / {p.get('keyword','')}]{' / 推定'+str(p['freq_per_day'])+'本/日' if p.get('freq_per_day') else ''}\n{p['text']}"
             for p in posts[:20]
         )
 
+    def freq_summary(posts):
+        freqs = [p["freq_per_day"] for p in posts if p.get("freq_per_day") is not None]
+        if not freqs:
+            return "（頻度データなし）"
+        avg = round(sum(freqs) / len(freqs), 1)
+        mn, mx = min(freqs), max(freqs)
+        return f"平均 {avg}本/日（最小 {mn}〜最大 {mx}本/日、サンプル{len(freqs)}アカウント）"
+
     bemolle_samples  = fmt(all_posts["bemolle"])
     personal_samples = fmt(all_posts["personal"])
+    bemolle_freq  = freq_summary(all_posts["bemolle"])
+    personal_freq = freq_summary(all_posts["personal"])
 
     prompt = f"""あなたはSNSマーケティングの専門家です。
 以下はThreadsで今週反響を得ているアカウントの投稿サンプルです（トップ検索で上位表示されたもの）。
 
 ## ベモーレ系（美容・ダイエット・エステサロン向け）
+投稿頻度サマリー: {bemolle_freq}
 {bemolle_samples}
 
 ## 個人系（美容サロンオーナー×AI自動化向け）
+投稿頻度サマリー: {personal_freq}
 {personal_samples}
 
 ---
@@ -343,10 +379,24 @@ def main():
     bemolle_rules = rules_json.get("bemolle_only", [])
     personal_rules = rules_json.get("personal_only", [])
 
+    # 投稿頻度サマリー
+    def _freq(posts):
+        freqs = [p["freq_per_day"] for p in posts if p.get("freq_per_day") is not None]
+        if not freqs:
+            return "データなし"
+        return f"平均{round(sum(freqs)/len(freqs),1)}本/日（{len(freqs)}アカウント）"
+
+    freq_b = _freq(all_posts["bemolle"])
+    freq_p = _freq(all_posts["personal"])
+
     msg_lines = [
         f"📊 週次ルール自動更新完了（{today}）",
         "",
         summary,
+        "",
+        f"📈 上位アカウント投稿頻度",
+        f"・ベモーレ系: {freq_b}",
+        f"・個人系: {freq_p}",
         "",
     ]
     if both_rules:

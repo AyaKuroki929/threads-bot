@@ -180,7 +180,7 @@ def already_posted_today(time_slot):
         "morning":  (5, 10),
         "morning2": (8, 11),
         "noon":     (11, 14),
-        "evening2": (16, 19),
+        "evening2": (21, 24),
         "evening":  (17, 23),
     }
     h_start, h_end = valid_hours.get(time_slot, (0, 24))
@@ -192,7 +192,7 @@ SLOT_VALID_HOURS = {
     "morning":  (5, 10),
     "morning2": (8, 11),
     "noon":     (11, 14),
-    "evening2": (16, 19),
+    "evening2": (21, 24),
     "evening":  (17, 23),
 }
 
@@ -1344,7 +1344,7 @@ def _send_line_failure_notify(reason: str, slot: str):
     """投稿未確認・コメント失敗時のLINE通知。"""
     if not LINE_TOKEN:
         return
-    slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夕 18:00", "evening": "夜 21:00"}.get(slot, slot)
+    slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夜 22:00", "evening": "夜 21:00"}.get(slot, slot)
     if reason == "post":
         msg = f"⚠️ 投稿未確認（{slot_label}）\n@{USERNAME}\n\n投稿ボタンは押しましたが、Threadsに反映されていません。手動確認をお願いします。"
     elif reason == "no_comment_targets":
@@ -1369,7 +1369,7 @@ def _send_line_notify(slot: str, texts: list, comment_results: list = None):
     """投稿完了後にLINEへ通知。LINE_CHANNEL_ACCESS_TOKEN が未設定なら何もしない。"""
     if not LINE_TOKEN:
         return
-    slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夕 18:00", "evening": "夜 21:00"}.get(slot, slot)
+    slot_label = {"morning": "朝 7:00", "morning2": "朝 9:00", "noon": "昼 12:00", "evening2": "夜 22:00", "evening": "夜 21:00"}.get(slot, slot)
     content = "\n\n↩️ ツリー返信\n".join(texts) if len(texts) > 1 else texts[0]
 
     targets_msg = ""
