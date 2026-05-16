@@ -1,0 +1,9 @@
+{
+  "routes": [
+    { "src": "/connect", "dest": "/api/connect.py" },
+    { "src": "/callback", "dest": "/api/callback.py" },
+    { "src": "/api/line-webhook", "dest": "/api/line_webhook.py" },
+    { "src": "/signup", "dest": "/public/signup.html" },
+    { "src": "/", "dest": "/public/index.html" }
+  ]
+}

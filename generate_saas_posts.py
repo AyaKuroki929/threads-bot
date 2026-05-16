@@ -14,6 +14,8 @@ import json
 import os
 import sys
 import re
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 import anthropic
@@ -25,6 +27,9 @@ SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "google_service_a
 POSTS_DIR = os.path.join(os.path.dirname(__file__), "posts_saas")
 GENERATE_COUNT = 15
 THRESHOLD = 5
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -189,9 +194,47 @@ def salon_to_rules(salon: dict) -> str:
     return rules
 
 
-def _remaining(posts, used, slot):
+def _get_supabase_used_count(salon_name: str, slot: str) -> int:
+    """Supabaseのpost_logsから実際の使用済み投稿数を取得する。"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return 0
+    try:
+        # サロンIDを取得
+        url = (f"{SUPABASE_URL}/rest/v1/salons"
+               f"?salon_name=eq.{urllib.parse.quote(salon_name)}&select=id&limit=1")
+        req = urllib.request.Request(url, headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rows = json.loads(r.read())
+        if not rows:
+            return 0
+        salon_id = rows[0]["id"]
+        # 使用済み投稿数をContent-Rangeヘッダーで取得
+        url = (f"{SUPABASE_URL}/rest/v1/post_logs"
+               f"?salon_id=eq.{salon_id}&slot=eq.{slot}&select=id")
+        req = urllib.request.Request(url, headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Prefer": "count=exact",
+            "Range-Unit": "items",
+            "Range": "0-0",
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            cr = r.headers.get("Content-Range", "")
+            # "0-0/15" or "*/15" format
+            if "/" in cr:
+                return int(cr.split("/")[1])
+        return 0
+    except Exception as e:
+        print(f"[saas] Supabase使用数取得エラー ({salon_name}/{slot}): {e}")
+        return 0
+
+
+def _remaining(posts, salon_name, slot):
     total = len(posts.get(slot, []))
-    used_count = len(used.get(slot, []))
+    used_count = _get_supabase_used_count(salon_name, slot)
     return total - used_count
 
 
@@ -201,14 +244,11 @@ def generate_for_salon(salon: dict):
 
     Path(POSTS_DIR).mkdir(exist_ok=True)
     posts_path = os.path.join(POSTS_DIR, f"posts_{safe_name}.json")
-    used_path = os.path.join(POSTS_DIR, f"used_{safe_name}.json")
 
     if os.path.exists(posts_path):
         posts = json.load(open(posts_path, encoding="utf-8"))
     else:
         posts = {"morning": [], "evening": []}
-
-    used = json.load(open(used_path, encoding="utf-8")) if os.path.exists(used_path) else {}
 
     rules = salon_to_rules(salon)
 
@@ -227,7 +267,7 @@ def generate_for_salon(salon: dict):
     generated_any = False
 
     for slot in ["morning", "evening"]:
-        remaining = _remaining(posts, used, slot)
+        remaining = _remaining(posts, salon_name, slot)
         if remaining > THRESHOLD:
             print(f"[saas] {salon_name} {slot}: 残{remaining}本 → 生成不要")
             continue

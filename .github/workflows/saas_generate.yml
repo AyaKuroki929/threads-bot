@@ -38,12 +38,16 @@ jobs:
         if: ${{ github.event.inputs.salon_name == '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python3 generate_saas_posts.py
 
       - name: Generate posts for specific salon
         if: ${{ github.event.inputs.salon_name != '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
 
       - name: Remove service account file
