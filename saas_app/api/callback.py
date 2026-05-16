@@ -5,7 +5,7 @@ import os
 import urllib.request
 import urllib.parse
 
-APP_ID = os.environ.get("META_APP_ID", "1497479218824264")
+APP_ID = os.environ.get("THREADS_APP_ID", "985270787180212")
 APP_SECRET = os.environ.get("META_APP_SECRET", "")
 CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
