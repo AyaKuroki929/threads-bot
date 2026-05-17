@@ -1,7 +1,9 @@
 name: Threads Personal Auto Post (aya)
 
 on:
-  # schedule: 6/1まで一時停止。Mac LaunchAgentで代替投稿中。
+  schedule:
+    # 朝のみGH Actions（Mac未起動対策）。昼・夜はMac LaunchAgent。
+    - cron: '30 22 * * *'  # JST 7:30
   workflow_dispatch:
     inputs:
       slot:

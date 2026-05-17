@@ -1,8 +1,9 @@
 name: Threads Auto Post (bemolle)
 
 on:
-  # schedule: 6/1まで一時停止。Mac LaunchAgentで代替投稿中。
-  # 復活させる場合は schedule: を元に戻し、cron-job.orgも再開する。
+  schedule:
+    # 朝のみGH Actions（Mac未起動対策）。昼・夜はMac LaunchAgent。
+    - cron: '0 22 * * *'   # JST 7:00
   workflow_dispatch:
     inputs:
       slot:
