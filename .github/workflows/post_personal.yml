@@ -80,6 +80,11 @@ jobs:
           SKIP_TIME_GUARD: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          if [ -z "${{ secrets.THREADS_API_TOKEN_PERSONAL }}" ]; then
+            echo "⚠️ THREADS_API_TOKEN_PERSONAL が未設定です。get_threads_token.py personal を実行してGH Secretsに登録してください。"
+            echo "exit_code=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           set +e
           if [ "${{ steps.params.outputs.dry }}" = "true" ]; then
             python3 post_api.py ${{ steps.params.outputs.name }} --dry-run
