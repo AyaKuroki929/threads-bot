@@ -10,31 +10,21 @@ on:
         description: '投稿スロット（morning / evening）'
         required: true
         default: 'morning'
-      mode:
-        description: '投稿モード（api=公式API / playwright=Playwright）'
-        required: false
-        default: 'auto'
 
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install playwright anthropic
-          playwright install chromium
-          playwright install-deps chromium
 
       - name: Determine slot
         id: slot
@@ -49,14 +39,12 @@ jobs:
             echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Threads投稿（Playwright方式）
+      - name: Threads投稿（公式API）
+        id: post
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          DISPLAY: ':99'
-        run: |
-          Xvfb :99 -screen 0 1280x1024x24 &
-          python3 post_saas_playwright.py ${{ steps.slot.outputs.slot }}
+        run: python3 post_saas.py ${{ steps.slot.outputs.slot }}
 
       - name: LINE通知（投稿失敗時）
         if: failure()
@@ -67,4 +55,4 @@ jobs:
           curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"to\":\"$LINE_ADMIN_USER_ID\",\"messages\":[{\"type\":\"text\",\"text\":\"❌ とうこさん 投稿失敗\n\nスロット: ${{ steps.slot.outputs.slot }}\n\nGitHub Actionsのログを確認してください。\nhttps://github.com/ayakuroki/threads_bot/actions\"}]}"
+            -d "{\"to\":\"$LINE_ADMIN_USER_ID\",\"messages\":[{\"type\":\"text\",\"text\":\"❌ とうこさん 投稿失敗\n\nスロット: ${{ steps.slot.outputs.slot }}\n\nGitHub Actionsを確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
