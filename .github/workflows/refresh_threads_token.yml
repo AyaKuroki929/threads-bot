@@ -1,8 +1,8 @@
-name: Threads API - トークン月次更新
+name: Threads API - トークン週次更新
 
 on:
   schedule:
-    - cron: '0 1 1 * *'  # 毎月1日 AM10:00 JST
+    - cron: '0 1 * * 0'  # 毎週日曜 AM10:00 JST
   workflow_dispatch:
 
 jobs:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
 
     steps:
@@ -37,13 +37,18 @@ jobs:
               print(f'[bemolle] リフレッシュ失敗: {e}', file=sys.stderr)
               sys.exit(1)
           ")
-          ec=$?
-          if [ $ec -eq 0 ] && [ -n "$NEW_TOKEN" ]; then
-            printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_BEMOLLE --repo ${{ github.repository }}
-            echo "ok=true" >> $GITHUB_OUTPUT
-            echo "[bemolle] GH Secretsを更新しました"
-          else
+          refresh_ec=$?
+          if [ $refresh_ec -ne 0 ] || [ -z "$NEW_TOKEN" ]; then
             echo "ok=false" >> $GITHUB_OUTPUT
+          else
+            printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_BEMOLLE --repo ${{ github.repository }}
+            if [ $? -eq 0 ]; then
+              echo "ok=true" >> $GITHUB_OUTPUT
+              echo "[bemolle] GH Secretsを更新しました"
+            else
+              echo "ok=false" >> $GITHUB_OUTPUT
+              echo "[bemolle] GH Secrets更新失敗" >&2
+            fi
           fi
 
       - name: Refresh THREADS_API_TOKEN_PERSONAL
@@ -69,13 +74,18 @@ jobs:
               print(f'[personal] リフレッシュ失敗: {e}', file=sys.stderr)
               sys.exit(1)
           ")
-          ec=$?
-          if [ $ec -eq 0 ] && [ -n "$NEW_TOKEN" ]; then
-            printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_PERSONAL --repo ${{ github.repository }}
-            echo "ok=true" >> $GITHUB_OUTPUT
-            echo "[personal] GH Secretsを更新しました"
-          else
+          refresh_ec=$?
+          if [ $refresh_ec -ne 0 ] || [ -z "$NEW_TOKEN" ]; then
             echo "ok=false" >> $GITHUB_OUTPUT
+          else
+            printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_PERSONAL --repo ${{ github.repository }}
+            if [ $? -eq 0 ]; then
+              echo "ok=true" >> $GITHUB_OUTPUT
+              echo "[personal] GH Secretsを更新しました"
+            else
+              echo "ok=false" >> $GITHUB_OUTPUT
+              echo "[personal] GH Secrets更新失敗" >&2
+            fi
           fi
 
       - name: Refresh SaaS ユーザートークン（Supabase全件）
@@ -83,7 +93,6 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         run: |
           set +e
@@ -98,7 +107,6 @@ jobs:
               print("[saas] SUPABASE_URL/SERVICE_KEY 未設定 → スキップ")
               sys.exit(0)
 
-          # アクティブサロン一覧取得
           url = f"{SUPABASE_URL}/rest/v1/salons?is_active=eq.true&select=id,salon_name,access_token&access_token=neq.null"
           req = urllib.request.Request(url, headers={
               "apikey": SUPABASE_KEY,
@@ -130,7 +138,6 @@ jobs:
                   new_token = d["access_token"]
                   expires   = d.get("expires_in", 0) // 86400
 
-                  # Supabase に書き戻し
                   patch_url = f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}"
                   patch_data = json.dumps({"access_token": new_token}).encode()
                   patch_req = urllib.request.Request(patch_url, data=patch_data, method="PATCH", headers={
@@ -148,7 +155,7 @@ jobs:
           if failures:
               if LINE_TOKEN:
                   names = ", ".join(failures)
-                  msg = f"⚠️ SaaSトークン更新失敗\\n\\n対象サロン: {names}\\n\\n手動で再取得・登録が必要です"
+                  msg = f"⚠️ SaaSトークン更新失敗\n\n対象サロン: {names}\n\n手動で再取得・登録が必要です"
                   body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
                   req = urllib.request.Request(
                       "https://api.line.me/v2/bot/message/broadcast",
@@ -158,17 +165,23 @@ jobs:
                   urllib.request.urlopen(req, timeout=15)
               sys.exit(1)
           PYEOF
-          echo "saas_exit=$?" >> $GITHUB_OUTPUT
+
+      - name: LINE通知（成功）
+        if: steps.bemolle.outputs.ok == 'true' && steps.personal.outputs.ok == 'true'
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"✅ Threadsトークン週次更新\n\nbemolle・個人 両方の投稿トークンを更新しました。次の60日間も自動投稿が続きます。"}]}'
 
       - name: LINE通知（失敗時）
         if: steps.bemolle.outputs.ok == 'false' || steps.personal.outputs.ok == 'false'
         run: |
-          MSG="⚠️ Threadsトークン月次更新失敗\n\n"
+          MSG="⚠️ Threadsトークン週次更新失敗\n\n"
           [ "${{ steps.bemolle.outputs.ok }}" = "false" ] && MSG="${MSG}❌ bemolle_diet トークン更新失敗\n"
           [ "${{ steps.personal.outputs.ok }}" = "false" ] && MSG="${MSG}❌ aya_kuroki_0929 トークン更新失敗\n"
-          MSG="${MSG}\n手動で再取得してください：\n\ncd ~/threads_bot\nexport META_APP_SECRET=シークレット\npython3 get_threads_token.py bemolle\npython3 get_threads_token.py personal"
+          MSG="${MSG}\n来週また自動で再試行されます。\n60日以内に成功すれば問題ありません。"
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
-          exit 1
