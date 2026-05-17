@@ -179,5 +179,5 @@ jobs:
               git pull --rebase -X theirs origin main 2>/dev/null || git rebase --abort 2>/dev/null || true
               git push && push_ok=1 && break || sleep 3
             done
-            [ $push_ok -eq 0 ] && echo "::warning::git push failed after 3 retries"
+            if [ $push_ok -eq 0 ]; then echo "::warning::git push failed after 3 retries"; fi
           fi
