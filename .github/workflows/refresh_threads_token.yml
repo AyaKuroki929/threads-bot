@@ -166,14 +166,6 @@ jobs:
               sys.exit(1)
           PYEOF
 
-      - name: LINE通知（成功）
-        if: steps.bemolle.outputs.ok == 'true' && steps.personal.outputs.ok == 'true'
-        run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
-            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"✅ Threadsトークン週次更新\n\nbemolle・個人 両方の投稿トークンを更新しました。次の60日間も自動投稿が続きます。"}]}'
-
       - name: LINE通知（失敗時）
         if: steps.bemolle.outputs.ok == 'false' || steps.personal.outputs.ok == 'false'
         run: |
