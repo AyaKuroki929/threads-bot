@@ -1,11 +1,7 @@
 name: Heartbeat - Verify Post Success
 
 on:
-  schedule:
-    # Actions分節約のため各スロット1本に削減（9発→3発）
-    - cron: '0 0 * * *'     # JST 9:00（morning確認）
-    - cron: '0 5 * * *'     # JST 14:00（noon確認）
-    - cron: '0 14 * * *'    # JST 23:00（evening確認）
+  # schedule: 6/1まで一時停止。Mac LaunchAgentで代替投稿中。
   workflow_dispatch:
 
 permissions:

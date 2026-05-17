@@ -1,14 +1,7 @@
 name: Threads Personal Auto Post (aya)
 
 on:
-  schedule:
-    # Actions分節約のため各スロット1本に削減（cron-job.orgが一次発火源）
-    # JST 7:30 = UTC 22:30 (前日)
-    - cron: '30 22 * * *'
-    # JST 12:00 = UTC 3:00
-    - cron: '0 3 * * *'
-    # JST 21:00 = UTC 12:00
-    - cron: '0 12 * * *'
+  # schedule: 6/1まで一時停止。Mac LaunchAgentで代替投稿中。
   workflow_dispatch:
     inputs:
       slot:
