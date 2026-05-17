@@ -44,15 +44,31 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python3 post_saas.py ${{ steps.slot.outputs.slot }}
+        run: |
+          set +e
+          python3 post_saas.py ${{ steps.slot.outputs.slot }}
+          ec=$?
+          echo "exit_code=$ec" >> $GITHUB_OUTPUT
+          exit $ec
 
-      - name: LINE通知（投稿失敗時）
-        if: failure()
+      - name: LINE通知（トークン切れ・exit 3）
+        if: failure() && steps.post.outputs.exit_code == '3'
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_ADMIN_USER_ID: ${{ secrets.LINE_ADMIN_USER_ID }}
         run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/push \
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"to\":\"$LINE_ADMIN_USER_ID\",\"messages\":[{\"type\":\"text\",\"text\":\"❌ とうこさん 投稿失敗\n\nスロット: ${{ steps.slot.outputs.slot }}\n\nGitHub Actionsを確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+            -d '{"messages":[{"type":"text","text":"🔑 とうこさん トークン切れ\n\nいずれかのサロンのThreads APIトークンが無効です。\n\nGitHub Actionsのログでどのサロンか確認し、トークンを再取得してSupabaseに登録してください。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
+
+      - name: LINE通知（その他エラー）
+        if: failure() && steps.post.outputs.exit_code != '3'
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          SLOT="${{ steps.slot.outputs.slot }}"
+          EC="${{ steps.post.outputs.exit_code }}"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ とうこさん 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
