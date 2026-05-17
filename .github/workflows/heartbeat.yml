@@ -193,51 +193,11 @@ jobs:
               core.setOutput('error', e.message)
             }
 
-      - name: Auto-recovery (SaaS) - trigger post_saas.yml if recent run missing
-        if: steps.slot.outputs.skip != 'true'
-        id: recovery_saas
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const slot = '${{ steps.slot.outputs.name }}'
-            // SaaS は morning/evening のみ（noon は対象外）
-            if (slot === 'noon') {
-              core.setOutput('triggered', 'skip')
-              return
-            }
-            // 直近2時間以内に post_saas.yml が成功しているか確認
-            const since = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-            const runs = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'post_saas.yml',
-              status: 'success',
-              created: `>=${since}`,
-              per_page: 5
-            })
-            if (runs.data.total_count > 0) {
-              core.setOutput('triggered', 'skip')
-              return
-            }
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'post_saas.yml',
-                ref: 'main',
-                inputs: { slot: slot }
-              })
-              core.setOutput('triggered', 'true')
-            } catch (e) {
-              core.setOutput('triggered', 'false')
-              core.setOutput('error', e.message)
-            }
-
       - name: LINE通知（heartbeat検知）
         if: |
           always() &&
           steps.slot.outputs.skip != 'true' &&
-          (steps.verify.outputs.ok != 'true' || steps.verify_personal.outputs.ok != 'true' || steps.recovery_saas.outputs.triggered == 'true')
+          (steps.verify.outputs.ok != 'true' || steps.verify_personal.outputs.ok != 'true')
         run: |
           MSG=""
           if [ "${{ steps.verify.outputs.ok }}" != "true" ]; then
@@ -256,9 +216,6 @@ jobs:
               MSG="${MSG}→ リカバリ失敗（手動対応が必要）\n"
             fi
           fi
-          if [ "${{ steps.recovery_saas.outputs.triggered }}" = "true" ]; then
-            MSG="${MSG}⚠️ とうこさん ${{ steps.slot.outputs.name }} 投稿未確認\n→ 自動リカバリ発動済み\n"
-          fi
           MSG="${MSG}\nhttps://github.com/AyaKuroki929/threads-bot/actions"
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
@@ -268,4 +225,4 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "[heartbeat] slot=${{ steps.slot.outputs.name }} bemolle_ok=${{ steps.verify.outputs.ok }} personal_ok=${{ steps.verify_personal.outputs.ok }} saas_recovery=${{ steps.recovery_saas.outputs.triggered }} recovery_bemolle=${{ steps.recovery.outputs.triggered }} recovery_personal=${{ steps.recovery_personal.outputs.triggered }}"
+          echo "[heartbeat] slot=${{ steps.slot.outputs.name }} bemolle_ok=${{ steps.verify.outputs.ok }} personal_ok=${{ steps.verify_personal.outputs.ok }} recovery_bemolle=${{ steps.recovery.outputs.triggered }} recovery_personal=${{ steps.recovery_personal.outputs.triggered }}"
