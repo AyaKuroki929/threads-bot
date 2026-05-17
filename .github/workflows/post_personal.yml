@@ -172,7 +172,7 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
-          git add used_posts_personal.json last_run_personal.json posts_personal.json 2>/dev/null || true
+          git add used_posts_personal.json last_run_personal.json posts_personal.json priority_posts_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no state changes"
           else
