@@ -46,16 +46,12 @@ def get_user_info(token):
         return json.loads(resp.read())
 
 
-def save_to_supabase(user_id, username, access_token, expires_in):
-    from datetime import datetime, timedelta
-    expires_at = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat() + "Z"
-
+def save_to_supabase(user_id, username, access_token):
     # upsert by threads_user_id
     data = json.dumps({
         "threads_user_id": user_id,
         "salon_name": username,
         "access_token": access_token,
-        "token_expires_at": expires_at,
         "is_active": True,
     }).encode()
 
@@ -110,14 +106,12 @@ class handler(BaseHTTPRequestHandler):
 
             long_token_data = get_long_lived_token(short_token)
             access_token = long_token_data["access_token"]
-            expires_in = long_token_data.get("expires_in", 5183944)
 
             user_info = get_user_info(access_token)
             save_to_supabase(
                 user_id=user_info["id"],
                 username=user_info.get("username", ""),
                 access_token=access_token,
-                expires_in=expires_in,
             )
 
             self.send_response(200)

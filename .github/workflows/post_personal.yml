@@ -163,7 +163,9 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python3 generate_posts.py personal
+        run: |
+          pip install anthropic -q
+          python3 generate_posts.py personal
 
       - name: Commit state files
         if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'

@@ -6,16 +6,20 @@ create table if not exists salons (
   id               uuid primary key default gen_random_uuid(),
   salon_name       text not null unique,
   threads_username text,
-  session_data     text,           -- Playwright セッション（JSON文字列）
-  access_token     text,           -- 公式APIトークン（将来用・今は未使用）
-  threads_user_id  text,           -- 公式APIユーザーID（将来用・今は未使用）
-  stripe_customer_id text,           -- Stripe顧客ID（解約・支払失敗の自動検知用）
+  session_data     text,           -- 廃止（Playwright セッション・現在は未使用）
+  access_token     text,           -- 公式 Threads API アクセストークン（OAuth コールバックで保存）
+  threads_user_id  text,           -- 公式 Threads API ユーザーID（post_saas.py で使用）
+  stripe_customer_id text,         -- Stripe顧客ID（解約・支払失敗の自動検知用）
+  stripe_subscription_id text,     -- Stripe サブスクリプションID
+  token_expires_at timestamptz,    -- アクセストークン有効期限（OAuth コールバックで保存）
   is_active        boolean not null default true,
   created_at       timestamptz not null default now()
 );
 
--- stripe_customer_id を後から追加する場合（既存テーブルへの ALTER）
+-- 既存テーブルへのカラム追加（初回 CREATE 後に差分適用する場合）
 -- ALTER TABLE salons ADD COLUMN IF NOT EXISTS stripe_customer_id text;
+-- ALTER TABLE salons ADD COLUMN IF NOT EXISTS stripe_subscription_id text;
+-- ALTER TABLE salons ADD COLUMN IF NOT EXISTS token_expires_at timestamptz;
 
 -- 投稿ログテーブル（使用済み投稿の管理）
 create table if not exists post_logs (

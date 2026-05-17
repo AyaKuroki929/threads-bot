@@ -31,7 +31,7 @@ def supabase_get(path, params=None):
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
     })
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 
@@ -47,7 +47,7 @@ def supabase_post(path, data):
         },
         method="POST"
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.status
 
 
@@ -124,7 +124,7 @@ def threads_post(user_id, token, text):
     }).encode()
     req = urllib.request.Request(create_url, data=create_data, method="POST")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             creation_id = json.loads(resp.read())["id"]
     except urllib.error.HTTPError as e:
         body = e.read().decode()
@@ -142,7 +142,7 @@ def threads_post(user_id, token, text):
     }).encode()
     req = urllib.request.Request(publish_url, data=publish_data, method="POST")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())["id"]
     except urllib.error.HTTPError as e:
         body = e.read().decode()

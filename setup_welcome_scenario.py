@@ -36,7 +36,7 @@ SECOND_TEXT = """\
 まずはフォームのご回答をお願いします📝"""
 
 
-def api(method: str, path: str, data: dict | None = None):
+def api(method: str, path: str, data=None):
     url = f"{WORKER_URL}{path}"
     body = json.dumps(data).encode() if data else None
     req = urllib.request.Request(
@@ -44,6 +44,7 @@ def api(method: str, path: str, data: dict | None = None):
         headers={
             "Authorization": f"Bearer {API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "curl/7.88.1",
         }
     )
     with urllib.request.urlopen(req, timeout=15) as r:

@@ -67,16 +67,39 @@ def salon_to_rules(salon: dict) -> str:
     hours = salon.get("営業時間", "")
     holiday = salon.get("定休日", "")
     threads_id = salon.get("Threadsのアカウント名（@から始まるID）", "")
+    homepage_url = salon.get("ホームページURL", "")
+    instagram_id = salon.get("InstagramアカウントID（@から・あれば）", "") or salon.get("インスタグラムのURL", "")
+    hotpepper_url = salon.get("ホットペッパービューティーのURL", "")
+    reservation_source = salon.get("予約はどこから受けていますか？（メインの予約先）", "")
+    line_url = salon.get("LINE公式アカウントのURL（あれば）", "")
+    career = salon.get("業界経歴・年数（例：美容業界15年）", "")
     target = salon.get("メインターゲット（年代・性別・どんな悩みを持つ人）", "")
     menu = salon.get("提供メニューと価格帯（箇条書きでOK）", "")
     best_menu = salon.get("一番の売りメニュー・最も結果が出やすい施術", "")
+    diff = salon.get("他サロンとの違い・このサロンならではの施術やこだわり", "")
     results = salon.get("お客様の具体的な変化・実績（数字があれば）", "")
+    testimonials = salon.get("印象的なお客様の声・体験談（名前不要・1〜3件）", "")
+    result_timeline = salon.get("結果が出るまでの一般的な目安（例：〇回・〇ヶ月で変化を感じる方が多い）", "")
     owner_fail = salon.get("過去の失敗・コンプレックス（「実はこんなだった」という意外な過去）", "")
     turning_point = salon.get("転換点・気づき（何をきっかけに変わったか）", "")
-    own_result = salon.get("自分自身で出た成果・結果", "")
+    own_result = salon.get("自分自身で出た成果・結果（数字・具体エピソード）", "") or salon.get("自分自身で出た成果・結果", "")
     why_salon = salon.get("なぜこのサロンを作ったか", "")
+    owner_habits = salon.get("オーナー自身が毎日続けているケア・習慣（業種に関連するもの）", "")
+    common_mistakes = salon.get("お客様がよくやりがちな間違い・勘違い（3つ程度）", "")
+    ng_time = salon.get("投稿でNGな時間帯・曜日の表現（例：夜営業なし→「夜でも」NG、日曜定休→「週末も」NG）", "")
+    owner_privacy = salon.get("オーナー自身について投稿に出してOKな情報・出してほしくない情報", "")
+    misunderstanding = salon.get("サービスについてお客様に誤解されやすいこと・過去にクレームや問い合わせでこじれた表現", "") or salon.get("過去にクレームになったこと・誤解されやすいこと", "")
+    correct_terms = salon.get("業界特有の言葉で間違えられやすい表記（例：ノーファンデ等）", "")
+    allowed_terms = salon.get("投稿に含めてよい成分名・施術名・商品名（ここに書いたもの以外は使いません）", "")
+    post_style = salon.get("特に力を入れてほしい投稿スタイル（当てはまるものをすべて記入）", "")
+    post_goal = salon.get("投稿の最終ゴールとして最も重視すること（1つ）", "")
+    owner_lifestyle = salon.get("趣味・ライフスタイル（オーナー自身・業種と無関係でもOK）", "")
+    churn_pattern = salon.get("途中で来なくなるお客様に多いパターン・理由", "")
+    seasonal_focus = salon.get("特に集客を強化したい季節・月（あれば）", "")
+    competitor_diff = salon.get("お客様がよく比較検討する他サービスや選択肢（ジム・通販・他サロン等）", "")
     stance = salon.get("お客様への向き合い方・こだわり", "")
     ng_words = salon.get("サロンとして「言いたくないこと」「NGワード」", "")
+    sns_ng_style = salon.get("自分の発信スタイルのNGライン（感情的すぎる・プライベート出しすぎ等）", "")
     catchcopy = salon.get("サロンを一言で表すキャッチコピー（あれば）", "")
     tone = tone_map.get(salon.get("投稿のトーン", ""), "丁寧・落ち着いたですます調。")
     emoji = emoji_map.get(salon.get("絵文字を使いますか？", ""), "絵文字は使わない。")
@@ -91,7 +114,12 @@ def salon_to_rules(salon: dict) -> str:
 - **オーナー名**：{owner_name}
 - **場所**：{location}
 - **営業時間**：{hours}（定休日：{holiday}）
-- **アカウント**：{threads_id}
+- **Threads**：{threads_id}
+{f"- **Instagram**：{instagram_id}" if instagram_id else ""}
+{f"- **LINE公式**：{line_url}" if line_url else ""}
+{f"- **ホームページ**：{homepage_url}" if homepage_url else ""}
+{f"- **ホットペッパービューティー**：{hotpepper_url}" if hotpepper_url else ""}
+{f"- **経歴**：{career}" if career else ""}
 
 ## Threadsの目的
 ターゲット層（{target}）に響く投稿でフォロワーを増やし、予約・来店につなげる。
@@ -105,7 +133,16 @@ def salon_to_rules(salon: dict) -> str:
 
 一番の売り：{best_menu}
 
-お客様の実績：{results}
+{f"他サロンとの違い・こだわり：{diff}" if diff else ""}
+
+## お客様の実績・体験談
+
+### 変化・実績（数字）
+{results}
+
+{f"### 印象的なお客様の声（そのまま引用可）{chr(10)}{testimonials}" if testimonials else ""}
+
+{f"### 結果が出るまでの目安{chr(10)}{result_timeline}" if result_timeline else ""}
 
 ## オーナーのストーリー（投稿の核・最重要）
 
@@ -115,11 +152,24 @@ def salon_to_rules(salon: dict) -> str:
 ### 転換点・気づき
 {turning_point}
 
-### 自分自身の成果
+### 自分自身で出た成果（具体的数字・エピソード）
 {own_result}
 
 ### なぜこのサロンを作ったか
 {why_salon}
+
+{f"### オーナー自身が毎日続けているケア・習慣（ライフスタイル投稿の素材）{chr(10)}{owner_habits}" if owner_habits else ""}
+
+{f"### 趣味・ライフスタイル（人柄投稿の素材）{chr(10)}{owner_lifestyle}" if owner_lifestyle else ""}
+
+## よくある間違い・業界の誤解（刺す投稿・保存型投稿の素材）
+{common_mistakes if common_mistakes else "（未記入）"}
+
+{f"## 競合・比較検討される選択肢（差別化投稿の素材）{chr(10)}お客様がよく比較するもの：{competitor_diff}{chr(10)}→ これらと比較したときのベネフィットを投稿素材として活用する。" if competitor_diff else ""}
+
+{f"## 来なくなるパターン・離脱防止（継続訴求投稿の素材）{chr(10)}{churn_pattern}{chr(10)}→ このパターンを先回りして解消する投稿を定期的に入れる。" if churn_pattern else ""}
+
+{f"## 集客強化時期（季節性投稿の素材）{chr(10)}{seasonal_focus}の時期は特に来店誘導を強化する投稿を増やす。" if seasonal_focus else ""}
 
 ## サロンの理念・お客様への向き合い方
 {stance}
@@ -130,12 +180,35 @@ def salon_to_rules(salon: dict) -> str:
 ## NGワード・避けるべき表現（クライアント指定）
 {ng_words if ng_words else "特になし"}
 
+{f"## 発信スタイルのNGライン（クライアント指定）{chr(10)}{sns_ng_style}" if sns_ng_style else ""}
+
+{f"## 営業時間外・NGな時間帯表現（必ず守る）{chr(10)}{ng_time}" if ng_time else ""}
+
+{f"## 誤解を招く表現・クレーム防止（必ず守る）{chr(10)}{misunderstanding}" if misunderstanding else ""}
+
+{f"## 業種特有の正しい表記（必ずこの表記を使う）{chr(10)}{correct_terms}" if correct_terms else ""}
+
+{f"## 使ってよい成分名・施術名・商品名（これ以外は創作しない）{chr(10)}{allowed_terms}" if allowed_terms else ""}
+
+{f"## オーナー自身についてのOK/NG情報{chr(10)}{owner_privacy}" if owner_privacy else ""}
+
+{f"## 投稿スタイルの優先度（クライアント指定）{chr(10)}{post_style}" if post_style else ""}
+
+{f"## 投稿の最終ゴール（CTAの方向性）{chr(10)}{post_goal}に向けてCTAを組み立てる。" if post_goal else ""}
+
 ## 現在の予約状況
 {booking_status}
 {"→ 空きがあるので積極的に来店誘導するCTAを入れる" if "空き" in booking_status else "→ 満席に近いため「少数限定」「今すぐ」の希少性を出す"}
 
 ## 予約先
+{f"予約受付：{reservation_source}" if reservation_source else ""}
 {booking_url if booking_url else "プロフィールのリンクから"}
+
+{f"## Instagram誘導（20本に3〜4本の割合で末尾に自然に入れる）{chr(10)}「{instagram_id} では施術写真・ビフォーアフターを載せています。」など自然な形で添える。{chr(10)}「フォローしてください」と直接書かない。" if instagram_id else ""}
+
+{f"## LINE誘導（月2〜3本の割合で末尾に入れる）{chr(10)}{line_url} への誘導を自然に入れる。" if line_url else ""}
+
+{f"## ホットペッパービューティー誘導（月1〜2本の割合で末尾に自然に入れる）{chr(10)}{hotpepper_url} への誘導を自然に入れる。「口コミ・メニュー詳細はこちら」など。" if hotpepper_url else ""}
 
 ## トーン・スタイル
 {tone}
@@ -147,6 +220,8 @@ def salon_to_rules(salon: dict) -> str:
 - タイトル行で「え？」と思わせるズレを作る：「〇〇なのに△△」「〇〇じゃない、実は△△」
 - オーナーの過去の失敗を素材にしたギャップを積極的に使う
 - 失敗→転換点→成果のW型ストーリーを複数本に使う
+- 「よくある間違い」を使って保存型まとめ投稿（〇選、チェックリスト）を定期的に入れる
+- お客様の声を冒頭フックに使う投稿を複数本入れる
 
 ## その他メモ
 {notes if notes else "なし"}

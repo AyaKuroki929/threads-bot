@@ -319,12 +319,13 @@ Supabase（line_users テーブル）
 
 | コマンド | 動作 |
 |---|---|
-| `LIST` | 登録サロン一覧を表示（旧Vercel実装・移植待ち） |
-| `myid` | 自分のLINE User IDを確認（旧Vercel実装・移植待ち） |
+| `LIST` | 登録サロン一覧を表示（🟢稼働中・Cloudflare Worker） |
+| `myid` | 自分のLINE User IDを確認（🟢稼働中・Cloudflare Worker） |
 
 ### クライアント向け自動動作
-- 友だち追加 → ウェルカムメッセージ送信（シナリオ設定後）
-- リッチメニュー右ボタン → 投稿リクエスト自動返信（稼働中）
+- 友だち追加 → ウェルカムシナリオ自動送信（🟢稼働中・2ステップ）
+- 友だち追加 → 彩さんに新規フォロワー通知（🟢稼働中）
+- リッチメニュー右ボタン → 投稿リクエスト自動返信（🟢稼働中）
 
 ### Cloudflare Workers 設定
 - **Worker名**: toukosan
@@ -332,8 +333,9 @@ Supabase（line_users テーブル）
 - **管理画面**: https://line-harness-admin-6ulitnovv-ayakuroki929s-projects.vercel.app
 - Secrets: LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET / API_KEY
 
-### 旧Vercelファイル（参照のみ・現在は使用していない）
-- `saas_app/api/line_webhook.py`（URL/LIST/myidコマンドの移植元）
+### Vercelファイル（LINE用ではなくStripe用として待機）
+- `saas_app/api/line_webhook.py`（LINE Webhookは現在Cloudflare Workerが処理・このファイルはイベントを受け取らない）
+- `saas_app/api/stripe_webhook.py`（🟢 稼働中 — Stripe解約/支払失敗を処理）
 
 ---
 
@@ -422,9 +424,11 @@ API_KEY の確認場所：
 
 ## 18. 残タスク
 
-- ⏳ 通しテスト（Section 10の手順でテスト用サロン1件を全部流す）
-- ⏳ Stripe Webhook 設定（Section 16の手順を実行 — Supabase ALTER TABLE + Vercel env設定 + Stripe登録）
-- ⏳ ウェルカムシナリオ設定（`LINE_HARNESS_API_KEY` を取得して `python3 setup_welcome_scenario.py` を実行）
-- 🟢 管理者コマンド（LIST・myid）をCloudflare Workerに移植済み（デプロイ・シークレット設定完了）
-- ⏳ LINE Channel Secret のローテーション（チャット上で露出したため）
+- ⏳ **通しテスト**（Section 10の手順でテスト用サロン1件を全部流す — 次回セッションで実施予定）
+- 🟢 Stripe Webhook 設定（Supabase ALTER + Vercel env + Stripe登録 — 完了 2026-05-17）
+- 🟢 ウェルカムシナリオ設定（完了 2026-05-17 — 2ステップ・友達追加即時送信）
+- 🟢 管理者コマンド（LIST・myid）Cloudflare Worker移植・稼働中
+- 🟢 新規フォロワー通知（Cloudflare Worker webhook.ts に実装済み 2026-05-17）
+- 🟢 バグ修正7件（line_webhook.py ngrok参照削除・LISTコマント列名修正・supabase_tables.sql補完・callback.py修正・post_saas.py timeout追加 — 2026-05-17）
+- ⏳ LINE Channel Secret のローテーション（チャット上で露出したため・任意）
 - ⏳ Metaアプリ公開申請（50人超える前に実施）
