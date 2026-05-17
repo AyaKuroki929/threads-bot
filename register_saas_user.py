@@ -17,6 +17,24 @@ import json
 import os
 import sys
 
+def _load_env_file():
+    """session_server/.env または .env から環境変数を自動読み込み（未設定の変数のみ上書き）"""
+    for path in [
+        os.path.join(os.path.dirname(__file__), "session_server", ".env"),
+        os.path.join(os.path.dirname(__file__), ".env"),
+    ]:
+        if os.path.exists(path):
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        if k not in os.environ:
+                            os.environ[k] = v
+            break
+
+_load_env_file()
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 THREADS_API  = "https://graph.threads.net/v1.0"

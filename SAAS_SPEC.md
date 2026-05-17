@@ -423,8 +423,8 @@ API_KEY の確認場所：
 ## 18. 残タスク
 
 - ⏳ 通しテスト（Section 10の手順でテスト用サロン1件を全部流す）
-- ⏳ Stripe Webhook 設定（Section 16の手順を実行）
-- ⏳ ウェルカムシナリオ設定（Section 17の手順を実行）
-- ⏳ 管理者コマンド（LIST・myid）をCloudflare Workerに移植
+- ⏳ Stripe Webhook 設定（Section 16の手順を実行 — Supabase ALTER TABLE + Vercel env設定 + Stripe登録）
+- ⏳ ウェルカムシナリオ設定（`LINE_HARNESS_API_KEY` を取得して `python3 setup_welcome_scenario.py` を実行）
+- 🟢 管理者コマンド（LIST・myid）をCloudflare Workerに移植済み（デプロイ・シークレット設定完了）
 - ⏳ LINE Channel Secret のローテーション（チャット上で露出したため）
 - ⏳ Metaアプリ公開申請（50人超える前に実施）

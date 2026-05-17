@@ -1,5 +1,11 @@
 # 機密情報（絶対にcommitしない）
 session.json
+session.json.bak.*
+session_personal.json
+session_personal.json.bak.*
+session_server/
+.env
+*.env
 
 # ログ・スクリーンショット
 *.log
@@ -26,3 +32,4 @@ reply_explore.py
 test_thread.py
 google_service_account.json
 create_onboarding_form.gs
+.vercel
