@@ -63,7 +63,7 @@ def get_salon(salon_name):
     return rows[0] if rows else None
 
 
-def insert_salon(salon_name, user_id, token, stripe_customer_id=None):
+def insert_salon(salon_name, user_id, token, stripe_customer_id=None, stripe_subscription_id=None):
     row = {
         "salon_name": salon_name,
         "threads_user_id": user_id,
@@ -72,6 +72,8 @@ def insert_salon(salon_name, user_id, token, stripe_customer_id=None):
     }
     if stripe_customer_id:
         row["stripe_customer_id"] = stripe_customer_id
+    if stripe_subscription_id:
+        row["stripe_subscription_id"] = stripe_subscription_id
     data = json.dumps(row).encode()
     req = urllib.request.Request(
         f"{SUPABASE_URL}/rest/v1/salons",
@@ -83,7 +85,7 @@ def insert_salon(salon_name, user_id, token, stripe_customer_id=None):
         return resp.status
 
 
-def update_salon(salon_id, user_id, token, stripe_customer_id=None):
+def update_salon(salon_id, user_id, token, stripe_customer_id=None, stripe_subscription_id=None):
     row = {
         "threads_user_id": user_id,
         "access_token": token,
@@ -91,6 +93,8 @@ def update_salon(salon_id, user_id, token, stripe_customer_id=None):
     }
     if stripe_customer_id:
         row["stripe_customer_id"] = stripe_customer_id
+    if stripe_subscription_id:
+        row["stripe_subscription_id"] = stripe_subscription_id
     data = json.dumps(row).encode()
     url = f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}"
     req = urllib.request.Request(
@@ -148,21 +152,25 @@ def main():
 
     # Stripe customer ID（任意）
     print()
-    print("【Stripe顧客IDについて】")
-    print("解約・支払い失敗の自動検知に使います。")
-    print("Stripeダッシュボード → 顧客一覧で当該顧客のIDを確認（cus_から始まる文字列）")
-    print("未入力でも投稿は動作します。後から update もできます。")
+    print("【Stripe ID について】")
+    print("解約・支払い失敗の自動検知に使います（未入力でも投稿は動作します）。")
+    print()
+    print("Stripe customer ID（cus_...）: Stripeダッシュボード → 顧客一覧 → 当該顧客を開いてIDをコピー")
     stripe_customer_id = input("Stripe customer ID（未入力でスキップ）: ").strip()
+    print()
+    print("Stripe subscription ID（sub_...）: 同顧客ページ → サブスクリプション → IDをコピー")
+    print("※ 同じ人がうらかたさんにも加入している場合は必ず入力してください（誤動作防止）")
+    stripe_subscription_id = input("Stripe subscription ID（未入力でスキップ）: ").strip()
 
     # Supabase 登録
     existing = get_salon(salon_name)
     if existing:
         print(f"\n既存サロン「{salon_name}」を更新します（id={existing['id']}）")
-        update_salon(existing["id"], user_id, token, stripe_customer_id or None)
+        update_salon(existing["id"], user_id, token, stripe_customer_id or None, stripe_subscription_id or None)
         print("✅ Supabase 更新完了")
     else:
         print(f"\n新規サロン「{salon_name}」を登録します")
-        insert_salon(salon_name, user_id, token, stripe_customer_id or None)
+        insert_salon(salon_name, user_id, token, stripe_customer_id or None, stripe_subscription_id or None)
         print("✅ Supabase 登録完了")
 
     print()

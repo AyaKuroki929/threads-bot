@@ -6,10 +6,12 @@ Stripe Webhook ハンドラ（とうこさん SaaS）
 from http.server import BaseHTTPRequestHandler
 import hashlib, hmac, json, os, time, urllib.request, urllib.parse
 
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 LINE_TOKEN   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+
+TOUKOSAN_PRODUCT_ID = "prod_UWa5BZv291uQts"  # とうこさん専用商品ID
 
 
 # ── Stripe 署名検証 ───────────────────────────────────────────
@@ -41,17 +43,24 @@ def supabase_headers():
     }
 
 
-def get_salon_by_stripe_customer(customer_id: str):
-    url = (f"{SUPABASE_URL}/rest/v1/salons"
-           f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}"
-           f"&select=id,salon_name,is_active&limit=1")
-    req = urllib.request.Request(url, headers=supabase_headers())
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            rows = json.loads(r.read())
-            return rows[0] if rows else None
-    except Exception:
-        return None
+def get_salon_by_subscription(subscription_id: str, customer_id: str):
+    """subscription_id で照合（サービスをまたいだ誤検知を防ぐ）。
+    未登録なら customer_id でフォールバック。"""
+    for col, val in [("stripe_subscription_id", subscription_id), ("stripe_customer_id", customer_id)]:
+        if not val:
+            continue
+        url = (f"{SUPABASE_URL}/rest/v1/salons"
+               f"?{col}=eq.{urllib.parse.quote(val)}"
+               f"&select=id,salon_name,is_active&limit=1")
+        req = urllib.request.Request(url, headers=supabase_headers())
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                rows = json.loads(r.read())
+                if rows:
+                    return rows[0]
+        except Exception:
+            pass
+    return None
 
 
 def deactivate_salon(salon_id: str):
@@ -82,39 +91,47 @@ def line_broadcast(text: str):
 
 
 # ── イベント処理 ──────────────────────────────────────────────
-def handle_subscription_deleted(obj: dict):
-    customer_id = obj.get("customer", "")
-    salon = get_salon_by_stripe_customer(customer_id) if customer_id else None
+def _is_toukosan_product(items_data: list) -> bool:
+    for item in items_data:
+        if item.get("price", {}).get("product") == TOUKOSAN_PRODUCT_ID:
+            return True
+    return False
 
-    if salon:
-        deactivate_salon(salon["id"])
-        line_broadcast(
-            f"🔴 とうこさん サービス停止\n\n"
-            f"サロン: {salon['salon_name']}\n"
-            f"Stripe: {customer_id}\n\n"
-            f"Stripeのサブスクリプションが削除されたため、Supabaseの is_active を自動で false にしました。"
-        )
-    else:
-        line_broadcast(
-            f"⚠️ とうこさん サブスク削除（サロン不明）\n\n"
-            f"Stripe customer: {customer_id}\n\n"
-            f"Supabaseに stripe_customer_id が未登録のため自動処理できませんでした。\n"
-            f"手動でSupabaseの is_active を false にしてください。\n\n"
-            f"https://supabase.com/dashboard/project"
-        )
+
+def handle_subscription_deleted(obj: dict):
+    # とうこさん商品以外は無視（うらかたさん等の混入を防ぐ）
+    if not _is_toukosan_product(obj.get("items", {}).get("data", [])):
+        return
+    subscription_id = obj.get("id", "")
+    customer_id = obj.get("customer", "")
+    salon = get_salon_by_subscription(subscription_id, customer_id)
+    if not salon:
+        return
+    deactivate_salon(salon["id"])
+    line_broadcast(
+        f"🔴 とうこさん サービス停止\n\n"
+        f"サロン: {salon['salon_name']}\n"
+        f"Stripe: {customer_id}\n\n"
+        f"Stripeのサブスクリプションが削除されたため、Supabaseの is_active を自動で false にしました。"
+    )
 
 
 def handle_payment_failed(obj: dict):
+    # invoiceのline itemsからとうこさん商品か確認
+    lines = obj.get("lines", {}).get("data", [])
+    if not _is_toukosan_product(lines):
+        return  # とうこさん以外（うらかたさん等）は無視
+    subscription_id = obj.get("subscription", "")
     customer_id = obj.get("customer", "")
+    salon = get_salon_by_subscription(subscription_id, customer_id)
+    if not salon:
+        return
     attempt = obj.get("attempt_count", "?")
-    salon = get_salon_by_stripe_customer(customer_id) if customer_id else None
-    salon_label = salon["salon_name"] if salon else f"（不明 customer={customer_id}）"
-
     line_broadcast(
         f"⚠️ とうこさん 支払い失敗\n\n"
-        f"サロン: {salon_label}\n"
+        f"サロン: {salon['salon_name']}\n"
         f"試行回数: {attempt}回目\n\n"
-        f"Stripeが自動リトライします。リトライが全て失敗すると、サブスクは自動削除されサービスが停止します。\n\n"
+        f"Stripeが自動リトライします。全て失敗するとサービスが自動停止します。\n\n"
         f"https://dashboard.stripe.com"
     )
 
