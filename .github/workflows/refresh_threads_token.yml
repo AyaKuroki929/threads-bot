@@ -1,0 +1,92 @@
+name: Threads API - トークン月次更新
+
+on:
+  schedule:
+    - cron: '0 1 1 * *'  # 毎月1日 AM10:00 JST
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+
+    steps:
+      - name: Refresh THREADS_API_TOKEN_BEMOLLE
+        id: bemolle
+        env:
+          TOKEN: ${{ secrets.THREADS_API_TOKEN_BEMOLLE }}
+        run: |
+          set +e
+          NEW_TOKEN=$(python3 -c "
+          import urllib.request, json, urllib.parse, sys, os
+          token = os.environ['TOKEN']
+          if not token:
+              print('TOKEN が空です', file=sys.stderr)
+              sys.exit(1)
+          url = 'https://graph.threads.net/v1.0/refresh_access_token?grant_type=th_refresh_token&access_token=' + urllib.parse.quote(token)
+          try:
+              with urllib.request.urlopen(url, timeout=30) as resp:
+                  d = json.loads(resp.read())
+                  expires = d.get('expires_in', 0) // 86400
+                  print(f'[bemolle] リフレッシュ成功（有効期間 {expires}日）', file=sys.stderr)
+                  print(d['access_token'])
+          except Exception as e:
+              print(f'[bemolle] リフレッシュ失敗: {e}', file=sys.stderr)
+              sys.exit(1)
+          ")
+          ec=$?
+          if [ $ec -eq 0 ] && [ -n "$NEW_TOKEN" ]; then
+            printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_BEMOLLE --repo ${{ github.repository }}
+            echo "ok=true" >> $GITHUB_OUTPUT
+            echo "[bemolle] GH Secretsを更新しました"
+          else
+            echo "ok=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Refresh THREADS_API_TOKEN_PERSONAL
+        id: personal
+        env:
+          TOKEN: ${{ secrets.THREADS_API_TOKEN_PERSONAL }}
+        run: |
+          set +e
+          NEW_TOKEN=$(python3 -c "
+          import urllib.request, json, urllib.parse, sys, os
+          token = os.environ['TOKEN']
+          if not token:
+              print('TOKEN が空です', file=sys.stderr)
+              sys.exit(1)
+          url = 'https://graph.threads.net/v1.0/refresh_access_token?grant_type=th_refresh_token&access_token=' + urllib.parse.quote(token)
+          try:
+              with urllib.request.urlopen(url, timeout=30) as resp:
+                  d = json.loads(resp.read())
+                  expires = d.get('expires_in', 0) // 86400
+                  print(f'[personal] リフレッシュ成功（有効期間 {expires}日）', file=sys.stderr)
+                  print(d['access_token'])
+          except Exception as e:
+              print(f'[personal] リフレッシュ失敗: {e}', file=sys.stderr)
+              sys.exit(1)
+          ")
+          ec=$?
+          if [ $ec -eq 0 ] && [ -n "$NEW_TOKEN" ]; then
+            printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_PERSONAL --repo ${{ github.repository }}
+            echo "ok=true" >> $GITHUB_OUTPUT
+            echo "[personal] GH Secretsを更新しました"
+          else
+            echo "ok=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: LINE通知（失敗時）
+        if: steps.bemolle.outputs.ok == 'false' || steps.personal.outputs.ok == 'false'
+        run: |
+          MSG="⚠️ Threadsトークン月次更新失敗\n\n"
+          [ "${{ steps.bemolle.outputs.ok }}" = "false" ] && MSG="${MSG}❌ bemolle_diet トークン更新失敗\n"
+          [ "${{ steps.personal.outputs.ok }}" = "false" ] && MSG="${MSG}❌ aya_kuroki_0929 トークン更新失敗\n"
+          MSG="${MSG}\n手動で再取得してください：\n\ncd ~/threads_bot\nexport META_APP_SECRET=シークレット\npython3 get_threads_token.py bemolle\npython3 get_threads_token.py personal"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+          exit 1

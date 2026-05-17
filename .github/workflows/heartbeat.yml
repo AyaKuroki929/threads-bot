@@ -1,7 +1,10 @@
 name: Heartbeat - Verify Post Success
 
 on:
-  # schedule: 6/1まで一時停止。Mac LaunchAgentで代替投稿中。
+  schedule:
+    - cron: '0 2 * * *'    # JST 11:00 morning確認
+    - cron: '0 7 * * *'    # JST 16:00 noon確認
+    - cron: '0 14 * * *'   # JST 23:00 evening確認
   workflow_dispatch:
 
 permissions:
@@ -35,10 +38,10 @@ jobs:
             VALID_START=0; VALID_END=24
           else
             case "${{ github.event.schedule }}" in
-              "30 23 * * *"|"0 0 * * *"|"30 0 * * *") SLOT="morning"; VALID_START=5;  VALID_END=13 ;;
-              "30 4 * * *"|"0 5 * * *"|"30 5 * * *")  SLOT="noon";    VALID_START=11; VALID_END=19 ;;
-              "30 13 * * *"|"0 14 * * *"|"30 14 * * *") SLOT="evening"; VALID_START=17; VALID_END=24 ;;
-              *) SLOT="evening"; VALID_START=17; VALID_END=24 ;;
+              "0 2 * * *")  SLOT="morning"; VALID_START=5;  VALID_END=13 ;;
+              "0 7 * * *")  SLOT="noon";    VALID_START=11; VALID_END=19 ;;
+              "0 14 * * *") SLOT="evening"; VALID_START=17; VALID_END=24 ;;
+              *) SLOT="morning"; VALID_START=0; VALID_END=24 ;;
             esac
           fi
           HOUR_JST=$(TZ=Asia/Tokyo date '+%-H')

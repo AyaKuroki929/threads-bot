@@ -2,8 +2,9 @@ name: Threads Auto Post (bemolle)
 
 on:
   schedule:
-    # 朝のみGH Actions（Mac未起動対策）。昼・夜はMac LaunchAgent。
-    - cron: '0 22 * * *'   # JST 7:00
+    - cron: '0 22 * * *'    # JST 7:00 morning
+    - cron: '0 3 * * *'     # JST 12:00 noon
+    - cron: '0 12 * * *'    # JST 21:00 evening
   workflow_dispatch:
     inputs:
       slot:
@@ -12,9 +13,7 @@ on:
         type: choice
         options:
           - morning
-          - morning2
           - noon
-          - evening2
           - evening
       dry_run:
         description: 'dry-run（実際には投稿しない）'
@@ -22,51 +21,34 @@ on:
         default: false
 
 concurrency:
-  # 同じslotのジョブは1つずつしか実行しない（ツリー投稿中に次の発火が走って重複する事故を完全に潰す）
-  # cancel-in-progress: false にして、走行中ジョブはキャンセルせず、後続を待たせる
-  group: threads-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (contains(github.event.schedule, ' 3 ') && 'noon') || (contains(github.event.schedule, ' 13 ') && 'evening2') || github.event.inputs.slot || 'manual' }}
+  group: threads-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (contains(github.event.schedule, ' 3 ') && 'noon') || (contains(github.event.schedule, ' 12 ') && 'evening') || github.event.inputs.slot || 'manual' }}
   cancel-in-progress: false
 
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: write
       issues: write
     env:
       TZ: Asia/Tokyo
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-      THREADS_TOPIC: 美容
-      AUTO_COMMENT: '1'
-      MAX_COMMENTS_PER_RUN: '3'
-      COMMENT_MIN_POOL: '5'
-      COMMENT_TARGETS_FILE: comment_targets.json
-      COMMENTED_FILE: commented_posts.json
-      COMMENT_KEYWORDS_FILE: comment_search_keywords.json
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      EXPECTED_USER_ID: '73523451930'
+      THREADS_USERNAME: bemolle_diet
+      POSTS_FILE: posts.json
+      USED_FILE: used_posts.json
+      LAST_RUN_FILE: last_run.json
+      PRIORITY_FILE: priority_posts.json
+      THREADS_USER_ID: '73523451930'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install Playwright + Chromium
-        run: |
-          pip install --upgrade pip
-          pip install playwright anthropic
-          python -m playwright install --with-deps chromium
-
-      - name: Restore session.json from secret
-        env:
-          SESSION: ${{ secrets.THREADS_SESSION }}
-        run: |
-          printf '%s' "$SESSION" > session.json
-          python3 -c "import json; json.load(open('session.json')); print('session.json valid')"
 
       - name: Determine slot
         id: slot
@@ -75,94 +57,40 @@ jobs:
             echo "name=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
-            # cron schedule の "分 時" → slot を判定。重複は last_run.json で防止。
             case "${{ github.event.schedule }}" in
-              "0 22 * * *"|"30 22 * * *") echo "name=morning"  >> $GITHUB_OUTPUT ;;
-              "0 3 * * *"|"30 3 * * *")   echo "name=noon"     >> $GITHUB_OUTPUT ;;
-              "0 13 * * *"|"30 13 * * *") echo "name=evening2" >> $GITHUB_OUTPUT ;;
+              "0 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
+              "0 3 * * *")  echo "name=noon"    >> $GITHUB_OUTPUT ;;
+              "0 12 * * *") echo "name=evening" >> $GITHUB_OUTPUT ;;
             esac
             echo "dry=false" >> $GITHUB_OUTPUT
           fi
-          echo "slot=$(cat $GITHUB_OUTPUT)"
 
-      - name: Random delay (human-like timing)
-        if: steps.slot.outputs.dry != 'true'
-        run: |
-          delay=$((RANDOM % 300))
-          echo "投稿まで ${delay}秒 待機（ランダム遅延）"
-          sleep $delay
-
-      - name: Pull latest state (重複投稿防止)
+      - name: Pull latest state（重複投稿防止）
         if: steps.slot.outputs.dry != 'true'
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
           git pull --rebase origin main 2>&1 || true
 
-      - name: Post to Threads
+      - name: Post to Threads（公式API）
         id: post
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_API_TOKEN_BEMOLLE }}
+          SKIP_TIME_GUARD: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set +e
           if [ "${{ steps.slot.outputs.dry }}" = "true" ]; then
-            python3 post.py ${{ steps.slot.outputs.name }} --dry-run
+            python3 post_api.py ${{ steps.slot.outputs.name }} --dry-run
           else
-            python3 post.py ${{ steps.slot.outputs.name }}
+            python3 post_api.py ${{ steps.slot.outputs.name }}
           fi
           ec=$?
           echo "exit_code=$ec" >> $GITHUB_OUTPUT
           exit $ec
 
-      - name: Create Account-Mismatch alert (only on exit code 4)
-        id: alert_mismatch
-        if: failure() && steps.post.outputs.exit_code == '4'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const today = new Date().toLocaleDateString('ja-JP', {timeZone: 'Asia/Tokyo'})
-            const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'account-mismatch',
-              per_page: 5
-            })
-            if (existing.data.length > 0) {
-              console.log('account-mismatch Issue 既存のためskip:', existing.data[0].html_url)
-              core.setOutput('created', 'false')
-              return
-            }
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🚨 ベモーレThreads アカウント不一致 - セッション要確認 (${today})`,
-              body: [
-                `ベモーレアカウント(@bemolle_diet)の自動投稿が **アカウント不一致** で停止しました（${today}）。`,
-                ``,
-                `THREADS_SESSION シークレットが @bemolle_diet のセッションではない可能性があります。`,
-                ``,
-                `## やること（Macのターミナルで）`,
-                `\`\`\`bash`,
-                `cd ~/threads_bot`,
-                `python3 extract_cookies2.py --profile 3`,
-                `gh secret set THREADS_SESSION < session.json`,
-                `\`\`\``,
-                ``,
-                `対応完了したらこのIssueをcloseしてください。`,
-              ].join('\n'),
-              labels: ['account-mismatch']
-            })
-            core.setOutput('created', 'true')
-
-      - name: LINE通知（アカウント不一致）
-        if: failure() && steps.alert_mismatch.outputs.created == 'true'
-        run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
-            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"🚨 ベモーレThreads 停止\n\nアカウント不一致が検出されました。\n\n📱 GitHub Issuesを確認して対応してください。\n\ncd ~/threads_bot\npython3 extract_cookies2.py --profile 3\ngh secret set THREADS_SESSION < session.json"}]}'
-
-      - name: Create Cookie-Expired alert (only on exit code 3)
-        id: alert_cookie
+      - name: Create Token-Expired alert（exit code 3 のみ）
+        id: alert_token
         if: failure() && steps.post.outputs.exit_code == '3'
         uses: actions/github-script@v7
         with:
@@ -173,26 +101,26 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
-              labels: 'cookie-expired',
+              labels: 'token-expired-bemolle',
               per_page: 5
             })
             if (existing.data.length > 0) {
-              console.log('cookie-expired Issue 既存のためskip:', existing.data[0].html_url)
               core.setOutput('created', 'false')
               return
             }
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🔑 ベモーレThreads ログイン切れ - cookie再発行が必要 (${today})`,
+              title: `🔑 ベモーレThreads トークン切れ - 再取得が必要 (${today})`,
               body: [
-                `ベモーレアカウント(@bemolle_diet)のThreads自動投稿が **ログイン切れ** で停止しました（${today} ${slot}）。`,
+                `ベモーレアカウント(@bemolle_diet)のThreads自動投稿が **トークン切れ** で停止しました（${today} ${slot}）。`,
                 ``,
                 `## やること（Macのターミナルで）`,
                 `\`\`\`bash`,
                 `cd ~/threads_bot`,
-                `python3 extract_cookies2.py --profile 3`,
-                `gh secret set THREADS_SESSION < session.json`,
+                `export META_APP_SECRET=シークレットをここに貼る`,
+                `python3 get_threads_token.py bemolle`,
+                `# 表示されたコマンドを実行してGH Secretsに登録`,
                 `\`\`\``,
                 ``,
                 `完了後、本workflowを手動再実行：`,
@@ -202,41 +130,27 @@ jobs:
                 ``,
                 `対応完了したらこのIssueをcloseしてください。`,
               ].join('\n'),
-              labels: ['cookie-expired']
+              labels: ['token-expired-bemolle']
             })
             core.setOutput('created', 'true')
 
-      - name: LINE通知（ログイン切れ）
-        if: failure() && steps.alert_cookie.outputs.created == 'true'
+      - name: LINE通知（トークン切れ）
+        if: failure() && steps.alert_token.outputs.created == 'true'
         run: |
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"🔑 ベモーレThreads 停止\n\nログイン切れで投稿できなくなりました。\n\n📱 対応してください：\n\ncd ~/threads_bot\npython3 extract_cookies2.py --profile 3\ngh secret set THREADS_SESSION < session.json"}]}'
+            -d '{"messages":[{"type":"text","text":"🔑 ベモーレThreads 停止\n\nAPIトークン切れで投稿できなくなりました。\n\n📱 対応してください：\n\ncd ~/threads_bot\nexport META_APP_SECRET=シークレット\npython3 get_threads_token.py bemolle"}]}'
 
       - name: LINE通知（予期せぬエラー）
-        if: failure() && steps.post.outputs.exit_code != '3' && steps.post.outputs.exit_code != '4' && steps.post.conclusion != 'success'
+        if: failure() && steps.post.outputs.exit_code != '3'
         run: |
           SLOT="${{ steps.slot.outputs.name }}"
           EC="${{ steps.post.outputs.exit_code }}"
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ ベモーレThreads 予期せぬエラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\n投稿できなかった可能性があります。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
-
-      - name: セッション Cookie 自動更新（Mac不要の自己更新）
-        if: steps.post.outcome == 'success' && steps.slot.outputs.dry != 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -f session_refreshed.json ]; then
-            python3 -c "import json; d=json.load(open('session_refreshed.json')); uid=next((c['value'] for c in d.get('cookies',[]) if c['name']=='ds_user_id'),''); print('refreshed uid:', uid)"
-            gh secret set THREADS_SESSION --repo ${{ github.repository }} < session_refreshed.json
-            echo "[session] THREADS_SESSION を最新 Cookie で更新しました"
-          else
-            echo "[session] session_refreshed.json が見つかりません。スキップ。"
-          fi
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ ベモーレThreads エラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
 
       - name: 投稿ストック自動補充（残り3本以下で発動）
         if: steps.post.outcome == 'success' && steps.slot.outputs.dry != 'true'
@@ -250,20 +164,15 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
-          git add used_posts.json last_run.json commented_posts.json comment_targets.json api_usage_log.json posts.json 2>/dev/null || true
+          git add used_posts.json last_run.json posts.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no state changes"
           else
-            git fetch origin main 2>/dev/null || true
-            python3 merge_state.py commented_posts.json commented_posts_personal.json api_usage_log.json
-            git add used_posts.json last_run.json commented_posts.json commented_posts_personal.json comment_targets.json api_usage_log.json posts.json 2>/dev/null || true
             git commit -m "state: ${{ steps.slot.outputs.name }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             push_ok=0
             for i in 1 2 3; do
               git pull --rebase -X theirs origin main 2>/dev/null || git rebase --abort 2>/dev/null || true
               git push && push_ok=1 && break || sleep 3
             done
-            if [ $push_ok -eq 0 ]; then
-              echo "::warning::git push failed after 3 retries. last_run.json was NOT pushed. Duplicate-post guard may fail for the next run."
-            fi
+            [ $push_ok -eq 0 ] && echo "::warning::git push failed after 3 retries"
           fi
