@@ -290,12 +290,31 @@ def main():
         if not THREADS_ACCESS_TOKEN:
             print("[fatal] THREADS_ACCESS_TOKEN が設定されていません")
             sys.exit(EXIT_GENERIC_FAIL)
-        if not THREADS_USER_ID:
-            print("[fatal] THREADS_USER_ID が設定されていません")
-            sys.exit(EXIT_GENERIC_FAIL)
 
     if not dry_run:
         _git_pull_latest()
+
+    # /me でトークンの実際のユーザーIDを取得（設定値と照合してどちらか使う）
+    actual_user_id = THREADS_USER_ID
+    if not dry_run:
+        try:
+            me_url = f"{THREADS_API}/me?fields=id,username&access_token={THREADS_ACCESS_TOKEN}"
+            req = urllib.request.Request(me_url)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                me_data = json.loads(resp.read())
+            token_user_id = str(me_data.get("id", ""))
+            token_username = me_data.get("username", "")
+            print(f"[token] /me → id={token_user_id} username={token_username}")
+            if THREADS_USER_ID and token_user_id != THREADS_USER_ID:
+                print(f"[warn] THREADS_USER_ID({THREADS_USER_ID}) ≠ token user({token_user_id}). token の user_id を使用します。")
+            actual_user_id = token_user_id or THREADS_USER_ID
+        except Exception as e:
+            print(f"[warn] /me 取得失敗: {e}. THREADS_USER_ID をそのまま使用。")
+            actual_user_id = THREADS_USER_ID
+
+    if not actual_user_id:
+        print("[fatal] user_id が取得できませんでした（THREADS_USER_ID 未設定かつ /me 失敗）")
+        sys.exit(EXIT_GENERIC_FAIL)
 
     if not dry_run and already_posted_today(time_slot):
         print(f"[skip] {time_slot} は本日すでに投稿済み。終了。")
@@ -335,7 +354,7 @@ def main():
     last_exc = None
     for attempt in range(1, 4):
         try:
-            post_id = threads_api_post(THREADS_USER_ID, THREADS_ACCESS_TOKEN, texts)
+            post_id = threads_api_post(actual_user_id, THREADS_ACCESS_TOKEN, texts)
             last_exc = None
             break
         except TokenExpiredError as e:
