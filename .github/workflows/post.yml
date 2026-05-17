@@ -39,7 +39,7 @@ jobs:
       USED_FILE: used_posts.json
       LAST_RUN_FILE: last_run.json
       PRIORITY_FILE: priority_posts.json
-      THREADS_USER_ID: '73523451930'
+      THREADS_USER_ID: '27445535948404811'
 
     steps:
       - name: Checkout

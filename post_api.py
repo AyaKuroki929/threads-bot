@@ -247,7 +247,7 @@ def _api_post(user_id, token, text, reply_to_id=None):
     time.sleep(30)
 
     # Step 3: 公開
-    publish_url = f"{THREADS_API}/{user_id}/threads/publish"
+    publish_url = f"{THREADS_API}/{user_id}/threads_publish"
     pub_data = urllib.parse.urlencode({
         "creation_id": creation_id,
         "access_token": token,
