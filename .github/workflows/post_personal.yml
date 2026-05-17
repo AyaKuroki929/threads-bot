@@ -2,15 +2,13 @@ name: Threads Personal Auto Post (aya)
 
 on:
   schedule:
+    # Actions分節約のため各スロット1本に削減（cron-job.orgが一次発火源）
     # JST 7:30 = UTC 22:30 (前日)
     - cron: '30 22 * * *'
-    - cron: '0 23 * * *'
     # JST 12:00 = UTC 3:00
     - cron: '0 3 * * *'
-    - cron: '30 3 * * *'
     # JST 21:00 = UTC 12:00
     - cron: '0 12 * * *'
-    - cron: '30 12 * * *'
   workflow_dispatch:
     inputs:
       slot:

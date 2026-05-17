@@ -2,18 +2,10 @@ name: Heartbeat - Verify Post Success
 
 on:
   schedule:
-    # morning が出ているか確認 (JST 8:30 / 9:00 / 9:30)
-    - cron: '30 23 * * *'   # JST 8:30
-    - cron: '0 0 * * *'     # JST 9:00
-    - cron: '30 0 * * *'    # JST 9:30
-    # noon が出ているか確認 (JST 13:30 / 14:00 / 14:30)
-    - cron: '30 4 * * *'    # JST 13:30
-    - cron: '0 5 * * *'     # JST 14:00
-    - cron: '30 5 * * *'    # JST 14:30
-    # evening が出ているか確認 (JST 22:30 / 23:00 / 23:30)
-    - cron: '30 13 * * *'   # JST 22:30
-    - cron: '0 14 * * *'    # JST 23:00
-    - cron: '30 14 * * *'   # JST 23:30
+    # Actions分節約のため各スロット1本に削減（9発→3発）
+    - cron: '0 0 * * *'     # JST 9:00（morning確認）
+    - cron: '0 5 * * *'     # JST 14:00（noon確認）
+    - cron: '0 14 * * *'    # JST 23:00（evening確認）
   workflow_dispatch:
 
 permissions:
