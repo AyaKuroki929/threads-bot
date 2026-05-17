@@ -45,13 +45,16 @@ def get_salon(salon_name):
     return rows[0] if rows else None
 
 
-def insert_salon(salon_name, user_id, token):
-    data = json.dumps({
+def insert_salon(salon_name, user_id, token, stripe_customer_id=None):
+    row = {
         "salon_name": salon_name,
         "threads_user_id": user_id,
         "access_token": token,
         "is_active": True,
-    }).encode()
+    }
+    if stripe_customer_id:
+        row["stripe_customer_id"] = stripe_customer_id
+    data = json.dumps(row).encode()
     req = urllib.request.Request(
         f"{SUPABASE_URL}/rest/v1/salons",
         data=data,
@@ -62,12 +65,15 @@ def insert_salon(salon_name, user_id, token):
         return resp.status
 
 
-def update_salon(salon_id, user_id, token):
-    data = json.dumps({
+def update_salon(salon_id, user_id, token, stripe_customer_id=None):
+    row = {
         "threads_user_id": user_id,
         "access_token": token,
         "is_active": True,
-    }).encode()
+    }
+    if stripe_customer_id:
+        row["stripe_customer_id"] = stripe_customer_id
+    data = json.dumps(row).encode()
     url = f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}"
     req = urllib.request.Request(
         url, data=data,
@@ -122,15 +128,23 @@ def main():
     username = me_data.get("username", "")
     print(f"✅ トークン確認OK: @{username} (id={user_id})")
 
+    # Stripe customer ID（任意）
+    print()
+    print("【Stripe顧客IDについて】")
+    print("解約・支払い失敗の自動検知に使います。")
+    print("Stripeダッシュボード → 顧客一覧で当該顧客のIDを確認（cus_から始まる文字列）")
+    print("未入力でも投稿は動作します。後から update もできます。")
+    stripe_customer_id = input("Stripe customer ID（未入力でスキップ）: ").strip()
+
     # Supabase 登録
     existing = get_salon(salon_name)
     if existing:
         print(f"\n既存サロン「{salon_name}」を更新します（id={existing['id']}）")
-        update_salon(existing["id"], user_id, token)
+        update_salon(existing["id"], user_id, token, stripe_customer_id or None)
         print("✅ Supabase 更新完了")
     else:
         print(f"\n新規サロン「{salon_name}」を登録します")
-        insert_salon(salon_name, user_id, token)
+        insert_salon(salon_name, user_id, token, stripe_customer_id or None)
         print("✅ Supabase 登録完了")
 
     print()

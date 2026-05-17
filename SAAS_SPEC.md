@@ -22,70 +22,121 @@
 
 ## 2. クライアントの流れ（完全版）
 
-### STEP 1: 申込（クライアント側）
+### STEP 1: LINE友達追加（クライアント側・最初にやること）
 
-1. **申込ページ**（https://saas.shikisai.work/signup）で利用規約に同意 → Stripeでカード登録
-2. **Googleフォーム**に回答（オンボーディングフォーム）
-   - サロン名、Threadsユーザー名、業種、強み、ターゲット客層など
+1. 「とうこさん」LINE公式アカウントを友達追加
+   - LINE ID: **@444ojril**
+   - 友達追加URL: `https://line.me/R/ti/p/@444ojril`
+2. 友達追加後、ウェルカムメッセージを確認（申込手順が届く）
 
-### STEP 2: セッション取得（彩さん側・1回のみ）
+---
 
-1. ターミナルで2つのコマンドを起動：
-   ```
-   # ターミナル1（スリープ防止つきで起動）
-   cd ~/threads_bot/session_server
-   caffeinate -i python3 server.py
+### STEP 2: 申込・フォーム回答（クライアント側）
 
-   # ターミナル2
-   ngrok http 8765
-   ```
-2. LINEで「とうこさん」Botに以下を送信：
-   ```
-   URL {クライアントのLINE User ID} {サロン名} @{Threadsユーザー名}
-   ```
-3. クライアントのLINEに自動でセットアップURLが送られる
-4. クライアントがURLを開いてInstagramログイン → Supabaseに自動保存
-5. ログイン完了後、ターミナルを閉じてOK
+1. リッチメニュー「サービスに登録する」タップ  
+   または直接 **https://saas.shikisai.work/signup** を開く
+2. 利用規約を読んでチェックボックスにチェック
+3. 「カード登録へ進む →」ボタンを押してStripeでカード登録
+4. 彩さんから送られてくるGoogleフォームのURLに回答
+   - サロン名・Threadsユーザー名・強み・ターゲット・NGワードなど
+
+---
+
+### STEP 3: アカウント連携（彩さん主導・約5分・Zoom不要）
 
 > ⚡ **この作業のみ彩さんが1回だけ行う。以降は完全自動。**
 
-### STEP 3: 投稿生成（自動）
+#### 【準備】フォーム回答後
+
+1. Googleスプレッドシートでサロン名・Threadsユーザー名（@から）を確認してメモ
+
+2. **Meta Developer ConsoleでThreadsテスターとして追加**  
+   → 以下のURLをブラウザで開く（Metaログイン済みのブラウザで）  
+   `https://developers.facebook.com/apps/1497479218824264/roles/roles/`  
+   → 「テスターを追加」からクライアントのInstagram/ThreadsアカウントIDを入力  
+
+   💬 **①Claudeに話しかけるタイミング：** 「テスターIDが分からない」「追加できない」場合
+
+3. クライアントに以下をLINEで連絡する：
+   > 「お手数ですが、Threadsの設定ページから承認をお願いします。
+   > https://www.threads.com/settings/account
+   > 「テスター招待」という項目が出ているはずですので、承認ボタンを押してください。」
+
+4. クライアントから「承認しました」の返信を待つ
+
+#### 【トークン取得・Supabase登録】
+
+5. 以下のURLを開く（Metaにログイン済みのブラウザで）  
+   `https://developers.facebook.com/apps/1497479218824264/use_cases/customize/settings/?use_case_enum=THREADS_API&selected_tab=settings&product_route=threads-api`  
+   → 「ユーザートークン生成ツール」セクションを探す  
+   → 対象ユーザーの「アクセストークンを生成」をクリック → トークンをコピー
+
+   💬 **②Claudeに話しかけるタイミング：** 「ユーザートークン生成ツールが見つからない」「エラーが出る」場合
+
+6. ターミナルを開いて以下を実行：
+
+   ```bash
+   cd ~/threads_bot
+   export SUPABASE_URL="..." # Supabaseの設定ページから
+   export SUPABASE_SERVICE_KEY="..." # Supabase Service Roleキー
+   python3 register_saas_user.py
+   ```
+
+   - サロン名を入力（英数字・アンダースコア推奨。例：`flowerpetals`）
+   - 手順5でコピーしたトークンを貼り付け
+   - `✅ Supabase 登録完了` と出れば完了
+
+   💬 **③Claudeに話しかけるタイミング：** スクリプトがエラーになった場合
+
+---
+
+### STEP 4: 初回投稿生成（彩さんが手動実行・1回のみ）
+
+1. GitHubの「SaaS - サロン別投稿生成」ワークフローを手動実行  
+   💬 **④Claudeに話しかけるタイミング：** 「手動実行のやり方が分からない」場合
+2. 約2分後、投稿JSON（15本分）が生成される  
+   💬 「投稿JSONが生成されたか確認して」とClaudeに言えば一緒に確認できる
+3. 動作確認：「SaaS - サロン自動投稿」を手動実行して実際に投稿されるか確認
+
+---
+
+### STEP 5: 投稿生成（自動）
 
 - GitHub Actions「SaaS - サロン別投稿生成」が毎週月曜AM10時(JST)に実行
 - Googleスプレッドシート → Claude API → `posts_saas/posts_{サロン名}.json` 生成
 - 残本数が5本以下になったとき自動で15本追加生成
 
-### STEP 4: 自動投稿（自動・毎日2回）
+### STEP 6: 自動投稿（自動・毎日2回）
 
 - GitHub Actions「SaaS - サロン自動投稿」が実行
   - AM9時（JST）：朝投稿
   - PM8時（JST）：夜投稿
-- Playwrightでブラウザを操作してThreadsに投稿
+- Threads公式API（Graph API）で投稿
 - 投稿失敗時はLINEに通知が届く
+- **トークン切れ**の場合はLINEに専用通知（→ STEP 3の手順5〜6で再登録、約3分）
 
-### STEP 5: セッション維持（自動・週1回）
+### STEP 7: トークン自動更新（自動・月1回）
 
-- GitHub Actions「SaaS - セッション週次自動更新」が毎週日曜AM5時(JST)に実行
-- 全サロンのセッションをThreadsにアクセスして自動延命・Supabaseに保存
-- **セッション切れが発生した場合のみ**LINEに通知が届く
-  - 通知が来たらSTEP 2の手順で再ログイン
+- GitHub Actions「Threads トークン自動更新」が毎月1日AM8時(JST)に実行
+- ベモーレ・個人・全SaaSユーザーのトークンを一括更新
+- 失敗した場合のみLINEに通知が届く
+- **60日ごとに有効期限があるが月次更新で自動延命**（手動対応不要）
 
 ---
 
-## 3. セッション管理（自動化の限界と対応）
+## 3. トークン管理
 
-### 自動更新で対応できるケース（約90%）
+### 自動更新で対応できるケース（約95%）
 
-- 通常のCookieの有効期限切れ
-- ブラウザセッションの自然な期限切れ
+- 通常の60日有効期限切れ → 月次更新ワークフローで自動延命
 
-### 手動対応が必要なケース（約10%）
+### 手動対応が必要なケース（約5%）
 
-- クライアントがパスワードを変更した
-- Instagramにログイン済み端末を「全デバイスからログアウト」した
-- Metaのセキュリティ検知で強制ログアウトされた
+- クライアントがThreads/Instagramのパスワードを変更した
+- Metaのセキュリティ検知でトークンが強制無効化された
+- Meta Developerアプリの設定変更でトークンが無効になった
 
-→ 上記の場合、LINEに通知が届くのでSTEP 2の手順で再ログイン（約5分）
+→ 上記の場合、LINEに通知が届く。STEP 3の手順5〜6（トークン再取得・スクリプト実行）で約3分で復旧できる。
 
 ---
 
@@ -121,13 +172,13 @@ Googleフォーム（申込）
 Googleスプレッドシート（サロン情報）
     ↓ generate_saas_posts.py（Claude API）
 posts_saas/posts_{サロン名}.json（投稿ストック）
-    ↓ post_saas_playwright.py（Playwright）
+    ↓ post_saas.py（Threads 公式 Graph API）
 Threads（自動投稿）
 
 Supabase（salons テーブル）
-  - salon_name, threads_username, session_data, is_active
-    ↑ session_server/server.py（初回ログイン・ngrok経由）
-    ↑ refresh_sessions_saas.py（週次自動更新）
+  - salon_name, threads_user_id, access_token, is_active
+    ↑ register_saas_user.py（初回登録・トークン再登録）
+    ↑ refresh_threads_token.yml（月次トークン自動更新）
 
 Supabase（post_logs テーブル）
   - 投稿済み記録（重複防止・使用済み管理）
@@ -142,9 +193,10 @@ Supabase（line_users テーブル）
 
 | ワークフロー | 実行タイミング | 役割 |
 |---|---|---|
-| SaaS - サロン自動投稿 | 毎日AM9時・PM8時(JST) | Threads投稿（Playwright方式のみ） |
-| SaaS - サロン別投稿生成 | 毎週月曜AM10時(JST) | 投稿JSON生成 |
-| SaaS - セッション週次自動更新 | 毎週日曜AM5時(JST) | セッション延命 |
+| SaaS - サロン自動投稿 (`post_saas.yml`) | 毎日AM9時・PM8時(JST) | Threads投稿（公式API） |
+| SaaS - サロン別投稿生成 (`generate_saas_posts.yml`) | 毎週月曜AM10時(JST) | 投稿JSON生成 |
+| Threads トークン自動更新 (`refresh_threads_token.yml`) | 毎月1日AM8時(JST) | ベモーレ・個人・全SaaSトークン更新 |
+| Heartbeat (`heartbeat.yml`) | 毎日11時・16時・23時(JST) | 投稿確認＋未投稿時の自動リカバリ |
 
 ---
 
@@ -152,9 +204,9 @@ Supabase（line_users テーブル）
 
 | タイミング | 作業 | 所要時間 |
 |---|---|---|
-| 申込後 | STEP 2の手順でセッション取得 | 5分 |
+| 申込後 | STEP 3の手順でテスター追加→トークン取得→スクリプト実行 | **約5分** |
 | 通常時 | なし（完全自動） | 0分 |
-| LINE通知が来たとき | 同上手順で再ログイン | 5分 |
+| トークン切れのLINE通知が来たとき | STEP 3の手順5〜6でトークン再取得・スクリプト実行 | **約3分** |
 | 解約時 | Supabaseで`is_active=false`に変更 | 1分 |
 
 ---
@@ -168,57 +220,73 @@ Supabase（line_users テーブル）
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Googleサービスアカウントキー（JSON） |
 | `ANTHROPIC_API_KEY` | Claude APIキー |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE通知用チャンネルアクセストークン |
-| `LINE_ADMIN_USER_ID` | 彩さんのLINE User ID |
 
 ---
 
-## 10. オンボーディング手順（彩さん向けチェックリスト）
+## 10. テスト手順（通しテスト）
 
-- [ ] Stripeで決済確認
-- [ ] Googleフォーム回答確認（スプレッドシートに反映されているか）
-- [ ] `SaaS - サロン別投稿生成` を手動実行（投稿JSONを生成）
-- [ ] STEP 2の手順でセッション取得
-- [ ] 動作確認：GitHub Actionsを手動実行（SaaS - サロン自動投稿 → morning）
+> テスト用サロン名 `toko_test` 向けの投稿ストックは `posts_saas/posts_toko_test.json` に15本用意済み。
+
+### テスト前提条件
+
+- テスト用Threadsアカウントを Meta Developer Console でThreadsテスターとして承認済みであること
+- Supabase の `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` が手元にあること
+
+### テスト手順
+
+1. **STEP 3 の手順でアカウント登録**
+   ```bash
+   cd ~/threads_bot
+   export SUPABASE_URL="..."
+   export SUPABASE_SERVICE_KEY="..."
+   python3 register_saas_user.py
+   # サロン名：toko_test
+   # トークン：テスト用アカウントのトークンを貼り付け
+   ```
+
+2. **Supabase確認（任意）**
+   - Supabase Dashboard → `salons` テーブルに `toko_test` が入っているか確認
+
+3. **投稿生成ワークフロー実行**
+   - GitHub Actions → 「SaaS - サロン別投稿生成」 → 「Run workflow」
+   - 約2分後、`posts_saas/posts_toko_test.json` が生成されることを確認
+
+   💬 **⑤Claudeに話しかけるタイミング：** 「投稿JSONが生成されたか確認して」
+
+4. **投稿テスト**
+   - GitHub Actions → 「SaaS - サロン自動投稿」 → 「Run workflow」 → `slot: morning`
+   - テスト用Threadsアカウントに投稿されることをスマホで確認
+
+5. **テスト完了後**
+   - テストが成功したら、Supabaseで `toko_test` の `is_active` を `false` にする
+   - または実際のユーザーとして使い続ける場合はそのままでOK
 
 ---
 
-## 11. セッション取得の仕組み（技術詳細）
+## 11. オンボーディングチェックリスト（彩さん向け）
 
-### 概要
+### 申込後すぐに確認
 
-彩さんのMacでサーバーを起動し、ngrokで公開URLを作る。クライアントがそのURLを開くと、彩さんのMac上でブラウザが動き、その画面がリアルタイムでクライアントのブラウザに映し出される。クライアントは画面の中でThreadsにログインするだけ。パスワードは彩さんに届かない。
+- [ ] Stripeで決済完了を確認
+- [ ] クライアントがLINE友達追加済みか確認
+- [ ] GoogleフォームのURLをLINEで送付
 
-### URLの構造
+### フォーム回答後
 
-- **ドメイン**（例：`squealer-goofiness-undying.ngrok-free.dev`）→ 変わらない（同じngrokアカウントなら固定）
-- **`/setup/xxxxxxxxxxxxxxxx`** → クライアントごとに変わる（1回使い切り・ログイン完了で自動無効化）
+- [ ] Googleスプレッドシートに回答が反映されているか確認
+- [ ] Threadsユーザー名（@から）を控える
+- [ ] Meta Developer Console でThreadsテスターとして追加
+- [ ] クライアントに承認URLをLINEで送付し、承認してもらう
 
-### 彩さんの操作手順（クライアント1人あたり）
+### テスター承認後（約5分の作業）
 
-1. ターミナルで `session_server/` フォルダへ移動してサーバー起動（スリープ防止つき）：
-   ```
-   caffeinate -i python3 server.py
-   ```
-2. 別ターミナルでngrok起動：`ngrok http 8765`
-3. LINEのとうこさんBotに `URL {line_id} {サロン名} @username` を送信
-4. クライアントのLINEにセットアップURLが自動送信される
-5. クライアントがログインすると自動でSupabaseに保存される → 完了
-
-### クライアントの操作（スマートフォン対応済み）
-
-1. 受け取ったURLをブラウザで開く（初回のみngrokの警告が出る → Visit Siteを押す）
-2. 画面に表示されたThreadsの「Continue with Instagram」をタップ
-3. 画面下の「**Abc テキスト**」ボタンが選択中の状態で入力欄をタップしてID（メールアドレス等）を入力
-4. 「**🔐 パスワード**」ボタンを押してからパスワードを入力（文字が隠れます）
-5. ボタンが小さい場合は2本指でピンチして画面を拡大できる
-6. 「セットアップ完了」が表示されたらページを閉じる → 以上
-
-> 🔒 パスワードは彩さんのMacに記録されない。クライアントが自分でブラウザ上に入力するだけ。
-
-### サーバーファイルの場所
-
-- `~/threads_bot/session_server/server.py`
-- `~/threads_bot/session_server/.env`（Supabaseの接続情報）
+- [ ] Meta Developer Consoleでトークン生成
+- [ ] `python3 register_saas_user.py` を実行してSupabaseに登録
+- [ ] `✅ Supabase 登録完了` が出たことを確認
+- [ ] GitHubで「SaaS - サロン別投稿生成」を手動実行
+- [ ] 約2分後、`posts_saas/posts_{サロン名}.json` が生成されているか確認
+- [ ] 「SaaS - サロン自動投稿」を手動実行して動作確認
+- [ ] クライアントにLINEで「設定完了・明日から投稿開始」と連絡
 
 ---
 
@@ -228,30 +296,44 @@ Supabase（line_users テーブル）
 - **アカウント名**: とうこさん
 - **LINE ID**: @444ojril
 - **管理者LINE User ID**: Ucf261a250763ff136250262e4639e9ee
-- **Webhook URL**: https://saas.shikisai.work/api/line-webhook
+- **Webhook URL**: https://toukosan.nailsalon-flat.workers.dev/webhook（Cloudflare Workers）
 - **アイコン**: コーラル色・ロボット＋女性キャラ・自動運用サービス表記
+- **インフラ**: line-harness-oss（OSS LINE CRM）/ Cloudflare Workers + D1
+
+### リッチメニュー（設定済み 2026-05-16）
+
+| ボタン | アクション | 動作 |
+|---|---|---|
+| 左：サービスに登録する | URI | saas.shikisai.work/signup を開く |
+| 右：投稿へのリクエスト | ポストバック | 「どんな変更を希望しますか？教えていただいた内容は、今後の投稿づくりの参考にします😊」を自動返信 |
+
+> ポストバック方式のためチャットにユーザーのテキストは表示されない。
+
+### 自動返信ルール（D1に登録済み）
+
+| キーワード | マッチ | 返信内容 |
+|---|---|---|
+| 投稿へのリクエスト | ポストバック完全一致 | どんな変更を希望しますか？（2行） |
 
 ### 実装済みコマンド（彩さん専用）
 
 | コマンド | 動作 |
 |---|---|
-| `URL {line_id} {サロン名} {@username}` | セットアップURLをクライアントのLINEに送信 |
-| `LIST` | 登録サロン一覧を表示 |
-| `myid` | 自分のLINE User IDを確認 |
+| `LIST` | 登録サロン一覧を表示（旧Vercel実装・移植待ち） |
+| `myid` | 自分のLINE User IDを確認（旧Vercel実装・移植待ち） |
 
 ### クライアント向け自動動作
-- 友だち追加 → ウェルカムメッセージ送信 ＋ 彩さんに通知
-- セットアップURL受信 → ブラウザでログイン → Supabaseに自動保存
+- 友だち追加 → ウェルカムメッセージ送信（シナリオ設定後）
+- リッチメニュー右ボタン → 投稿リクエスト自動返信（稼働中）
 
-### Vercel環境変数（saas_app）
-- `LINE_CHANNEL_SECRET`
-- `LINE_CHANNEL_ACCESS_TOKEN`
-- `LINE_ADMIN_USER_ID`
-- `NGROK_BASE_URL`（squealer-goofiness-undying.ngrok-free.dev）
-- `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`
+### Cloudflare Workers 設定
+- **Worker名**: toukosan
+- **Worker URL**: https://toukosan.nailsalon-flat.workers.dev
+- **管理画面**: https://line-harness-admin-6ulitnovv-ayakuroki929s-projects.vercel.app
+- Secrets: LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET / API_KEY
 
-### ファイル
-- `saas_app/api/line_webhook.py`
+### 旧Vercelファイル（参照のみ・現在は使用していない）
+- `saas_app/api/line_webhook.py`（URL/LIST/myidコマンドの移植元）
 
 ---
 
@@ -261,7 +343,7 @@ Supabase（line_users テーブル）
 
 | テーブル | 用途 |
 |---|---|
-| `salons` | サロン情報・セッションデータ |
+| `salons` | サロン情報・アクセストークン（`id, salon_name, threads_user_id, access_token, is_active`） |
 | `post_logs` | 投稿済み記録（重複防止） |
 | `line_users` | LINEフォロワー管理 |
 
@@ -274,6 +356,75 @@ Supabase（line_users テーブル）
 - 施行日：2026年5月16日
 - 主要条項：最低3ヶ月・解約1ヶ月前通知・AI限界免責・障害免責・修正依頼はユーザー責任
 
-## 15. 残タスク
+---
 
-- ⏳ 通しテスト（テスト用サロン1件で STEP 1〜5 を全部流す）
+## 15. スケール時の注意（30人以上のユーザーが増えた場合）
+
+- **投稿・トークン更新は自動スケール**：GitHub Actions が全サロンをループ処理するため、30人でも100人でも追加作業なし
+- **Metaアプリ審査（重要）**：現在はアプリが「未公開」のため、Threadsテスターに追加できる人数は最大50人まで。50人を超える前にMetaへアプリ公開申請が必要
+  - 申請内容：サービス説明・プライバシーポリシー・動画デモ
+  - 💬 **申請時にClaudeに話しかける：** 「Metaアプリ審査の申請を手伝って」
+
+---
+
+## 16. Stripe Webhook 設定手順
+
+> **一度だけ行う設定。設定後は解約・支払い失敗が自動で検知される。**
+
+### Step A: Supabase に stripe_customer_id 列を追加（未実施の場合）
+
+Supabase Dashboard → SQL Editor で実行：
+```sql
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS stripe_customer_id text;
+```
+
+### Step B: Vercel に環境変数を追加
+
+Vercel Dashboard → `saas.shikisai.work` プロジェクト → Settings → Environment Variables で追加：
+
+| 変数名 | 値 |
+|---|---|
+| `STRIPE_WEBHOOK_SECRET` | StripeのWebhookシークレット（手順Cで取得） |
+| `SUPABASE_URL` | SupabaseプロジェクトURL |
+| `SUPABASE_SERVICE_KEY` | Supabase Service Roleキー |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE通知用トークン |
+
+### Step C: Stripe に Webhook を登録
+
+1. Stripe Dashboard → 開発者 → Webhook → 「エンドポイントを追加」
+2. URL: `https://saas.shikisai.work/api/stripe-webhook`
+3. リッスンするイベント：
+   - `customer.subscription.deleted`
+   - `invoice.payment_failed`
+4. 「署名シークレット」（`whsec_...`）をコピー → Vercelの `STRIPE_WEBHOOK_SECRET` に設定
+
+### Step D: 新規ユーザー登録時に Stripe customer ID も入力
+
+`register_saas_user.py` 実行時に Stripe customer ID（`cus_...`）を入力する手順を追加済み。
+Stripe Dashboard → 顧客一覧 → 対象顧客のIDを確認して貼り付ける。
+
+---
+
+## 17. ウェルカムシナリオ設定手順
+
+> **一度だけ行う設定。設定後は友達追加時に自動メッセージが届く。**
+
+```bash
+cd ~/threads_bot
+export LINE_HARNESS_API_KEY="..."  # Cloudflare Dashboard → toukosan Worker → Settings
+python3 setup_welcome_scenario.py
+```
+
+API_KEY の確認場所：
+- Cloudflare Dashboard → Workers & Pages → toukosan → Settings → Variables and Secrets
+
+---
+
+## 18. 残タスク
+
+- ⏳ 通しテスト（Section 10の手順でテスト用サロン1件を全部流す）
+- ⏳ Stripe Webhook 設定（Section 16の手順を実行）
+- ⏳ ウェルカムシナリオ設定（Section 17の手順を実行）
+- ⏳ 管理者コマンド（LIST・myid）をCloudflare Workerに移植
+- ⏳ LINE Channel Secret のローテーション（チャット上で露出したため）
+- ⏳ Metaアプリ公開申請（50人超える前に実施）
