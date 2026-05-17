@@ -99,7 +99,7 @@ def threads_post(user_id, token, text):
     time.sleep(3)  # API推奨待機
 
     # Step 2: 公開
-    publish_url = f"{THREADS_API}/{user_id}/threads/publish"
+    publish_url = f"{THREADS_API}/{user_id}/threads_publish"
     publish_data = urllib.parse.urlencode({
         "creation_id": creation_id,
         "access_token": token,

@@ -78,6 +78,88 @@ jobs:
             echo "ok=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Refresh SaaS ユーザートークン（Supabase全件）
+        id: saas
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          set +e
+          python3 - <<'PYEOF'
+          import urllib.request, urllib.parse, json, os, sys
+
+          SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+          SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+          LINE_TOKEN   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+
+          if not SUPABASE_URL or not SUPABASE_KEY:
+              print("[saas] SUPABASE_URL/SERVICE_KEY 未設定 → スキップ")
+              sys.exit(0)
+
+          # アクティブサロン一覧取得
+          url = f"{SUPABASE_URL}/rest/v1/salons?is_active=eq.true&select=id,salon_name,access_token&access_token=neq.null"
+          req = urllib.request.Request(url, headers={
+              "apikey": SUPABASE_KEY,
+              "Authorization": f"Bearer {SUPABASE_KEY}",
+          })
+          with urllib.request.urlopen(req, timeout=30) as resp:
+              salons = json.loads(resp.read())
+
+          if not salons:
+              print("[saas] アクティブサロンなし → スキップ")
+              sys.exit(0)
+
+          failures = []
+          for salon in salons:
+              salon_id   = salon["id"]
+              name       = salon["salon_name"]
+              old_token  = salon.get("access_token", "")
+              if not old_token:
+                  print(f"[saas] {name}: access_token 未設定 → スキップ")
+                  continue
+
+              refresh_url = (
+                  "https://graph.threads.net/v1.0/refresh_access_token"
+                  f"?grant_type=th_refresh_token&access_token={urllib.parse.quote(old_token)}"
+              )
+              try:
+                  with urllib.request.urlopen(refresh_url, timeout=30) as r:
+                      d = json.loads(r.read())
+                  new_token = d["access_token"]
+                  expires   = d.get("expires_in", 0) // 86400
+
+                  # Supabase に書き戻し
+                  patch_url = f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}"
+                  patch_data = json.dumps({"access_token": new_token}).encode()
+                  patch_req = urllib.request.Request(patch_url, data=patch_data, method="PATCH", headers={
+                      "apikey": SUPABASE_KEY,
+                      "Authorization": f"Bearer {SUPABASE_KEY}",
+                      "Content-Type": "application/json",
+                      "Prefer": "return=minimal",
+                  })
+                  urllib.request.urlopen(patch_req, timeout=30)
+                  print(f"[saas] {name}: リフレッシュ成功（{expires}日）")
+              except Exception as e:
+                  print(f"[saas] {name}: リフレッシュ失敗 - {e}")
+                  failures.append(name)
+
+          if failures:
+              if LINE_TOKEN:
+                  names = ", ".join(failures)
+                  msg = f"⚠️ SaaSトークン更新失敗\\n\\n対象サロン: {names}\\n\\n手動で再取得・登録が必要です"
+                  body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
+                  req = urllib.request.Request(
+                      "https://api.line.me/v2/bot/message/broadcast",
+                      data=body, method="POST",
+                      headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
+                  )
+                  urllib.request.urlopen(req, timeout=15)
+              sys.exit(1)
+          PYEOF
+          echo "saas_exit=$?" >> $GITHUB_OUTPUT
+
       - name: LINE通知（失敗時）
         if: steps.bemolle.outputs.ok == 'false' || steps.personal.outputs.ok == 'false'
         run: |
