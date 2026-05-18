@@ -60,3 +60,23 @@ with sync_playwright() as p:
     print(f"[comment] 完了: ok={ok} skipped={skipped} error={errors}")
 
     browser.close()
+
+# 0件コメントの場合はLINE通知（dry-runは除く）
+if not dry_run and ok == 0 and len(results) > 0:
+    line_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    account_label = "個人" if account == "personal" else "ベモーレ"
+    if line_token:
+        import urllib.request as _req
+        import urllib.parse as _parse
+        msg = f"⚠️ {account_label} 自動コメント 0件\n処理:{len(results)}件すべてスキップまたはエラー\nAPIキー切れ・フィルター過多の可能性あり"
+        body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
+        req = _req.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=body,
+            headers={"Authorization": f"Bearer {line_token}", "Content-Type": "application/json"},
+        )
+        try:
+            _req.urlopen(req, timeout=10)
+            print(f"[comment] LINE通知送信: 0件アラート")
+        except Exception as e:
+            print(f"[comment] LINE通知失敗: {e}")
