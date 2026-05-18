@@ -75,11 +75,28 @@ def deactivate_salon(salon_id: str):
         return r.status
 
 
-# ── LINE broadcast ────────────────────────────────────────────
-def line_broadcast(text: str):
+def reactivate_salon(salon_id: str):
+    url = f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}"
+    data = json.dumps({"is_active": True}).encode()
     req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/broadcast",
-        data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+        url, data=data,
+        headers={**supabase_headers(), "Prefer": "return=minimal"},
+        method="PATCH"
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return r.status
+
+
+LINE_ADMIN_USER_ID = os.environ.get("LINE_ADMIN_USER_ID", "")
+
+# ── LINE push（管理者のみ） ────────────────────────────────────
+def line_push_admin(text: str):
+    to = LINE_ADMIN_USER_ID
+    if not to:
+        return -1
+    req = urllib.request.Request(
+        "https://api.line.me/v2/bot/message/push",
+        data=json.dumps({"to": to, "messages": [{"type": "text", "text": text}]}).encode(),
         headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
         method="POST",
     )
@@ -108,7 +125,7 @@ def handle_subscription_deleted(obj: dict):
     if not salon:
         return
     deactivate_salon(salon["id"])
-    line_broadcast(
+    line_push_admin(
         f"🔴 とうこさん サービス停止\n\n"
         f"サロン: {salon['salon_name']}\n"
         f"Stripe: {customer_id}\n\n"
@@ -117,23 +134,48 @@ def handle_subscription_deleted(obj: dict):
 
 
 def handle_payment_failed(obj: dict):
-    # invoiceのline itemsからとうこさん商品か確認
     lines = obj.get("lines", {}).get("data", [])
     if not _is_toukosan_product(lines):
-        return  # とうこさん以外（うらかたさん等）は無視
+        return
     subscription_id = obj.get("subscription", "")
     customer_id = obj.get("customer", "")
     salon = get_salon_by_subscription(subscription_id, customer_id)
     if not salon:
         return
-    attempt = obj.get("attempt_count", "?")
-    line_broadcast(
-        f"⚠️ とうこさん 支払い失敗\n\n"
-        f"サロン: {salon['salon_name']}\n"
-        f"試行回数: {attempt}回目\n\n"
-        f"Stripeが自動リトライします。全て失敗するとサービスが自動停止します。\n\n"
-        f"https://dashboard.stripe.com"
-    )
+    attempt = obj.get("attempt_count", 0)
+    if isinstance(attempt, int) and attempt >= 3:
+        deactivate_salon(salon["id"])
+        line_push_admin(
+            f"🔴 とうこさん 自動停止（支払い失敗 {attempt}回）\n\n"
+            f"サロン: {salon['salon_name']}\n\n"
+            f"Stripeのサブスクは継続中のため、入金されれば自動で投稿再開します。\n\n"
+            f"https://dashboard.stripe.com"
+        )
+    else:
+        line_push_admin(
+            f"⚠️ とうこさん 支払い失敗（{attempt}回目）\n\n"
+            f"サロン: {salon['salon_name']}\n\n"
+            f"Stripeが自動リトライします。3回失敗でサービス自動停止。\n\n"
+            f"https://dashboard.stripe.com"
+        )
+
+
+def handle_invoice_paid(obj: dict):
+    lines = obj.get("lines", {}).get("data", [])
+    if not _is_toukosan_product(lines):
+        return
+    subscription_id = obj.get("subscription", "")
+    customer_id = obj.get("customer", "")
+    salon = get_salon_by_subscription(subscription_id, customer_id)
+    if not salon:
+        return
+    if not salon.get("is_active", True):
+        reactivate_salon(salon["id"])
+        line_push_admin(
+            f"✅ とうこさん 自動再開\n\n"
+            f"サロン: {salon['salon_name']}\n\n"
+            f"支払いが確認されたため、投稿を自動再開しました。"
+        )
 
 
 # ── HTTP ハンドラ ─────────────────────────────────────────────
@@ -169,3 +211,5 @@ class handler(BaseHTTPRequestHandler):
             handle_subscription_deleted(obj)
         elif etype == "invoice.payment_failed":
             handle_payment_failed(obj)
+        elif etype == "invoice.paid":
+            handle_invoice_paid(obj)
