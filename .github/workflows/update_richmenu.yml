@@ -1,0 +1,125 @@
+name: Update Rich Menu (one-time)
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Update rich menu left button URL
+        env:
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          python3 - << 'PYEOF'
+          import json, urllib.request, os, sys
+
+          TOKEN = os.environ["LINE_TOKEN"]
+          LIFF_URL = "https://liff.line.me/2010124948-mdICjM2b"
+
+          def line(method, path, data=None):
+              req = urllib.request.Request(
+                  f"https://api.line.me{path}",
+                  data=json.dumps(data).encode() if data else None,
+                  headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return json.loads(r.read()) if r.length != 0 else {}
+
+          # 1. 現在のリッチメニュー一覧を取得
+          menus = line("GET", "/v2/bot/richmenu/list").get("richmenus", [])
+          print(f"Found {len(menus)} rich menu(s)")
+
+          # 2. 現在のデフォルトリッチメニューを取得
+          try:
+              default = line("GET", "/v2/bot/user/all/richmenu")
+              default_id = default.get("richMenuId", "")
+              print(f"Default rich menu ID: {default_id}")
+          except Exception as e:
+              default_id = menus[0]["richMenuId"] if menus else ""
+              print(f"Default lookup failed ({e}), using first: {default_id}")
+
+          if not menus:
+              print("ERROR: no rich menus found")
+              sys.exit(1)
+
+          # 3. 対象メニューを取得（defaultまたは最初のもの）
+          target = next((m for m in menus if m["richMenuId"] == default_id), menus[0])
+          print(f"Updating: {target['richMenuId']}")
+
+          # 4. 左ボタン（areas[0]）のURIを変更
+          areas = target.get("areas", [])
+          print(f"Current areas: {json.dumps(areas, ensure_ascii=False)}")
+
+          updated = False
+          for area in areas:
+              action = area.get("action", {})
+              if action.get("type") == "uri":
+                  old_url = action.get("uri", "")
+                  print(f"Found URI action: {old_url}")
+                  if "signup" in old_url or "saas.shikisai" in old_url:
+                      action["uri"] = LIFF_URL
+                      updated = True
+                      print(f"Updated to: {LIFF_URL}")
+
+          if not updated:
+              print("WARNING: no signup URI found. Printing all areas for debug:")
+              for i, area in enumerate(areas):
+                  print(f"  area[{i}]: {json.dumps(area['action'], ensure_ascii=False)}")
+              # 最初のURIアクションを強制更新
+              for area in areas:
+                  if area.get("action", {}).get("type") == "uri":
+                      area["action"]["uri"] = LIFF_URL
+                      updated = True
+                      print(f"Force updated first URI to: {LIFF_URL}")
+                      break
+
+          if not updated:
+              print("ERROR: no URI action found")
+              sys.exit(1)
+
+          target["areas"] = areas
+
+          # 5. 新しいリッチメニューを作成
+          new_menu_data = {k: v for k, v in target.items() if k != "richMenuId"}
+          result = line("POST", "/v2/bot/richmenu", new_menu_data)
+          new_id = result.get("richMenuId", "")
+          print(f"Created new rich menu: {new_id}")
+
+          # 6. 画像をコピー（元のメニューから画像を取得して新しいメニューにセット）
+          old_id = target["richMenuId"]
+          try:
+              img_req = urllib.request.Request(
+                  f"https://api-data.line.me/v2/bot/richmenu/{old_id}/content",
+                  headers={"Authorization": f"Bearer {TOKEN}"},
+              )
+              with urllib.request.urlopen(img_req, timeout=30) as r:
+                  img_data = r.read()
+                  content_type = r.headers.get("Content-Type", "image/png")
+              print(f"Got image: {len(img_data)} bytes, {content_type}")
+
+              upload_req = urllib.request.Request(
+                  f"https://api-data.line.me/v2/bot/richmenu/{new_id}/content",
+                  data=img_data,
+                  headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": content_type},
+                  method="POST",
+              )
+              with urllib.request.urlopen(upload_req, timeout=30) as r:
+                  print(f"Image uploaded: {r.status}")
+          except Exception as e:
+              print(f"Image copy failed (may need manual re-upload): {e}")
+
+          # 7. 新しいメニューをデフォルトに設定
+          line("POST", f"/v2/bot/user/all/richmenu/{new_id}")
+          print(f"Set as default: {new_id}")
+
+          # 8. 古いメニューを削除
+          line("DELETE", f"/v2/bot/richmenu/{old_id}")
+          print(f"Deleted old menu: {old_id}")
+
+          print("Done! Rich menu updated successfully.")
+          PYEOF
