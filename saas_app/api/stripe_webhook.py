@@ -10,7 +10,7 @@ STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-LINE_TOKEN   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_TOKEN   = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")  # Claude通知bot
 
 TOUKOSAN_PRODUCT_ID = "prod_UWa5BZv291uQts"  # とうこさん専用商品ID
 
@@ -88,16 +88,13 @@ def reactivate_salon(salon_id: str):
         return r.status
 
 
-LINE_ADMIN_USER_ID = os.environ.get("LINE_ADMIN_USER_ID", "")
-
-# ── LINE push（管理者のみ） ────────────────────────────────────
+# ── LINE broadcast（Claude通知bot） ───────────────────────────
 def line_push_admin(text: str):
-    to = LINE_ADMIN_USER_ID
-    if not to:
+    if not LINE_TOKEN:
         return -1
     req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/push",
-        data=json.dumps({"to": to, "messages": [{"type": "text", "text": text}]}).encode(),
+        "https://api.line.me/v2/bot/message/broadcast",
+        data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
         headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
         method="POST",
     )
@@ -143,8 +140,12 @@ def handle_subscription_created(obj: dict):
         f"名前: {name}\n"
         f"メール: {email}\n"
         f"金額: ¥{amount:,}/月\n\n"
-        f"Threadsの認証URLをクライアントに送ってください：\n"
-        f"https://saas.shikisai.work/api/connect"
+        f"【手順】\n"
+        f"① Googleフォームをクライアントに送る：\n"
+        f"https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform\n\n"
+        f"② フォーム回答確認後、Metaでテスター追加\n\n"
+        f"③ connect URLをクライアントに送る：\n"
+        f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
     )
 
 

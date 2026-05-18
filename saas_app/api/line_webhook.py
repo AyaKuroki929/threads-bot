@@ -1,11 +1,12 @@
 from http.server import BaseHTTPRequestHandler
 import hashlib, hmac, base64, json, os, urllib.request
 
-LINE_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
-LINE_TOKEN  = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-ADMIN_UID   = os.environ.get("LINE_ADMIN_USER_ID", "")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+LINE_SECRET    = os.environ.get("LINE_CHANNEL_SECRET", "")
+LINE_TOKEN     = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+ADMIN_UID      = os.environ.get("LINE_ADMIN_USER_ID", "")
+ADMIN_LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")  # Claude通知bot
+SUPABASE_URL   = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY   = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 
 def verify_sig(body: bytes, sig: str) -> bool:
@@ -75,29 +76,29 @@ def save_line_user(uid: str, display_name: str):
         pass
 
 
-def notify_admin_new_follower(uid: str, display_name: str):
-    if not ADMIN_UID:
+def broadcast_admin(text: str):
+    if not ADMIN_LINE_TOKEN:
         return
-    push(ADMIN_UID, [{
-        "type": "flex",
-        "altText": f"新フォロワー：{display_name}",
-        "contents": {
-            "type": "bubble",
-            "body": {
-                "type": "box", "layout": "vertical",
-                "contents": [
-                    {"type": "text", "text": "👤 新しいフォロワー", "weight": "bold", "size": "lg"},
-                    {"type": "text", "text": display_name, "size": "md", "margin": "sm"},
-                    {"type": "text", "text": f"ID: {uid}", "size": "xs", "color": "#888888", "wrap": True, "margin": "sm"},
-                    {"type": "separator", "margin": "md"},
-                    {"type": "text", "text": "Supabaseへの登録が必要です。register_saas_user.py を実行してください。", "size": "xs", "color": "#555555", "wrap": True, "margin": "md"},
-                    {"type": "separator", "margin": "md"},
-                    {"type": "text", "text": "登録コマンド例：", "size": "xs", "color": "#555555", "margin": "md"},
-                    {"type": "text", "text": f"python3 register_saas_user.py {uid} サロン名 @username", "size": "xs", "color": "#FF6B35", "wrap": True},
-                ]
-            }
-        }
-    }])
+    req = urllib.request.Request(
+        "https://api.line.me/v2/bot/message/broadcast",
+        data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+        headers={"Authorization": f"Bearer {ADMIN_LINE_TOKEN}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception:
+        pass
+
+
+def notify_admin_new_follower(uid: str, display_name: str):
+    broadcast_admin(
+        f"👤 とうこさん LINE友達追加\n\n"
+        f"名前：{display_name}\n"
+        f"LINE ID：{uid}\n\n"
+        f"Stripeで決済が完了すると自動でフォームURL・connect URLが届きます。"
+    )
 
 
 def handle_admin_command(text: str, reply_token: str, uid: str):

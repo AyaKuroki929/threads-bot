@@ -10,6 +10,29 @@ APP_SECRET = os.environ.get("META_APP_SECRET", "")
 CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")  # Claude通知bot
+
+
+def line_notify_oauth_complete(username: str):
+    if not LINE_TOKEN:
+        return
+    text = (
+        f"✅ とうこさん OAuth完了！\n\n"
+        f"Threads ID：@{username}\n\n"
+        f"▼ 次のステップ\n"
+        f"⑧ GitHub Actions「SaaS - サロン別投稿生成」を手動実行\n"
+        f"https://github.com/AyaKuroki929/threads-bot/actions/workflows/saas_generate.yml"
+    )
+    req = urllib.request.Request(
+        "https://api.line.me/v2/bot/message/broadcast",
+        data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+        headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
 
 
 def exchange_code(code):
@@ -46,14 +69,17 @@ def get_user_info(token):
         return json.loads(resp.read())
 
 
-def save_to_supabase(user_id, username, access_token):
+def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
     # upsert by threads_user_id
-    data = json.dumps({
+    payload = {
         "threads_user_id": user_id,
         "salon_name": username,
         "access_token": access_token,
         "is_active": True,
-    }).encode()
+    }
+    if stripe_customer_id:
+        payload["stripe_customer_id"] = stripe_customer_id
+    data = json.dumps(payload).encode()
 
     req = urllib.request.Request(
         f"{SUPABASE_URL}/rest/v1/salons",
@@ -101,6 +127,9 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
+            # state に customer_id が入っている
+            customer_id = query.get("state", [""])[0]
+
             token_data = exchange_code(code)
             short_token = token_data["access_token"]
 
@@ -108,11 +137,14 @@ class handler(BaseHTTPRequestHandler):
             access_token = long_token_data["access_token"]
 
             user_info = get_user_info(access_token)
+            username = user_info.get("username", "")
             save_to_supabase(
                 user_id=user_info["id"],
-                username=user_info.get("username", ""),
+                username=username,
                 access_token=access_token,
+                stripe_customer_id=customer_id,
             )
+            line_notify_oauth_complete(username)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

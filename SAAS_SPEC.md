@@ -38,6 +38,7 @@
 2. 利用規約を読んでチェックボックスにチェック
 3. 「カード登録へ進む →」ボタンを押してStripeでカード登録
 4. 彩さんから送られてくるGoogleフォームのURLに回答
+   - URL: https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform
    - サロン名・Threadsユーザー名・強み・ターゲット・NGワードなど
 
 ---
