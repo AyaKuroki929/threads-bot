@@ -115,6 +115,22 @@ def _is_toukosan_product(items_data: list) -> bool:
     return False
 
 
+def handle_subscription_created(obj: dict):
+    if not _is_toukosan_product(obj.get("items", {}).get("data", [])):
+        return
+    customer_id = obj.get("customer", "")
+    subscription_id = obj.get("id", "")
+    amount = obj.get("items", {}).get("data", [{}])[0].get("price", {}).get("unit_amount", 0)
+    line_push_admin(
+        f"🎉 とうこさん 新規サブスク！\n\n"
+        f"Stripe顧客ID: {customer_id}\n"
+        f"サブスクID: {subscription_id}\n"
+        f"金額: ¥{amount:,}/月\n\n"
+        f"Threadsの認証URLをクライアントに送ってください：\n"
+        f"https://saas.shikisai.work/api/connect"
+    )
+
+
 def handle_subscription_deleted(obj: dict):
     # とうこさん商品以外は無視（うらかたさん等の混入を防ぐ）
     if not _is_toukosan_product(obj.get("items", {}).get("data", [])):
@@ -207,7 +223,9 @@ class handler(BaseHTTPRequestHandler):
         etype = event.get("type", "")
         obj   = event.get("data", {}).get("object", {})
 
-        if etype == "customer.subscription.deleted":
+        if etype == "customer.subscription.created":
+            handle_subscription_created(obj)
+        elif etype == "customer.subscription.deleted":
             handle_subscription_deleted(obj)
         elif etype == "invoice.payment_failed":
             handle_payment_failed(obj)
