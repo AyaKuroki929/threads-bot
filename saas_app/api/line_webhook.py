@@ -170,7 +170,7 @@ class handler(BaseHTTPRequestHandler):
         if etype == "follow":
             name = get_display_name(uid)
             save_line_user(uid, name)
-            reply(reply_tok, [{"type": "text", "text": f"こんにちは！とうこさんへようこそ🎉\nまもなく担当者からご連絡いたします。しばらくお待ちください。"}])
+            reply(reply_tok, [{"type": "text", "text": "こんにちは！とうこさんへようこそ🎉\nまもなく担当者からご連絡いたします。しばらくお待ちください。"}])
             notify_admin_new_follower(uid, name)
 
         elif etype == "message" and event.get("message", {}).get("type") == "text":
