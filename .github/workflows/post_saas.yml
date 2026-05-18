@@ -55,20 +55,22 @@ jobs:
         if: failure() && steps.post.outputs.exit_code == '3'
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_ADMIN_USER_ID: ${{ secrets.LINE_ADMIN_USER_ID }}
         run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"🔑 とうこさん トークン切れ\n\nいずれかのサロンのThreads APIトークンが無効です。\n\nGitHub Actionsのログでどのサロンか確認し、トークンを再取得してSupabaseに登録してください。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
+            -d "{\"to\":\"$LINE_ADMIN_USER_ID\",\"messages\":[{\"type\":\"text\",\"text\":\"🔑 とうこさん トークン切れ\n\nいずれかのサロンのThreads APIトークンが無効です。\n\nGitHub Actionsのログでどのサロンか確認し、トークンを再取得してSupabaseに登録してください。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
 
       - name: LINE通知（その他エラー）
         if: failure() && steps.post.outputs.exit_code != '3'
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_ADMIN_USER_ID: ${{ secrets.LINE_ADMIN_USER_ID }}
         run: |
           SLOT="${{ steps.slot.outputs.slot }}"
           EC="${{ steps.post.outputs.exit_code }}"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          curl -s -X POST https://api.line.me/v2/bot/message/push \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ とうこさん 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+            -d "{\"to\":\"$LINE_ADMIN_USER_ID\",\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ とうこさん 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"

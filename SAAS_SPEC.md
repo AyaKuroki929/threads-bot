@@ -422,13 +422,82 @@ API_KEY の確認場所：
 
 ---
 
-## 18. 残タスク
+## 18. 解約フロー（彩さん向け手順）
 
-- ⏳ **通しテスト**（Section 10の手順でテスト用サロン1件を全部流す — 次回セッションで実施予定）
-- 🟢 Stripe Webhook 設定（Supabase ALTER + Vercel env + Stripe登録 — 完了 2026-05-17）
-- 🟢 ウェルカムシナリオ設定（完了 2026-05-17 — 2ステップ・友達追加即時送信）
+クライアントから「解約したい」とLINEが来たとき：
+
+1. **契約期間確認**：Supabase `salons` テーブルの `created_at` を確認。契約日から**3ヶ月未満**なら解約不可と返信
+   > 「最低契約期間の3ヶ月を満了されていないため、現時点でのご解約はお受けできません。〇月〇日以降にご連絡ください。」
+
+2. **3ヶ月以上経過している場合**：翌月末解約を確認してStripeを操作
+   - Stripe Dashboard → 顧客 → 該当サブスクリプション → 「サブスクリプションを解約」→「**期間終了時に解約**」を選択（即時解約は選ばない）
+   - クライアントに返信：
+     > 「承りました。〇月末日をもってサービスを終了いたします。最終投稿日は〇月〇日です。」
+
+3. **サービス終了日に**：Supabase → `salons` テーブル → 該当行の `is_active` を `false` に変更
+
+> ⚠️ Stripeで「期間終了時に解約」を選ぶと `customer.subscription.deleted` イベントが期間末に発火し、Webhookが自動で `is_active=false` にする。**手順3は念のための確認**として実施。
+
+---
+
+## 19. 投稿内容クレーム対応（彩さん向け）
+
+クライアントから「この投稿の内容が間違っている」「削除してほしい」と連絡が来たとき：
+
+### 既に投稿されたものを削除したい場合
+- Threadsの投稿削除はクライアント自身がアプリ上で行う（当社では削除できない）
+- 返信テンプレート：
+  > 「ご連絡ありがとうございます。Threadsアプリを開いて、該当の投稿を長押し→「削除」で削除いただけます。今後の投稿で同様の表現を使わないよう、内容を反映いたします。」
+
+### 今後の投稿に反映させたい場合
+1. Googleスプレッドシートの該当サロン行で `NGワード` 列や `発信スタイルのNGライン` 列に内容を追記
+2. GitHub Actions → 「SaaS - サロン別投稿生成」を手動実行（サロン名を指定）
+3. 新しい投稿JSONが再生成され、翌投稿から反映される
+
+---
+
+## 20. サービス開始タイミング（SLA）
+
+| フェーズ | 目安 |
+|---|---|
+| Stripe決済完了 → 彩さんへLINE通知 | 即時（Webhookは稼働中だが、現時点は手動確認） |
+| 彩さんがStripe確認 → フォームURL送付 | **当日中〜翌営業日** |
+| フォーム回答 → アカウント連携作業 | **回答確認後2営業日以内** |
+| 連携完了 → 投稿開始 | 当日（手動実行）または翌朝9時自動投稿 |
+
+> クライアントへの案内文（ウェルカムシナリオ2通目に含める）：
+> 「お申込み後、通常2営業日以内にGoogleフォームのURLをこちらからお送りします。フォームご回答後、担当者が設定作業（約5分）を行い、翌日以降から自動投稿が開始されます。」
+
+---
+
+## 21. GitHub Secrets・Vercel 環境変数 追加項目（2026-05-18）
+
+LINE broadcastをpush（管理者専用）に変更したことで、以下の追加設定が必要：
+
+### GitHub Actions Secret
+| Secret名 | 値 |
+|---|---|
+| `LINE_ADMIN_USER_ID` | `Ucf261a250763ff136250262e4639e9ee` |
+
+> GitHub → threads-botリポジトリ → Settings → Secrets and variables → Actions → 「New repository secret」
+
+### Vercel 環境変数
+| 変数名 | 値 |
+|---|---|
+| `LINE_ADMIN_USER_ID` | `Ucf261a250763ff136250262e4639e9ee` |
+
+> Vercel Dashboard → `saas.shikisai.work` → Settings → Environment Variables
+
+---
+
+## 22. 残タスク
+
+- ⏳ **通しテスト**（Section 10の手順でテスト用サロン1件を全部流す）
+- 🟢 Stripe Webhook 設定（完了 2026-05-17）
+- 🟢 ウェルカムシナリオ設定（完了 2026-05-17 — 2ステップ）
 - 🟢 管理者コマンド（LIST・myid）Cloudflare Worker移植・稼働中
-- 🟢 新規フォロワー通知（Cloudflare Worker webhook.ts に実装済み 2026-05-17）
-- 🟢 バグ修正7件（line_webhook.py ngrok参照削除・LISTコマント列名修正・supabase_tables.sql補完・callback.py修正・post_saas.py timeout追加 — 2026-05-17）
+- 🟢 LINE broadcast→push修正（完了 2026-05-18 — post_saas.yml・stripe_webhook.py）
+- 🔴 **GitHub Secret `LINE_ADMIN_USER_ID` を追加**（Section 21参照・テスト前に必須）
+- 🔴 **Vercel 環境変数 `LINE_ADMIN_USER_ID` を追加**（Section 21参照・テスト前に必須）
 - ⏳ LINE Channel Secret のローテーション（チャット上で露出したため・任意）
 - ⏳ Metaアプリ公開申請（50人超える前に実施）
