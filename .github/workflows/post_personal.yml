@@ -59,7 +59,7 @@ jobs:
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
             case "${{ github.event.schedule }}" in
-              "30 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
+              "0 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
               "0 3 * * *")   echo "name=noon"    >> $GITHUB_OUTPUT ;;
               "0 12 * * *")  echo "name=evening" >> $GITHUB_OUTPUT ;;
             esac
