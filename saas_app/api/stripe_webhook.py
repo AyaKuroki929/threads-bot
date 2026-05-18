@@ -199,12 +199,12 @@ def handle_invoice_paid(obj: dict):
     lines = obj.get("lines", {}).get("data", [])
     if not _is_toukosan_product(lines):
         return
-    subscription_id  = obj.get("subscription", "")
-    customer_id      = obj.get("customer", "")
-    billing_reason   = obj.get("billing_reason", "")
+    subscription_id = obj.get("subscription", "")
+    customer_id     = obj.get("customer", "")
+    salon = get_salon_by_subscription(subscription_id, customer_id)
 
-    # 新規登録（初回請求）：invoice payload に直接 name/email が入っている
-    if billing_reason == "subscription_create":
+    if not salon:
+        # Supabase未登録 = 新規登録
         name   = obj.get("customer_name")  or "不明"
         email  = obj.get("customer_email") or "不明"
         amount = obj.get("amount_paid", 0)
@@ -223,9 +223,6 @@ def handle_invoice_paid(obj: dict):
         return
 
     # 既存サロンの支払い再開
-    salon = get_salon_by_subscription(subscription_id, customer_id)
-    if not salon:
-        return
     if not salon.get("is_active", True):
         reactivate_salon(salon["id"])
         line_push_admin(
