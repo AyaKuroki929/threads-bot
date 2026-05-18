@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler
 import hashlib, hmac, json, os, time, urllib.request, urllib.parse
 
 STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 LINE_TOKEN   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -115,16 +116,32 @@ def _is_toukosan_product(items_data: list) -> bool:
     return False
 
 
+def get_stripe_customer(customer_id: str) -> dict:
+    if not STRIPE_SECRET_KEY or not customer_id:
+        return {}
+    url = f"https://api.stripe.com/v1/customers/{customer_id}"
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"Bearer {STRIPE_SECRET_KEY}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except Exception:
+        return {}
+
+
 def handle_subscription_created(obj: dict):
     if not _is_toukosan_product(obj.get("items", {}).get("data", [])):
         return
     customer_id = obj.get("customer", "")
     subscription_id = obj.get("id", "")
     amount = obj.get("items", {}).get("data", [{}])[0].get("price", {}).get("unit_amount", 0)
+    customer = get_stripe_customer(customer_id)
+    name  = customer.get("name") or "不明"
+    email = customer.get("email") or "不明"
     line_push_admin(
-        f"🎉 とうこさん 新規サブスク！\n\n"
-        f"Stripe顧客ID: {customer_id}\n"
-        f"サブスクID: {subscription_id}\n"
+        f"🎉 とうこさん 新規登録！\n\n"
+        f"名前: {name}\n"
+        f"メール: {email}\n"
         f"金額: ¥{amount:,}/月\n\n"
         f"Threadsの認証URLをクライアントに送ってください：\n"
         f"https://saas.shikisai.work/api/connect"
