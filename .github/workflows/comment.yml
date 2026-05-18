@@ -2,7 +2,7 @@ name: Auto Comment (bemolle + personal)
 
 on:
   schedule:
-    - cron: '30 22 * * *'   # JST 7:30 morning投稿の30分後
+    - cron: '0 23 * * *'    # JST 8:00 morning投稿後（個人7:30投稿に合わせて30分バッファ）
     - cron: '30 3 * * *'    # JST 12:30 noon投稿の30分後
     - cron: '30 12 * * *'   # JST 21:30 evening投稿の30分後
   workflow_dispatch:
