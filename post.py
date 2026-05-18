@@ -714,11 +714,28 @@ _NEGATIVE_IMPRESSION_SKIP_WORDS = [
     "生活保護", "自己破産", "多重債務",
 ]
 
-# 病気・死に関する投稿：励ましコメントのみ許可（スキップはしない）
 _ILLNESS_DEATH_WORDS = [
     "病気", "闘病", "余命", "末期", "入院中", "手術前", "手術後",
     "亡くなった", "亡くなりました", "他界", "逝去", "訃報", "ご逝去",
     "ホスピス", "緩和ケア",
+    # メンタルヘルス
+    "うつ", "鬱", "自傷", "死にたい", "消えたい", "希死", "自殺",
+    "パニック障害", "適応障害", "摂食障害", "過労死", "燃え尽きた",
+    "メンタルがやばい", "精神科", "心療内科",
+]
+
+_QUESTION_SKIP_WORDS = [
+    "教えてください", "教えて下さい", "おすすめを教えて", "おすすめはありますか",
+    "おすすめありますか", "何がいいですか", "どれがいいですか",
+    "どうしたらいいですか", "どうすればいいですか", "アドバイスください",
+    "アドバイスお願い", "ご存知の方", "知っている方", "教えてほしい",
+    "ご意見ください", "ご意見お待ちしています", "コメントで教えて",
+]
+
+_ENTERTAINMENT_SKIP_WORDS = [
+    "コンサート", "ライブ会場", "推し活", "ファンクラブ", "アイドル",
+    "野球観戦", "サッカー観戦", "スタジアム", "ゲーム実況", "攻略",
+    "競馬", "パチンコ", "スロット",
 ]
 
 
@@ -747,11 +764,11 @@ _BOT_REVEAL_PATTERNS = [
     "投稿が表示", "確認できません", "内容が確認",
 ]
 
-def _generate_comment(post_text: str, account_note: str) -> str:
-    """投稿内容に合ったコメントをClaude APIで生成。APIキー未設定はフォールバック。"""
+def _generate_comment(post_text: str, account_note: str):
+    """投稿内容に合ったコメントをClaude APIで生成。生成できない場合はNoneを返す。"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key or not post_text.strip():
-        return random.choice(_FALLBACK_COMMENTS)
+        return None
 
     if USERNAME == "bemolle_diet":
         persona = "大阪でエステサロンを経営している、美容と健康に詳しい30代後半の女性"
@@ -796,7 +813,7 @@ def _generate_comment(post_text: str, account_note: str) -> str:
 
 ---
 絶対に守ること：
-・投稿内容が短くても不明でも、必ずコメント本文を1文出力する。「コメントできません」「内容が見えません」「テキストをお知らせください」などのメタ発言は絶対に禁止
+・アイドル・コンサート・スポーツ観戦・ゲーム・ギャンブルなどあなたのキャラクターと無関係な投稿には「SKIP」とだけ出力する
 ・必ず文章を完結させる。「〜と感」「〜ので」など途中で終わらない
 ・1文で完結。25文字以内が理想。どんなに長くても40文字まで
 ・です・ます調（敬語）で書く
@@ -837,16 +854,18 @@ def _generate_comment(post_text: str, account_note: str) -> str:
             pass
 
         comment = _trim_to_complete_sentence(resp.content[0].text.strip())
-        # 空・長すぎる（60文字超はメタ発言の可能性）・ボット丸出しワードはフォールバック
+        if comment.upper() == "SKIP":
+            print(f"[comment] Claudeがスキップ判定 → スキップ")
+            return None
         if (not comment
                 or len(comment) > 50
                 or any(p in comment for p in _BOT_REVEAL_PATTERNS)):
-            print(f"[comment] 生成コメント不適切 → フォールバック: {comment!r}")
-            return random.choice(_FALLBACK_COMMENTS)
+            print(f"[comment] 生成コメント不適切 → スキップ: {comment!r}")
+            return None
         return comment
     except Exception as e:
-        print(f"[comment] コメント生成失敗 → フォールバック: {e}")
-        return random.choice(_FALLBACK_COMMENTS)
+        print(f"[comment] コメント生成失敗 → スキップ: {e}")
+        return None
 
 
 def _select_topic_for_post(texts: list) -> str:
@@ -1030,9 +1049,21 @@ def _do_auto_comments(page, dry_run=False):
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
-            # 投稿本文が短すぎる（10文字未満）はコメントしない
-            if len(post_text.strip()) < 10:
+            # 投稿本文が短すぎる（15文字未満）はコメントしない
+            if len(post_text.strip()) < 15:
                 print(f"[comment] @{account} 投稿が短すぎる（{len(post_text.strip())}文字） → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
+            # 質問型投稿はスキップ
+            if any(w in post_text for w in _QUESTION_SKIP_WORDS):
+                print(f"[comment] @{account} 質問型投稿 → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
+            # エンタメ・無関係トピックはスキップ
+            if any(w in post_text for w in _ENTERTAINMENT_SKIP_WORDS):
+                print(f"[comment] @{account} エンタメ系 → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
@@ -1043,13 +1074,17 @@ def _do_auto_comments(page, dry_run=False):
                 continue
 
             if any(w in post_text for w in _ILLNESS_DEATH_WORDS):
-                print(f"[comment] @{account} 病気・死関連 → スキップ")
+                print(f"[comment] @{account} 病気・メンタル関連 → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
             # 投稿内容に合ったコメントをClaude APIで生成
             account_note = t.get("note", "")
             comment_text = _generate_comment(post_text, account_note)
+            if comment_text is None:
+                print(f"[comment] @{account} 適切なコメント生成不可 → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
             print(f"[comment] @{account} 生成コメント: 「{comment_text}」")
 
             if dry_run:

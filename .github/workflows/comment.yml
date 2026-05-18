@@ -1,0 +1,128 @@
+name: Auto Comment (bemolle + personal)
+
+on:
+  schedule:
+    - cron: '30 22 * * *'   # JST 7:30 morning投稿の30分後
+    - cron: '30 3 * * *'    # JST 12:30 noon投稿の30分後
+    - cron: '30 12 * * *'   # JST 21:30 evening投稿の30分後
+  workflow_dispatch:
+    inputs:
+      account:
+        description: 'アカウント'
+        required: true
+        type: choice
+        options: [bemolle, personal, both]
+        default: both
+      dry_run:
+        description: 'dry-run（実際にはコメントしない）'
+        type: boolean
+        default: false
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      TZ: Asia/Tokyo
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright anthropic -q
+          playwright install chromium --with-deps
+
+      - name: Determine targets
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "bemolle=${{ github.event.inputs.account == 'bemolle' || github.event.inputs.account == 'both' }}" >> $GITHUB_OUTPUT
+            echo "personal=${{ github.event.inputs.account == 'personal' || github.event.inputs.account == 'both' }}" >> $GITHUB_OUTPUT
+            echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
+          else
+            echo "bemolle=true" >> $GITHUB_OUTPUT
+            echo "personal=true" >> $GITHUB_OUTPUT
+            echo "dry=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull latest state
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot"
+          git pull --rebase origin main 2>&1 || true
+
+      - name: Comment (bemolle)
+        id: comment_bemolle
+        if: steps.target.outputs.bemolle == 'true'
+        continue-on-error: true
+        env:
+          THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
+        run: |
+          if [ -z "$THREADS_SESSION" ]; then
+            echo "⚠️ THREADS_SESSION 未設定 → スキップ"
+            exit 0
+          fi
+          if [ "${{ steps.target.outputs.dry }}" = "true" ]; then
+            python3 comment.py bemolle --dry-run
+          else
+            python3 comment.py bemolle
+          fi
+
+      - name: Comment (personal)
+        id: comment_personal
+        if: steps.target.outputs.personal == 'true'
+        continue-on-error: true
+        env:
+          THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
+        run: |
+          if [ -z "$THREADS_SESSION_PERSONAL" ]; then
+            echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → スキップ"
+            exit 0
+          fi
+          if [ "${{ steps.target.outputs.dry }}" = "true" ]; then
+            python3 comment.py personal --dry-run
+          else
+            python3 comment.py personal
+          fi
+
+      - name: Commit state
+        if: steps.target.outputs.dry != 'true'
+        run: |
+          git add commented_posts.json commented_posts_personal.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no changes"
+          else
+            git commit -m "state: auto comment $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            for i in 1 2 3; do
+              git pull --rebase -X theirs origin main 2>/dev/null || true
+              git push && break || sleep 3
+            done
+          fi
+
+      - name: LINE通知（エラー時）
+        if: |
+          always() &&
+          steps.target.outputs.dry != 'true' &&
+          (steps.comment_bemolle.outcome == 'failure' || steps.comment_personal.outcome == 'failure')
+        run: |
+          MSG=""
+          if [ "${{ steps.comment_bemolle.outcome }}" = "failure" ]; then
+            MSG="${MSG}⚠️ ベモーレ 自動コメント エラー\n"
+          fi
+          if [ "${{ steps.comment_personal.outcome }}" = "failure" ]; then
+            MSG="${MSG}⚠️ 個人 自動コメント エラー\n"
+          fi
+          MSG="${MSG}https://github.com/AyaKuroki929/threads-bot/actions"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
