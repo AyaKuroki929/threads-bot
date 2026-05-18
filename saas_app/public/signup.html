@@ -246,14 +246,34 @@
 
 </div>
 
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/versions/2.22.3/sdk.js"></script>
 <script>
-  const STRIPE_URL = "https://buy.stripe.com/14AeV64rV9zFcr8f9P5wI00";
+  const STRIPE_BASE_URL = "https://buy.stripe.com/14AeV64rV9zFcr8f9P5wI00";
+  const LIFF_ID = "REPLACE_WITH_YOUR_LIFF_ID"; // ← LINE DevelopersコンソールのLIFF IDに置き換える
+
+  let stripeUrl = STRIPE_BASE_URL;
+
+  // LIFF初期化: LINEアプリ内ブラウザならuser IDを取得してStripe URLに付加
+  if (LIFF_ID && !LIFF_ID.startsWith("REPLACE")) {
+    liff.init({ liffId: LIFF_ID })
+      .then(() => liff.isLoggedIn() ? liff.getProfile() : null)
+      .then((profile) => {
+        if (profile && profile.userId) {
+          stripeUrl = `${STRIPE_BASE_URL}?client_reference_id=${profile.userId}`;
+          // 同意済みならボタンURLも即時更新
+          if (document.getElementById("agreeCheck").checked) {
+            document.getElementById("registerBtn").href = stripeUrl;
+          }
+        }
+      })
+      .catch(() => {/* LINEアプリ外など: 通常URLのまま進む */});
+  }
 
   function toggleBtn() {
     const cb = document.getElementById("agreeCheck");
     const btn = document.getElementById("registerBtn");
     if (cb.checked) {
-      btn.href = STRIPE_URL;
+      btn.href = stripeUrl;
       btn.removeAttribute("onclick");
       btn.removeAttribute("aria-disabled");
       btn.style.background = "";

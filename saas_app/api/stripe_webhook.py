@@ -196,13 +196,12 @@ def handle_checkout_session(obj: dict):
     name  = name  or "不明"
     email = email or "不明"
 
-    # クライアントにフォームURLを自動送信
+    # クライアントにフォームURLを自動送信（決済完了通知はStripeメールが届くため不要）
     if line_uid:
         client_msg = (
-            f"ご登録ありがとうございます！🎉\n\n"
-            f"以下のフォームにサロン情報をご入力ください👇\n\n"
+            f"サロン情報のご入力をお願いします📋\n\n"
             f"{GOOGLE_FORM_URL}\n\n"
-            f"ご記入後、担当者よりMetaのテスター追加URLをお送りします。"
+            f"ご記入後、担当者よりThreads連携URLをお送りします。"
         )
         line_push_client(line_uid, client_msg)
     else:

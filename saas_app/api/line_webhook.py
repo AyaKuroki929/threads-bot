@@ -170,15 +170,7 @@ class handler(BaseHTTPRequestHandler):
         if etype == "follow":
             name = get_display_name(uid)
             save_line_user(uid, name)
-            stripe_url = f"https://buy.stripe.com/14AeV64rV9zFcr8f9P5wI00?client_reference_id={uid}"
-            reply(reply_tok, [{
-                "type": "text",
-                "text": (
-                    f"こんにちは！とうこさんへようこそ🎉\n\n"
-                    f"▼ お申込みはこちら\n{stripe_url}\n\n"
-                    f"お申込み後、担当者よりサロン情報フォームをお送りします。"
-                )
-            }])
+            reply(reply_tok, [{"type": "text", "text": "こんにちは！とうこさんへようこそ🎉\nまもなく担当者からご連絡いたします。しばらくお待ちください。"}])
             notify_admin_new_follower(uid, name)
 
         elif etype == "message" and event.get("message", {}).get("type") == "text":
