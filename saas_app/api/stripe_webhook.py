@@ -140,31 +140,8 @@ def get_stripe_invoice(invoice_id: str) -> dict:
 
 
 def handle_subscription_created(obj: dict):
-    if not _is_toukosan_product(obj.get("items", {}).get("data", [])):
-        return
-    customer_id = obj.get("customer", "")
-    invoice_id  = obj.get("latest_invoice", "")
-    amount = obj.get("items", {}).get("data", [{}])[0].get("price", {}).get("unit_amount", 0)
-    customer = get_stripe_customer(customer_id)
-    name  = customer.get("name") or ""
-    email = customer.get("email") or ""
-    # フォールバック：請求書から取得
-    if not name or not email:
-        invoice = get_stripe_invoice(invoice_id)
-        name  = name  or invoice.get("customer_name")  or "不明"
-        email = email or invoice.get("customer_email") or "不明"
-    line_push_admin(
-        f"🎉 とうこさん 新規登録！\n\n"
-        f"名前: {name}\n"
-        f"メール: {email}\n"
-        f"金額: ¥{amount:,}/月\n\n"
-        f"【手順】\n"
-        f"① Googleフォームをクライアントに送る：\n"
-        f"https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform\n\n"
-        f"② フォーム回答確認後、Metaでテスター追加\n\n"
-        f"③ connect URLをクライアントに送る：\n"
-        f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
-    )
+    # 新規登録通知は invoice.paid (billing_reason=subscription_create) で送る
+    pass
 
 
 def handle_subscription_deleted(obj: dict):
@@ -222,8 +199,30 @@ def handle_invoice_paid(obj: dict):
     lines = obj.get("lines", {}).get("data", [])
     if not _is_toukosan_product(lines):
         return
-    subscription_id = obj.get("subscription", "")
-    customer_id = obj.get("customer", "")
+    subscription_id  = obj.get("subscription", "")
+    customer_id      = obj.get("customer", "")
+    billing_reason   = obj.get("billing_reason", "")
+
+    # 新規登録（初回請求）：invoice payload に直接 name/email が入っている
+    if billing_reason == "subscription_create":
+        name   = obj.get("customer_name")  or "不明"
+        email  = obj.get("customer_email") or "不明"
+        amount = obj.get("amount_paid", 0)
+        line_push_admin(
+            f"🎉 とうこさん 新規登録！\n\n"
+            f"名前: {name}\n"
+            f"メール: {email}\n"
+            f"金額: ¥{amount:,}/月\n\n"
+            f"【手順】\n"
+            f"① Googleフォームをクライアントに送る：\n"
+            f"https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform\n\n"
+            f"② フォーム回答確認後、Metaでテスター追加\n\n"
+            f"③ connect URLをクライアントに送る：\n"
+            f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
+        )
+        return
+
+    # 既存サロンの支払い再開
     salon = get_salon_by_subscription(subscription_id, customer_id)
     if not salon:
         return
