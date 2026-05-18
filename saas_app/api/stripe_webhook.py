@@ -197,7 +197,16 @@ def handle_payment_failed(obj: dict):
 
 def handle_invoice_paid(obj: dict):
     lines = obj.get("lines", {}).get("data", [])
-    if not _is_toukosan_product(lines):
+    # invoice lines と subscription items で product の格納場所が異なる場合があるため
+    # plan.product も確認する
+    def _check_product(items):
+        for item in items:
+            for key in ("price", "plan"):
+                val = item.get(key)
+                if isinstance(val, dict) and val.get("product") == TOUKOSAN_PRODUCT_ID:
+                    return True
+        return False
+    if lines and not _check_product(lines):
         return
     subscription_id = obj.get("subscription", "")
     customer_id     = obj.get("customer", "")
