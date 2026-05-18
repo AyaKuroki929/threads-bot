@@ -139,6 +139,12 @@ def handle_subscription_deleted(obj: dict):
     customer_id = obj.get("customer", "")
     salon = get_salon_by_subscription(subscription_id, customer_id)
     if not salon:
+        line_push_admin(
+            f"⚠️ とうこさん サブスク解約（未登録ユーザー）\n\n"
+            f"Stripe顧客ID: {customer_id}\n\n"
+            f"Supabaseに対応するサロンが見つかりませんでした。\n"
+            f"Threads認証を完了する前に解約した可能性があります。"
+        )
         return
     deactivate_salon(salon["id"])
     line_push_admin(
