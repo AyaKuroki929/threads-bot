@@ -327,12 +327,28 @@ class handler(BaseHTTPRequestHandler):
         """診断用エンドポイント: 環境変数の設定状態を返す"""
         self.send_response(200)
         self.end_headers()
+
+        # とうこさんトークンのbot情報を取得して正しいチャンネルか確認
+        toukosan_bot_info = {}
+        if TOUKOSAN_LINE_TOKEN:
+            try:
+                req = urllib.request.Request(
+                    "https://api.line.me/v2/bot/info",
+                    headers={"Authorization": f"Bearer {TOUKOSAN_LINE_TOKEN}"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    toukosan_bot_info = json.loads(r.read())
+            except Exception as e:
+                toukosan_bot_info = {"error": str(e)}
+
         status = {
             "ok": True,
             "stripe_webhook_secret": bool(STRIPE_WEBHOOK_SECRET),
             "stripe_secret_key": bool(STRIPE_SECRET_KEY),
             "admin_line_token": bool(LINE_TOKEN),
             "toukosan_line_token": bool(TOUKOSAN_LINE_TOKEN),
+            "toukosan_bot_basicId": toukosan_bot_info.get("basicId", ""),
+            "toukosan_bot_displayName": toukosan_bot_info.get("displayName", ""),
             "supabase_url": bool(SUPABASE_URL),
             "supabase_key": bool(SUPABASE_KEY),
         }
