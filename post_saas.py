@@ -7,6 +7,7 @@ Supabaseから全アクティブサロンのトークンを読み込み、
 import sys
 import json
 import os
+import re
 import time
 import random
 import urllib.request
@@ -88,6 +89,47 @@ class TokenExpiredError(Exception):
     pass
 
 
+def _select_topic(texts, salon_name=""):
+    """投稿内容に最適なトピックをClaude APIで選択して返す（SaaS版：全サロン対応）。"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    fallback_candidates = ["美容", "エステ", "スキンケア", "ダイエット", "健康"]
+    account_hint = f"美容サロン・エステ・スキンケア・ダイエット（{salon_name}）" if salon_name else "美容サロン・エステ・スキンケア・ダイエット"
+
+    if not api_key:
+        chosen = random.choice(fallback_candidates)
+        print(f"[topic:{salon_name}] APIキー未設定 → フォールバック: '{chosen}'")
+        return chosen
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        post_body = "\n".join(texts)[:600]
+        prompt = f"""以下のThreads投稿に最もぴったりなトピック（話題カテゴリ）を1つだけ選んでください。
+アカウントのテーマ：{account_hint}
+
+【投稿内容】
+{post_body}
+
+【選び方の基準】
+・Threads内でそのキーワードで検索したときに関連コンテンツが出るような一般的なカテゴリ名
+・日本語1〜3語のキーワード（例：美容、エステ、ダイエット、スキンケア）
+・投稿の主題を最もよく表すもの
+
+キーワードだけ出力してください。説明・記号・改行は不要です。"""
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        topic = re.sub(r'[「」『』・\n\r]', '', resp.content[0].text).strip()
+        print(f"[topic:{salon_name}] AI選択: '{topic}'")
+        return topic
+    except Exception as e:
+        chosen = random.choice(fallback_candidates)
+        print(f"[topic:{salon_name}] AI選択失敗 → フォールバック '{chosen}': {e}")
+        return chosen
+
+
 def get_user_id_from_token(token):
     """トークンから実際のuser_idを取得（/me エンドポイント）"""
     url = f"{THREADS_API}/me?fields=id,username&access_token={token}"
@@ -114,14 +156,17 @@ def supabase_patch(path, data, params):
         return resp.status
 
 
-def threads_post(user_id, token, text):
+def threads_post(user_id, token, text, topic_tag=None):
     # Step 1: コンテナ作成
     create_url = f"{THREADS_API}/{user_id}/threads"
-    create_data = urllib.parse.urlencode({
+    payload = {
         "media_type": "TEXT",
         "text": text,
         "access_token": token,
-    }).encode()
+    }
+    if topic_tag:
+        payload["topic_tag"] = topic_tag
+    create_data = urllib.parse.urlencode(payload).encode()
     req = urllib.request.Request(create_url, data=create_data, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -182,7 +227,8 @@ def main():
 
             used = get_used_posts(salon_id, SLOT)
             text = pick_post(salon_name, SLOT, used)
-            post_id = threads_post(user_id, token, text)
+            topic_tag = _select_topic([text], salon_name)
+            post_id = threads_post(user_id, token, text, topic_tag=topic_tag)
             log_post(salon_id, SLOT, text)
             print(f"[OK] {salon_name}: post_id={post_id}")
             results["ok"].append(salon_name)
