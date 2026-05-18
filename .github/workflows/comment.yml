@@ -94,6 +94,20 @@ jobs:
             python3 comment.py personal
           fi
 
+      - name: セッションをGH Secretsに書き戻し（Mac不要化）
+        if: steps.target.outputs.dry != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -f session.json ] && [ -n "$GH_TOKEN" ]; then
+            gh secret set THREADS_SESSION --repo ${{ github.repository }} < session.json \
+              && echo "✅ bemolle セッション更新" || echo "⚠️ bemolle セッション更新失敗"
+          fi
+          if [ -f session_personal.json ] && [ -n "$GH_TOKEN" ]; then
+            gh secret set THREADS_SESSION_PERSONAL --repo ${{ github.repository }} < session_personal.json \
+              && echo "✅ personal セッション更新" || echo "⚠️ personal セッション更新失敗"
+          fi
+
       - name: Commit state
         if: steps.target.outputs.dry != 'true'
         run: |

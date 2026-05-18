@@ -59,6 +59,11 @@ with sync_playwright() as p:
     errors = sum(1 for r in results if r.get("status") == "error")
     print(f"[comment] 完了: ok={ok} skipped={skipped} error={errors}")
 
+    # 実行後に更新済みCookieを保存（GH Secretsへの書き戻しに使う）
+    if not dry_run:
+        context.storage_state(path=session_file)
+        print(f"[comment] セッション更新を保存: {session_file}")
+
     browser.close()
 
 # 0件コメントの場合はLINE通知（dry-runは除く）
