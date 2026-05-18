@@ -220,7 +220,53 @@ def _git_pull_latest():
 
 # ── Threads API 投稿 ────────────────────────────────────────
 
-def _api_post(user_id, token, text, reply_to_id=None):
+def _select_topic(texts, username):
+    """投稿内容に最適なトピックをClaude APIで選択して返す。"""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if username == "bemolle_diet":
+        fallback_candidates = ["美容", "ダイエット", "エステ", "スキンケア", "健康"]
+        account_hint = "エステサロン・ダイエット・スキンケア・美容"
+    else:
+        fallback_candidates = ["ビジネス", "起業", "AI", "自動化", "経営"]
+        account_hint = "ビジネス・起業・AI・自動化・生産性"
+
+    if not api_key:
+        chosen = random.choice(fallback_candidates)
+        print(f"[topic] APIキー未設定 → フォールバック: '{chosen}'")
+        return chosen
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        post_body = "\n".join(texts)[:600]
+        prompt = f"""以下のThreads投稿に最もぴったりなトピック（話題カテゴリ）を1つだけ選んでください。
+アカウントのテーマ：{account_hint}
+
+【投稿内容】
+{post_body}
+
+【選び方の基準】
+・Threads内でそのキーワードで検索したときに関連コンテンツが出るような一般的なカテゴリ名
+・日本語1〜3語のキーワード（例：美容、ダイエット、起業、AI、スキンケア）
+・投稿の主題を最もよく表すもの
+
+キーワードだけ出力してください。説明・記号・改行は不要です。"""
+        import re as _re
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        topic = _re.sub(r'[「」『』・\n\r]', '', resp.content[0].text).strip()
+        print(f"[topic] AI選択: '{topic}'")
+        return topic
+    except Exception as e:
+        chosen = random.choice(fallback_candidates)
+        print(f"[topic] AI選択失敗 → フォールバック '{chosen}': {e}")
+        return chosen
+
+
+def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     """コンテナ作成 → 待機 → 公開。post_id を返す。"""
     # Step 1: コンテナ作成
     payload = {
@@ -230,6 +276,8 @@ def _api_post(user_id, token, text, reply_to_id=None):
     }
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
+    if topic_tag and not reply_to_id:
+        payload["topic_tag"] = topic_tag
 
     create_url = f"{THREADS_API}/{user_id}/threads"
     data = urllib.parse.urlencode(payload).encode()
@@ -261,12 +309,13 @@ def _api_post(user_id, token, text, reply_to_id=None):
         raise RuntimeError(f"公開失敗 HTTP {e.code}: {body[:200]}")
 
 
-def threads_api_post(user_id, token, texts):
+def threads_api_post(user_id, token, texts, topic_tag=None):
     """単発またはツリー投稿。texts: list[str]"""
     first_post_id = None
     reply_to_id = None
     for i, text in enumerate(texts):
-        post_id = _api_post(user_id, token, text, reply_to_id=reply_to_id)
+        post_id = _api_post(user_id, token, text, reply_to_id=reply_to_id,
+                            topic_tag=topic_tag if i == 0 else None)
         if i == 0:
             first_post_id = post_id
             reply_to_id = post_id
@@ -344,6 +393,9 @@ def main():
         print("[dry-run] 終了（投稿なし）")
         return
 
+    # トピック選択
+    topic_tag = _select_topic(texts, USERNAME)
+
     # ランダム遅延（bot臭消し: 0〜5分）
     if not os.environ.get("SKIP_JITTER"):
         jitter_sec = random.randint(0, 300)
@@ -354,7 +406,8 @@ def main():
     last_exc = None
     for attempt in range(1, 4):
         try:
-            post_id = threads_api_post(actual_user_id, THREADS_ACCESS_TOKEN, texts)
+            post_id = threads_api_post(actual_user_id, THREADS_ACCESS_TOKEN, texts,
+                                       topic_tag=topic_tag)
             last_exc = None
             break
         except TokenExpiredError as e:
