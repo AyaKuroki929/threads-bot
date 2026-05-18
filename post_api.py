@@ -280,16 +280,28 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
         payload["topic_tag"] = topic_tag
 
     create_url = f"{THREADS_API}/{user_id}/threads"
-    data = urllib.parse.urlencode(payload).encode()
-    req = urllib.request.Request(create_url, data=data, method="POST")
+
+    def _create_container(pl):
+        data = urllib.parse.urlencode(pl).encode()
+        req = urllib.request.Request(create_url, data=data, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())["id"]
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            if e.code in (401, 403) or "invalid_token" in body.lower() or "token" in body.lower():
+                raise TokenExpiredError(f"トークンエラー HTTP {e.code}: {body[:200]}")
+            raise RuntimeError(f"コンテナ作成失敗 HTTP {e.code}: {body[:200]}")
+
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            creation_id = json.loads(resp.read())["id"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        if e.code in (401, 403) or "invalid_token" in body.lower() or "token" in body.lower():
-            raise TokenExpiredError(f"トークンエラー HTTP {e.code}: {body[:200]}")
-        raise RuntimeError(f"コンテナ作成失敗 HTTP {e.code}: {body[:200]}")
+        creation_id = _create_container(payload)
+    except RuntimeError:
+        if "topic_tag" in payload:
+            print(f"[topic] topic_tag='{payload['topic_tag']}' が拒否された → トピックなしで再試行")
+            payload_no_topic = {k: v for k, v in payload.items() if k != "topic_tag"}
+            creation_id = _create_container(payload_no_topic)
+        else:
+            raise
 
     # Step 2: コンテナ準備完了を待機（API推奨: 30秒）
     time.sleep(30)
