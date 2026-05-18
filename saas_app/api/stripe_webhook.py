@@ -208,6 +208,7 @@ def handle_checkout_session(obj: dict):
         _log("handle_checkout_session: LINE user ID not set (client used static payment link)")
 
     # 管理者通知
+    connect_url = f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
     line_push_admin(
         f"🎉 とうこさん 新規登録！\n\n"
         f"名前: {name}\n"
@@ -215,9 +216,16 @@ def handle_checkout_session(obj: dict):
         f"金額: ¥{amount:,}/月\n\n"
         f"{'✅ フォームはLINEで自動送信済み' if line_uid else '⚠️ LINE ID不明（手動でフォーム送信が必要）'}\n\n"
         f"【残り手順】\n"
-        f"① Metaでテスター追加\n\n"
-        f"② connect URLをクライアントに送る：\n"
-        f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
+        f"① Googleフォーム回答確認後、Metaでテスター追加\n"
+        f"https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n"
+        f"② クライアントへの送信文（コピペOK）↓\n"
+        f"──────────────\n"
+        f"【重要】\n"
+        f"①https://www.facebook.com/developer/apps/ を開いてFacebookの開発者招待を承認してください\n\n"
+        f"②Threadsとの連携URLをお送りします。\n"
+        f"{connect_url}\n"
+        f"開いて連携してください\n"
+        f"──────────────"
     )
 
 
