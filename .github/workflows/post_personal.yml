@@ -2,7 +2,7 @@ name: Threads Personal Auto Post (aya)
 
 on:
   schedule:
-    - cron: '30 22 * * *'   # JST 7:30 morning
+    - cron: '0 22 * * *'    # JST 7:00 morning
     - cron: '0 3 * * *'     # JST 12:00 noon
     - cron: '0 12 * * *'    # JST 21:00 evening
   workflow_dispatch:
