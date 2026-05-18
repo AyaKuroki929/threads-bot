@@ -158,6 +158,7 @@ jobs:
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ ベモーレThreads エラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
 
       - name: 投稿ストック自動補充（残り3本以下で発動）
+        id: generate
         if: steps.post.outcome == 'success' && steps.slot.outputs.dry != 'true'
         continue-on-error: true
         env:
@@ -165,6 +166,14 @@ jobs:
         run: |
           pip install anthropic -q
           python3 generate_posts.py bemolle
+
+      - name: LINE通知（補充失敗）
+        if: steps.generate.outcome == 'failure'
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"⚠️ ベモーレ 投稿ストック補充失敗\n\nANTHROPIC_API_KEY切れの可能性あり。残りが少なくなる前に確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
 
       - name: Commit state files
         if: steps.post.outcome == 'success' && steps.slot.outputs.dry != 'true'

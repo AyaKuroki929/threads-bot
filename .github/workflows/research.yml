@@ -42,15 +42,32 @@ jobs:
         run: python3 research_threads.py
 
       - name: Commit updated rules
+        id: commit_rules
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-research-bot"
           git add GENERATE_RULES.md GENERATE_RULES_personal.md GENERATE_RULES_saas.md
           if git diff --staged --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
             echo "ルール変更なし"
           else
+            DIFF=$(git diff --staged -- GENERATE_RULES.md GENERATE_RULES_personal.md | grep '^[+-]' | grep -v '^[+-][+-][+-]' | head -40)
+            echo "diff<<EOF" >> $GITHUB_OUTPUT
+            echo "$DIFF" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "changed=true" >> $GITHUB_OUTPUT
             git commit -m "research: $(TZ=Asia/Tokyo date '+%Y-%m-%d') 週次インサイト自動更新"
             git pull --rebase origin main 2>/dev/null || true
             git push
             echo "ルール更新をプッシュしました"
           fi
+
+      - name: LINE通知（ルール変更diff）
+        if: steps.commit_rules.outputs.changed == 'true'
+        run: |
+          DIFF="${{ steps.commit_rules.outputs.diff }}"
+          MSG="📋 週次ルール変更あり\n\n${DIFF}\n\n⚠️ ベモーレにないメニュー・価格・成分が追加されていないか確認してください"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
