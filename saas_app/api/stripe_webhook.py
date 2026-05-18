@@ -126,15 +126,33 @@ def get_stripe_customer(customer_id: str) -> dict:
         return {}
 
 
+def get_stripe_invoice(invoice_id: str) -> dict:
+    if not STRIPE_SECRET_KEY or not invoice_id:
+        return {}
+    url = f"https://api.stripe.com/v1/invoices/{invoice_id}"
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"Bearer {STRIPE_SECRET_KEY}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except Exception:
+        return {}
+
+
 def handle_subscription_created(obj: dict):
     if not _is_toukosan_product(obj.get("items", {}).get("data", [])):
         return
     customer_id = obj.get("customer", "")
-    subscription_id = obj.get("id", "")
+    invoice_id  = obj.get("latest_invoice", "")
     amount = obj.get("items", {}).get("data", [{}])[0].get("price", {}).get("unit_amount", 0)
     customer = get_stripe_customer(customer_id)
-    name  = customer.get("name") or "不明"
-    email = customer.get("email") or "不明"
+    name  = customer.get("name") or ""
+    email = customer.get("email") or ""
+    # フォールバック：請求書から取得
+    if not name or not email:
+        invoice = get_stripe_invoice(invoice_id)
+        name  = name  or invoice.get("customer_name")  or "不明"
+        email = email or invoice.get("customer_email") or "不明"
     line_push_admin(
         f"🎉 とうこさん 新規登録！\n\n"
         f"名前: {name}\n"
