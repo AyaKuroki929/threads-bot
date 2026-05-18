@@ -341,10 +341,26 @@ class handler(BaseHTTPRequestHandler):
             except Exception as e:
                 toukosan_bot_info = {"error": str(e)}
 
+        # Stripe webhook endpoint URLを確認
+        stripe_webhooks = []
+        if STRIPE_SECRET_KEY:
+            try:
+                req = urllib.request.Request("https://api.stripe.com/v1/webhook_endpoints?limit=10")
+                req.add_header("Authorization", f"Bearer {STRIPE_SECRET_KEY}")
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    data = json.loads(r.read())
+                    stripe_webhooks = [
+                        {"url": ep.get("url"), "status": ep.get("status"), "enabled_events": ep.get("enabled_events", [])}
+                        for ep in data.get("data", [])
+                    ]
+            except Exception as e:
+                stripe_webhooks = [{"error": str(e)}]
+
         status = {
             "ok": True,
             "stripe_webhook_secret": bool(STRIPE_WEBHOOK_SECRET),
             "stripe_secret_key": bool(STRIPE_SECRET_KEY),
+            "stripe_webhooks": stripe_webhooks,
             "admin_line_token": bool(LINE_TOKEN),
             "toukosan_line_token": bool(TOUKOSAN_LINE_TOKEN),
             "toukosan_bot_basicId": toukosan_bot_info.get("basicId", ""),
