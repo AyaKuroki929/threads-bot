@@ -214,8 +214,15 @@ def handle_invoice_paid(obj: dict):
 
     if not salon:
         # Supabase未登録 = 新規登録
-        name   = obj.get("customer_name")  or "不明"
-        email  = obj.get("customer_email") or "不明"
+        name  = obj.get("customer_name")  or ""
+        email = obj.get("customer_email") or ""
+        # ペイロードに入っていない場合は Stripe Customer API から取得
+        if (not name or not email) and customer_id:
+            cust  = get_stripe_customer(customer_id)
+            name  = name  or cust.get("name",  "")
+            email = email or cust.get("email", "")
+        name  = name  or "不明"
+        email = email or "不明"
         amount = obj.get("amount_paid", 0)
         line_push_admin(
             f"🎉 とうこさん 新規登録！\n\n"
