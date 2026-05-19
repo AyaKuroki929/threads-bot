@@ -366,6 +366,36 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"test_sent": True, "line_status": result}, ensure_ascii=False).encode())
             return
 
+        if qs.get("test") == ["form"]:
+            connect_url = "https://saas.shikisai.work/api/connect?customer_id=cus_TEST123"
+            form_msg = (
+                f"📋 とうこさん フォーム回答あり！\n\n"
+                f"サロン名：テストサロン\n"
+                f"オーナー名：テスト太郎\n"
+                f"Threads ID：@test_account\n\n"
+                f"【やること】\n"
+                f"MetaでThreadsテスター追加 →\n"
+                f"https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n"
+                f"追加したら下記をLINEでコピペ送信 ↓\n"
+                f"──────────────\n"
+                f"Threadsとの連携手順をお送りします📱\n\n"
+                f"⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n"
+                f"順番を守らないと連携できません。\n\n"
+                f"🔴STEP 1（先にこちらから）\n"
+                f"下記URLを開き、届いている招待を承認してください。\n"
+                f"https://www.facebook.com/developer/apps/\n"
+                f"（「保留中のリクエスト」から「承認」を押してください）\n\n"
+                f"🔴STEP 2（STEP1完了後に）\n"
+                f"下記URLを開いて、Instagramアカウントでログインし\n"
+                f"連携を完了してください。\n"
+                f"{connect_url}\n\n"
+                f"ご不明な点はいつでもお気軽にご連絡ください😊\n"
+                f"──────────────"
+            )
+            result = line_push_admin(form_msg)
+            self.wfile.write(json.dumps({"test_sent": True, "line_status": result}, ensure_ascii=False).encode())
+            return
+
         status = {
             "ok": True,
             "stripe_webhook_secret": bool(STRIPE_WEBHOOK_SECRET),
