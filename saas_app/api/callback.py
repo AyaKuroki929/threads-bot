@@ -152,9 +152,10 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(SUCCESS_HTML.encode())
 
         except Exception as e:
-            import logging
+            import logging, traceback
             logging.error("callback error: %s", e)
             self.send_response(500)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(ERROR_HTML.format(message="認証処理中にエラーが発生しました。しばらく経ってから再試行してください。").encode())
+            detail = f"{type(e).__name__}: {e}"
+            self.wfile.write(ERROR_HTML.format(message=f"認証処理中にエラーが発生しました。<br><br><code>{detail}</code>").encode())
