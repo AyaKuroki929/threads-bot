@@ -192,7 +192,7 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     }
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
-    if topic_tag and not reply_to_id:
+    if topic_tag:
         payload["topic_tag"] = topic_tag
 
     def _create_container(pl):
@@ -240,7 +240,7 @@ def threads_post(user_id, token, texts, topic_tag=None):
     for i, text in enumerate(texts):
         post_id = _api_post(user_id, token, text,
                             reply_to_id=reply_to_id,
-                            topic_tag=topic_tag if i == 0 else None)
+                            topic_tag=topic_tag)
         if i == 0:
             first_post_id = post_id
             reply_to_id = post_id
