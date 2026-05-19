@@ -48,8 +48,12 @@ def exchange_code(code):
         data=data,
         method="POST"
     )
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise Exception(f"exchange_code HTTP {e.code}: {body} | redirect_uri={CALLBACK_URL!r} | app_id={APP_ID!r}")
 
 
 def get_long_lived_token(short_token):
