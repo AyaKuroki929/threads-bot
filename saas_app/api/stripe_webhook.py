@@ -366,6 +366,18 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"test_sent": True, "line_status": result}, ensure_ascii=False).encode())
             return
 
+        if qs.get("test") == ["checkout"]:
+            test_cus = "cus_TEST123"
+            test_prefilled = f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(test_cus)}"
+            test_msg = (
+                f"サロン情報のご入力をお願いします📋\n\n"
+                f"{test_prefilled}\n\n"
+                f"ご記入後、担当者よりThreads連携URLをお送りします。"
+            )
+            result = line_push_admin(test_msg)
+            self.wfile.write(json.dumps({"test_sent": True, "url": test_prefilled, "line_status": result}, ensure_ascii=False).encode())
+            return
+
         if qs.get("test") == ["form"]:
             connect_url = "https://saas.shikisai.work/api/connect?customer_id=cus_TEST123"
             form_msg = (
