@@ -829,12 +829,25 @@ def _generate_comment(post_text: str, account_note: str):
 {ingredient_rule}
 コメント本文だけ出力してください。他の文字は一切不要。"""
 
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=80,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}]
-        )
+        resp = None
+        for _attempt in range(3):
+            try:
+                resp = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=80,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}]
+                )
+                break
+            except Exception as _e:
+                if "529" in str(_e) or "overloaded" in str(_e).lower():
+                    import time as _time
+                    print(f"[comment] Anthropic過負荷 → {10 * (_attempt + 1)}秒後リトライ ({_attempt + 1}/3)")
+                    _time.sleep(10 * (_attempt + 1))
+                else:
+                    raise
+        if resp is None:
+            raise RuntimeError("Anthropic API 過負荷 (3回リトライ失敗)")
         # トークン使用量をログに記録
         try:
             log_file = os.path.join(_BASE, "api_usage_log.json")
