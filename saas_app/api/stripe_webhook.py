@@ -383,7 +383,7 @@ class handler(BaseHTTPRequestHandler):
                 f"順番を守らないと連携できません。\n\n"
                 f"🔴STEP 1（先にこちらから）\n"
                 f"下記URLを開き、届いている招待を承認してください。\n"
-                f"https://www.facebook.com/developer/apps/\n"
+                f"https://developers.facebook.com/apps/\n"
                 f"（「保留中のリクエスト」から「承認」を押してください）\n\n"
                 f"🔴STEP 2（STEP1完了後に）\n"
                 f"下記URLを開いて、Instagramアカウントでログインし\n"

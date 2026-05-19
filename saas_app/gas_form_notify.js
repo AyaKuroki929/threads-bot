@@ -31,7 +31,7 @@ function onFormSubmit(e) {
     '順番を守らないと連携できません。\n\n' +
     '🔴STEP 1（先にこちらから）\n' +
     '下記URLを開き、届いている招待を承認してください。\n' +
-    'https://www.facebook.com/developer/apps/\n' +
+    'https://developers.facebook.com/apps/\n' +
     '（「保留中のリクエスト」から「承認」を押してください）\n\n' +
     '🔴STEP 2（STEP1完了後に）\n' +
     '下記URLを開いて、Instagramアカウントでログインし\n' +
