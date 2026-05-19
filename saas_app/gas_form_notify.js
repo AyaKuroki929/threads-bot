@@ -32,9 +32,8 @@ function onFormSubmit(e) {
     '──────────────';
 
   var token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
-
   if (!token) {
-    console.error('LINE_CHANNEL_ACCESS_TOKEN not set in script properties');
+    console.error('LINE_CHANNEL_ACCESS_TOKEN not set');
     return;
   }
 
