@@ -15,8 +15,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 LINE_TOKEN         = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")   # Claude通知bot（管理者用）
 TOUKOSAN_LINE_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "") # とうこさんLINE bot（クライアント用）
 
-TOUKOSAN_PRODUCT_ID = "prod_UWa5BZv291uQts"
-GOOGLE_FORM_URL     = "https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform"
+TOUKOSAN_PRODUCT_ID  = "prod_UWa5BZv291uQts"
+GOOGLE_FORM_URL      = "https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform"
+CUSTOMER_ID_ENTRY    = "entry.1047073828"
 
 
 def _log(msg: str):
@@ -196,43 +197,25 @@ def handle_checkout_session(obj: dict):
     name  = name  or "不明"
     email = email or "不明"
 
-    # クライアントにフォームURLを自動送信（決済完了通知はStripeメールが届くため不要）
+    # クライアントにフォームURLを自動送信（customer_idをpre-fill）
+    prefilled_form = f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}"
     if line_uid:
         client_msg = (
             f"サロン情報のご入力をお願いします📋\n\n"
-            f"{GOOGLE_FORM_URL}\n\n"
+            f"{prefilled_form}\n\n"
             f"ご記入後、担当者よりThreads連携URLをお送りします。"
         )
         line_push_client(line_uid, client_msg)
     else:
         _log("handle_checkout_session: LINE user ID not set (client used static payment link)")
 
-    # 管理者通知
-    connect_url = f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
+    # 管理者通知（シンプル版 — フォーム回答時に詳細手順が届く）
     line_push_admin(
         f"🎉 とうこさん 新規登録！\n\n"
         f"名前: {name}\n"
         f"メール: {email}\n"
         f"金額: ¥{amount:,}/月\n\n"
-        f"{'✅ フォームはLINEで自動送信済み' if line_uid else '⚠️ LINE ID不明（手動でフォーム送信が必要）'}\n\n"
-        f"【残り手順】\n"
-        f"① Googleフォーム回答確認後、Metaでテスター追加\n"
-        f"https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n"
-        f"② クライアントへの送信文（コピペOK）↓\n"
-        f"──────────────\n"
-        f"Threadsとの連携手順をお送りします📱\n\n"
-        f"⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n"
-        f"順番を守らないと連携できません。\n\n"
-        f"🔴STEP 1（先にこちらから）\n"
-        f"下記URLを開き、届いている招待を承認してください。\n"
-        f"https://www.facebook.com/developer/apps/\n"
-        f"（「保留中のリクエスト」から「承認」を押してください）\n\n"
-        f"🔴STEP 2（STEP1完了後に）\n"
-        f"下記URLを開いて、Instagramアカウントでログインし\n"
-        f"連携を完了してください。\n"
-        f"{connect_url}\n\n"
-        f"ご不明な点はいつでもお気軽にご連絡ください😊\n"
-        f"──────────────"
+        f"{'✅ フォームはLINEで自動送信済み' if line_uid else '⚠️ LINE ID不明 — 手動でフォームを送ってください：' + chr(10) + prefilled_form}"
     )
 
 
@@ -312,17 +295,14 @@ def handle_invoice_paid(obj: dict):
         email = email or "不明"
         amount = obj.get("amount_paid", 0)
         _log(f"handle_invoice_paid fallback notify: name={name!r}, email={email!r}")
+        prefilled = f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}"
         line_push_admin(
             f"🎉 とうこさん 新規登録！（invoice.paid）\n\n"
             f"名前: {name}\n"
             f"メール: {email}\n"
             f"金額: ¥{amount:,}/月\n\n"
-            f"【手順】\n"
-            f"① Googleフォームをクライアントに送る：\n"
-            f"{GOOGLE_FORM_URL}\n\n"
-            f"② フォーム回答確認後、Metaでテスター追加\n\n"
-            f"③ connect URLをクライアントに送る：\n"
-            f"https://saas.shikisai.work/api/connect?customer_id={customer_id}"
+            f"⚠️ LINE ID不明 — 手動でフォームを送ってください：\n"
+            f"{prefilled}"
         )
         return
 
@@ -375,31 +355,12 @@ class handler(BaseHTTPRequestHandler):
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         if qs.get("test") == ["1"]:
-            sample_url = "https://saas.shikisai.work/api/connect?customer_id=cus_SAMPLE123"
             sample_msg = (
                 f"🎉 とうこさん 新規登録！\n\n"
                 f"名前: テスト太郎\n"
                 f"メール: test@example.com\n"
                 f"金額: ¥2,750/月\n\n"
-                f"✅ フォームはLINEで自動送信済み\n\n"
-                f"【残り手順】\n"
-                f"① Googleフォーム回答確認後、Metaでテスター追加\n"
-                f"https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n"
-                f"② クライアントへの送信文（コピペOK）↓\n"
-                f"──────────────\n"
-                f"Threadsとの連携手順をお送りします📱\n\n"
-                f"⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n"
-                f"順番を守らないと連携できません。\n\n"
-                f"🔴STEP 1（先にこちらから）\n"
-                f"下記URLを開き、届いている招待を承認してください。\n"
-                f"https://www.facebook.com/developer/apps/\n"
-                f"（「保留中のリクエスト」から「承認」を押してください）\n\n"
-                f"🔴STEP 2（STEP1完了後に）\n"
-                f"下記URLを開いて、Instagramアカウントでログインし\n"
-                f"連携を完了してください。\n"
-                f"{sample_url}\n\n"
-                f"ご不明な点はいつでもお気軽にご連絡ください😊\n"
-                f"──────────────"
+                f"✅ フォームはLINEで自動送信済み"
             )
             result = line_push_admin(sample_msg)
             self.wfile.write(json.dumps({"test_sent": True, "line_status": result}, ensure_ascii=False).encode())
