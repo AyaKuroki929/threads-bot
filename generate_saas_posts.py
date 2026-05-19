@@ -63,6 +63,7 @@ def salon_to_rules(salon: dict) -> str:
 
     salon_name = salon.get("サロン名", "")
     owner_name = salon.get("オーナー名（投稿で使うお名前）", "")
+    self_pronoun = salon.get("投稿で自分を何と呼びますか？", "私") or "私"
     location = salon.get("所在地（最寄り駅・徒歩時間）", "")
     hours = salon.get("営業時間", "")
     holiday = salon.get("定休日", "")
@@ -72,19 +73,28 @@ def salon_to_rules(salon: dict) -> str:
     hotpepper_url = salon.get("ホットペッパービューティーのURL", "")
     reservation_source = salon.get("予約はどこから受けていますか？（メインの予約先）", "")
     line_url = salon.get("LINE公式アカウントのURL（あれば）", "")
-    career = salon.get("業界経歴・年数（例：美容業界15年）", "")
+    career = salon.get("業界経歴・年数", "")
+    open_year = salon.get("サロンのオープン年（何年目ですか）", "")
+    staff_info = salon.get("スタッフ人数と特徴（一人運営の場合は一人と記入）", "")
     target = salon.get("メインターゲット（年代・性別・どんな悩みを持つ人）", "")
+    new_visitor_concern = salon.get("新規のお客様が最初に来る一番多い理由・悩みは何ですか？", "")
     menu = salon.get("提供メニューと価格帯（箇条書きでOK）", "")
+    price_ok = salon.get("価格を投稿に記載してもOKですか？", "")
     best_menu = salon.get("一番の売りメニュー・最も結果が出やすい施術", "")
     diff = salon.get("他サロンとの違い・このサロンならではの施術やこだわり", "")
     results = salon.get("お客様の具体的な変化・実績（数字があれば）", "")
-    testimonials = salon.get("印象的なお客様の声・体験談（名前不要・1〜3件）", "")
-    result_timeline = salon.get("結果が出るまでの一般的な目安（例：〇回・〇ヶ月で変化を感じる方が多い）", "")
+    testimonials = (salon.get("印象的なお客様の声・体験談（名前不要・1～3件）", "")
+                    or salon.get("印象的なお客様の声・体験談（名前不要・1〜3件）", ""))
+    testimonials_ok = salon.get("お客様の声・体験談を投稿に使ってもOKですか？", "")
+    result_timeline = (salon.get("結果が出るまでの一般的な目安（例：「○回・○ヶ月で変化を感じる方が多い」）", "")
+                       or salon.get("結果が出るまでの一般的な目安（例：〇回・〇ヶ月で変化を感じる方が多い）", ""))
     owner_fail = salon.get("過去の失敗・コンプレックス（「実はこんなだった」という意外な過去）", "")
     turning_point = salon.get("転換点・気づき（何をきっかけに変わったか）", "")
     own_result = salon.get("自分自身で出た成果・結果（数字・具体エピソード）", "") or salon.get("自分自身で出た成果・結果", "")
     why_salon = salon.get("なぜこのサロンを作ったか", "")
+    qualifications = salon.get("取得した資格・受講した研修・認定など（あれば）", "")
     owner_habits = salon.get("オーナー自身が毎日続けているケア・習慣（業種に関連するもの）", "")
+    owner_lifestyle = salon.get("趣味・ライフスタイル（オーナー自身・業種と無関係でもOK）", "")
     common_mistakes = salon.get("お客様がよくやりがちな間違い・勘違い（3つ程度）", "")
     ng_time = salon.get("投稿でNGな時間帯・曜日の表現（例：夜営業なし→「夜でも」NG、日曜定休→「週末も」NG）", "")
     owner_privacy = salon.get("オーナー自身について投稿に出してOKな情報・出してほしくない情報", "")
@@ -93,13 +103,12 @@ def salon_to_rules(salon: dict) -> str:
     allowed_terms = salon.get("投稿に含めてよい成分名・施術名・商品名（ここに書いたもの以外は使いません）", "")
     post_style = salon.get("特に力を入れてほしい投稿スタイル（当てはまるものをすべて記入）", "")
     post_goal = salon.get("投稿の最終ゴールとして最も重視すること（1つ）", "")
-    owner_lifestyle = salon.get("趣味・ライフスタイル（オーナー自身・業種と無関係でもOK）", "")
     churn_pattern = salon.get("途中で来なくなるお客様に多いパターン・理由", "")
     seasonal_focus = salon.get("特に集客を強化したい季節・月（あれば）", "")
     competitor_diff = salon.get("お客様がよく比較検討する他サービスや選択肢（ジム・通販・他サロン等）", "")
     stance = salon.get("お客様への向き合い方・こだわり", "")
     ng_words = salon.get("サロンとして「言いたくないこと」「NGワード」", "")
-    sns_ng_style = salon.get("自分の発信スタイルのNGライン（感情的すぎる・プライベート出しすぎ等）", "")
+    sns_ng_style = salon.get("自分の発信スタイルのNGライン（やりたくない表現・雰囲気・言葉づかい）", "")
     catchcopy = salon.get("サロンを一言で表すキャッチコピー（あれば）", "")
     tone = tone_map.get(salon.get("投稿のトーン", ""), "丁寧・落ち着いたですます調。")
     emoji = emoji_map.get(salon.get("絵文字を使いますか？", ""), "絵文字は使わない。")
@@ -120,6 +129,8 @@ def salon_to_rules(salon: dict) -> str:
 {f"- **ホームページ**：{homepage_url}" if homepage_url else ""}
 {f"- **ホットペッパービューティー**：{hotpepper_url}" if hotpepper_url else ""}
 {f"- **経歴**：{career}" if career else ""}
+{f"- **開業**：{open_year}" if open_year else ""}
+{f"- **スタッフ**：{staff_info}" if staff_info else ""}
 
 ## Threadsの目的
 ターゲット層（{target}）に響く投稿でフォロワーを増やし、予約・来店につなげる。
@@ -127,6 +138,8 @@ def salon_to_rules(salon: dict) -> str:
 
 ## ターゲット
 {target}
+
+{f"新規来店の主な理由・悩み：{new_visitor_concern}" if new_visitor_concern else ""}
 
 ## メニュー・サービス
 {menu}
@@ -158,6 +171,8 @@ def salon_to_rules(salon: dict) -> str:
 ### なぜこのサロンを作ったか
 {why_salon}
 
+{f"### 取得資格・研修（権威性・信頼訴求の素材）{chr(10)}{qualifications}" if qualifications else ""}
+
 {f"### オーナー自身が毎日続けているケア・習慣（ライフスタイル投稿の素材）{chr(10)}{owner_habits}" if owner_habits else ""}
 
 {f"### 趣味・ライフスタイル（人柄投稿の素材）{chr(10)}{owner_lifestyle}" if owner_lifestyle else ""}
@@ -176,6 +191,10 @@ def salon_to_rules(salon: dict) -> str:
 
 ## キャッチコピー
 {catchcopy if catchcopy else "（未設定）"}
+
+## 価格・体験談の投稿使用ルール（クライアント指定）
+{f"価格記載：{price_ok}" if price_ok else "価格記載ルール：未指定"}
+{f"体験談使用：{testimonials_ok}" if testimonials_ok else "体験談使用ルール：未指定"}
 
 ## NGワード・避けるべき表現（クライアント指定）
 {ng_words if ng_words else "特になし"}
@@ -235,7 +254,7 @@ def salon_to_rules(salon: dict) -> str:
 - サロンを指すときは「{salon_name}」または「当サロン」を使う
   - ✅「{salon_name}に来ていただけたら」「{salon_name}のお客様」「当サロンでは」
   - ❌「うちに来てくれたら」「うちのお客様」「うちでは」
-- 自分（オーナー）を指すときは「私」を使う
+- 自分（オーナー）を指すときは「{self_pronoun}」を使う
 
 ### 敬語ルール
 - 基本は「です・ます」調。文末は「〜です」「〜ます」「〜ました」「〜でしょうか」で統一
