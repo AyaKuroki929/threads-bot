@@ -96,10 +96,8 @@ def salon_to_rules(salon: dict) -> str:
     owner_habits = salon.get("オーナー自身が毎日続けているケア・習慣（業種に関連するもの）", "")
     owner_lifestyle = salon.get("趣味・ライフスタイル（オーナー自身・業種と無関係でもOK）", "")
     common_mistakes = salon.get("お客様がよくやりがちな間違い・勘違い（3つ程度）", "")
-    ng_time = salon.get("投稿でNGな時間帯・曜日の表現（例：夜営業なし→「夜でも」NG、日曜定休→「週末も」NG）", "")
     owner_privacy = salon.get("オーナー自身について投稿に出してOKな情報・出してほしくない情報", "")
     misunderstanding = salon.get("サービスについてお客様に誤解されやすいこと・過去にクレームや問い合わせでこじれた表現", "") or salon.get("過去にクレームになったこと・誤解されやすいこと", "")
-    correct_terms = salon.get("業界特有の言葉で間違えられやすい表記（例：ノーファンデ等）", "")
     allowed_terms = salon.get("投稿に含めてよい成分名・施術名・商品名（ここに書いたもの以外は使いません）", "")
     post_style = salon.get("特に力を入れてほしい投稿スタイル（当てはまるものをすべて記入）", "")
     post_goal = salon.get("投稿の最終ゴールとして最も重視すること（1つ）", "")
@@ -112,7 +110,6 @@ def salon_to_rules(salon: dict) -> str:
     catchcopy = salon.get("サロンを一言で表すキャッチコピー（あれば）", "")
     tone = tone_map.get(salon.get("投稿のトーン", ""), "丁寧・落ち着いたですます調。")
     emoji = emoji_map.get(salon.get("絵文字を使いますか？", ""), "絵文字は使わない。")
-    booking_status = salon.get("現在の予約状況", "")
     booking_url = salon.get("予約先のURL（投稿末尾に誘導するリンク）", "")
     notes = salon.get("その他・自由記入（伝えておきたいこと）", "")
 
@@ -201,11 +198,7 @@ def salon_to_rules(salon: dict) -> str:
 
 {f"## 発信スタイルのNGライン（クライアント指定）{chr(10)}{sns_ng_style}" if sns_ng_style else ""}
 
-{f"## 営業時間外・NGな時間帯表現（必ず守る）{chr(10)}{ng_time}" if ng_time else ""}
-
 {f"## 誤解を招く表現・クレーム防止（必ず守る）{chr(10)}{misunderstanding}" if misunderstanding else ""}
-
-{f"## 業種特有の正しい表記（必ずこの表記を使う）{chr(10)}{correct_terms}" if correct_terms else ""}
 
 {f"## 使ってよい成分名・施術名・商品名（これ以外は創作しない）{chr(10)}{allowed_terms}" if allowed_terms else ""}
 
@@ -214,10 +207,6 @@ def salon_to_rules(salon: dict) -> str:
 {f"## 投稿スタイルの優先度（クライアント指定）{chr(10)}{post_style}" if post_style else ""}
 
 {f"## 投稿の最終ゴール（CTAの方向性）{chr(10)}{post_goal}に向けてCTAを組み立てる。" if post_goal else ""}
-
-## 現在の予約状況
-{booking_status}
-{"→ 空きがあるので積極的に来店誘導するCTAを入れる" if "空き" in booking_status else "→ 満席に近いため「少数限定」「今すぐ」の希少性を出す"}
 
 ## 予約先
 {f"予約受付：{reservation_source}" if reservation_source else ""}
@@ -278,6 +267,11 @@ def salon_to_rules(salon: dict) -> str:
 - 「自分を大切に」「無理せず」「自分らしく」など誰でも書ける抽象フレーズは禁止
 - 同じ語尾を3文以上繰り返さない
 - 文の長さにバラつきをつける（短文と長文を混在させる）
+
+### 営業時間・定休日（絶対遵守）
+- 営業時間（{hours}）・定休日（{holiday}）と矛盾する表現は絶対に使わない
+  - ❌「夜でも」「深夜でもOK」「週末も」「定休日でも」「24時間」など
+- 営業時間外への予約受付・来店誘導は一切書かない
 
 ### 禁則（全サロン絶対遵守）
 - 医療的な断定・病気が治るなどの表現禁止
