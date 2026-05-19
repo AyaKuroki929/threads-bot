@@ -323,7 +323,7 @@ def generate_for_salon(salon: dict):
     if os.path.exists(posts_path):
         posts = json.load(open(posts_path, encoding="utf-8"))
     else:
-        posts = {"morning": [], "evening": []}
+        posts = {"morning": [], "noon": [], "evening": []}
 
     rules = salon_to_rules(salon)
 
@@ -341,7 +341,7 @@ def generate_for_salon(salon: dict):
         return False
     generated_any = False
 
-    for slot in ["morning", "evening"]:
+    for slot in ["morning", "noon", "evening"]:
         remaining = _remaining(posts, salon_name, slot)
         if remaining > THRESHOLD:
             print(f"[saas] {salon_name} {slot}: 残{remaining}本 → 生成不要")
@@ -351,10 +351,33 @@ def generate_for_salon(salon: dict):
 
         slot_hint = {
             "morning": "朝投稿（7〜8時頃）。1日の始まりに読む人向け。前向きな気づき・軽い問いかけ・背中を押す内容。",
+            "noon": "昼投稿（12時頃）。休憩中にサクッと読む人向け。共感・保存したくなる知識・具体的なTips。",
             "evening": "夜投稿（21時頃）。1日の終わりに読む人向け。内省・本音・今日の気づき・静かな共感。",
         }[slot]
 
         existing = "\n".join([str(posts[slot][i])[:80] for i in range(min(3, len(posts[slot])))])
+
+        if slot == "noon":
+            output_format = """全投稿をツリー（2部構成）にする。各要素は2要素の配列。改行は\\nで表現。
+
+出力例:
+[
+  ["1部目フック\\n\\n途中で止める", "2部目は答えから\\n\\nCTA"],
+  ["別の1部目", "別の2部目"]
+]"""
+            tree_rule = """- 全投稿をツリー（2部構成・配列形式）にする
+- 1部目末尾は答えを出さずに途中で止めるクリフハンガー形式（「続きに書きます」などの予告文は絶対禁止）
+- 2部目は接続詞・前置きなしで答えから書き始める
+"""
+        else:
+            output_format = """各要素は単発投稿の文字列。改行は\\nで表現。
+
+出力例:
+[
+  "1行目フック\\n\\n本文。\\n\\nCTA",
+  "別の投稿のフック\\n\\n本文。"
+]"""
+            tree_rule = "- 全投稿を単発（文字列）で生成する\n"
 
         system_prompt = f"""あなたはSNS投稿の専門家です。
 以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
@@ -371,14 +394,8 @@ def generate_for_salon(salon: dict):
 週次インサイトに「成分名を列挙せよ」「学術名称を強調せよ」等のルールがあっても、サロン情報に根拠がない場合は無視すること。
 
 === 出力形式（厳守）===
-JSON配列だけを返してください。各要素は単発投稿の文字列です。
-改行は \\n で表現してください。
-
-出力例:
-[
-  "1行目フック\\n\\n本文の続き。\\n\\nCTA（予約はプロフのリンクから）",
-  "別の投稿のフック\\n\\n本文。"
-]
+JSON配列だけを返してください。
+{output_format}
 
 JSON配列以外の文字は一切出力しないでください。"""
 
@@ -390,7 +407,7 @@ JSON配列以外の文字は一切出力しないでください。"""
 - オーナーの実体験・失敗談を素材にした投稿を複数本入れる
 - 全{GENERATE_COUNT}本が違う切り口・違う素材
 - ハッシュタグ禁止
-- {GENERATE_COUNT}本すべてJSON配列に含める
+{tree_rule}- {GENERATE_COUNT}本すべてJSON配列に含める
 
 既存投稿（この角度は避ける）：
 {existing if existing else "（まだなし）"}"""

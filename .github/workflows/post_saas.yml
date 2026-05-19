@@ -2,12 +2,13 @@ name: SaaS - サロン自動投稿
 
 on:
   schedule:
-    - cron: '0 0 * * *'    # 毎日 AM9時(JST) - 朝投稿
-    - cron: '0 11 * * *'   # 毎日 PM8時(JST) - 夜投稿
+    - cron: '0 22 * * *'   # 毎日 AM7時(JST) - 朝投稿
+    - cron: '0 3 * * *'    # 毎日 PM12時(JST) - 昼投稿
+    - cron: '0 12 * * *'   # 毎日 PM9時(JST) - 夜投稿
   workflow_dispatch:
     inputs:
       slot:
-        description: '投稿スロット（morning / evening）'
+        description: '投稿スロット（morning / noon / evening）'
         required: true
         default: 'morning'
 
@@ -30,11 +31,11 @@ jobs:
         id: slot
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            if echo "${{ github.event.schedule }}" | grep -q "0 0"; then
-              echo "slot=morning" >> $GITHUB_OUTPUT
-            else
-              echo "slot=evening" >> $GITHUB_OUTPUT
-            fi
+            case "${{ github.event.schedule }}" in
+              "0 22 * * *") echo "slot=morning" >> $GITHUB_OUTPUT ;;
+              "0 3 * * *")  echo "slot=noon"    >> $GITHUB_OUTPUT ;;
+              "0 12 * * *") echo "slot=evening" >> $GITHUB_OUTPUT ;;
+            esac
           else
             echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
           fi
@@ -44,6 +45,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_ADMIN_USER_ID: ${{ secrets.LINE_ADMIN_USER_ID }}
         run: |
           set +e
           python3 post_saas.py ${{ steps.slot.outputs.slot }}
