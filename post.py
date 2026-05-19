@@ -807,13 +807,10 @@ def _generate_comment(post_text: str, account_note: str):
             "・成分に関する投稿には、共感や「気になります」程度の感想にとどめる\n"
         ) if USERNAME == "bemolle_diet" else ""
 
-        if USERNAME == "bemolle_diet":
-            skip_rule = (
-                "・性的・暴力的・差別的・スパム目的の投稿には「SKIP」とだけ出力する\n"
-                "・日常生活・仕事・食事・家族・趣味など一般の投稿はSKIPしない（美容と関係なくてもOK）"
-            )
-        else:
-            skip_rule = "・アイドル・コンサート・スポーツ観戦・ゲーム・ギャンブルなどあなたのキャラクターと無関係な投稿には「SKIP」とだけ出力する"
+        skip_rule = (
+            "・性的・暴力的・差別的・スパム目的の投稿には「SKIP」とだけ出力する\n"
+            "・日常生活・仕事・食事・家族・趣味など一般の投稿はSKIPしない（テーマと関係なくてもOK）"
+        )
 
         user_prompt = f"""この投稿を読んで、コメントを1文だけ書いてください。
 
