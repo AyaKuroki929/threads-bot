@@ -17,7 +17,7 @@ TOUKOSAN_LINE_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "") # とう�
 
 TOUKOSAN_PRODUCT_ID  = "prod_UWa5BZv291uQts"
 GOOGLE_FORM_URL      = "https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform"
-CUSTOMER_ID_ENTRY    = "entry.1047073828"
+CUSTOMER_ID_ENTRY    = "entry.1831716486"
 
 
 def _log(msg: str):
