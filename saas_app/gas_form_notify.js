@@ -22,20 +22,11 @@ function onFormSubmit(e) {
     'オーナー名：' + ownerName + '\n' +
     'Threads ID：' + threadsId + '\n\n' +
     '【やること】\n' +
-    'MetaでThreadsテスター追加 →\n' +
-    'https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n' +
-    '追加したら下記をLINEでコピペ送信 ↓\n' +
+    '下記をLINEでコピペ送信 ↓\n' +
     '──────────────\n' +
     'Threadsとの連携手順をお送りします📱\n\n' +
-    '⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n' +
-    '順番を守らないと連携できません。\n\n' +
-    '🔴STEP 1（先にこちらから）\n' +
-    '下記URLを開き、届いている招待を承認してください。\n' +
-    'https://developers.facebook.com/apps/\n' +
-    '（「保留中のリクエスト」から「承認」を押してください）\n\n' +
-    '🔴STEP 2（STEP1完了後に）\n' +
     '下記URLを開いて、Instagramアカウントでログインし\n' +
-    '連携を完了してください。\n' +
+    '連携を完了してください。\n\n' +
     connectUrl + '\n\n' +
     'ご不明な点はいつでもお気軽にご連絡ください😊\n' +
     '──────────────';
