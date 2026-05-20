@@ -3,7 +3,6 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
 import json
 import os
-import sys
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -34,25 +33,19 @@ def get_line_user(customer_id: str) -> dict:
 
 
 def mark_step_sent(line_uid: str):
-    now_str = datetime.now(timezone.utc).isoformat()
     url = (f"{SUPABASE_URL}/rest/v1/line_users"
            f"?line_user_id=eq.{urllib.parse.quote(line_uid)}")
-    data = json.dumps({"step_sent_at": now_str}).encode()
-    print(f"[mark_step_sent] PATCH url={url}", file=sys.stderr, flush=True)
-    print(f"[mark_step_sent] data={data}", file=sys.stderr, flush=True)
+    data = json.dumps({"step_sent_at": datetime.now(timezone.utc).isoformat()}).encode()
     req = urllib.request.Request(
         url, data=data,
-        headers={**_supabase_headers(), "Prefer": "return=representation"},
+        headers={**_supabase_headers(), "Prefer": "return=minimal"},
         method="PATCH",
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            body = r.read()
-            print(f"[mark_step_sent] status={r.status} body={body[:300]}", file=sys.stderr, flush=True)
+        with urllib.request.urlopen(req, timeout=10):
+            pass
     except urllib.error.HTTPError as e:
-        body = e.read()
-        print(f"[mark_step_sent] HTTPError {e.code}: {body[:300]}", file=sys.stderr, flush=True)
-        raise
+        raise Exception(f"step_sent_at 更新失敗: {e.code} {e.read()}")
 
 
 def send_step_message(line_uid: str, customer_id: str):
