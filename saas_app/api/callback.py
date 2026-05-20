@@ -20,7 +20,7 @@ def line_notify_oauth_complete(username: str):
         f"✅ とうこさん OAuth完了！\n\n"
         f"Threads ID：@{username}\n\n"
         f"▼ 次のステップ\n"
-        f"⑧ GitHub Actions「SaaS - サロン別投稿生成」を手動実行\n"
+        f"GitHub Actions「SaaS - サロン別投稿生成」を手動実行\n"
         f"https://github.com/AyaKuroki929/threads-bot/actions/workflows/saas_generate.yml"
     )
     req = urllib.request.Request(
@@ -57,20 +57,28 @@ def exchange_code(code):
 
 
 def get_long_lived_token(short_token):
-    url = (
-        f"https://graph.threads.net/access_token"
-        f"?grant_type=th_exchange_token"
-        f"&client_secret={APP_SECRET}"
-        f"&access_token={short_token}"
-    )
-    with urllib.request.urlopen(url) as resp:
-        return json.loads(resp.read())
+    params = urllib.parse.urlencode({
+        "grant_type": "th_exchange_token",
+        "client_secret": APP_SECRET,
+        "access_token": short_token,
+    })
+    url = f"https://graph.threads.net/access_token?{params}"
+    try:
+        with urllib.request.urlopen(url) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise Exception(f"get_long_lived_token HTTP {e.code}: {body}")
 
 
 def get_user_info(token):
-    url = f"https://graph.threads.net/me?fields=id,username&access_token={token}"
-    with urllib.request.urlopen(url) as resp:
-        return json.loads(resp.read())
+    url = f"https://graph.threads.net/me?fields=id,username&access_token={urllib.parse.quote(token)}"
+    try:
+        with urllib.request.urlopen(url) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise Exception(f"get_user_info HTTP {e.code}: {body}")
 
 
 def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):

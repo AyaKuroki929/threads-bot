@@ -16,19 +16,29 @@ function onFormSubmit(e) {
     ? 'https://saas.shikisai.work/api/connect?customer_id=' + customerId
     : '⚠️ customer_id未取得（Stripeダッシュボードで確認してください）';
 
+  var copyText =
+    'Threadsとの連携手順をお送りします📱\n\n' +
+    '⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n' +
+    '順番を守らないと連携できません。\n\n' +
+    '🔴STEP 1（先にこちらから）\n' +
+    'Threadsアプリ → プロフィール右上≡ → 設定 → アカウント → ウェブサイトのアクセス許可 →「Invites」タブ →「Threads Auto Post」の【同意する】を押してください\n\n' +
+    '🔴STEP 2（STEP1完了後に）\n' +
+    '下記URLを開いて、Instagramアカウントでログインし\n' +
+    '連携を完了してください。\n' +
+    connectUrl + '\n\n' +
+    'ご不明な点はいつでもお気軽にご連絡ください😊';
+
   var message =
     '📋 とうこさん フォーム回答あり！\n\n' +
     'サロン名：' + salonName + '\n' +
     'オーナー名：' + ownerName + '\n' +
     'Threads ID：' + threadsId + '\n\n' +
     '【やること】\n' +
-    '下記をLINEでコピペ送信 ↓\n' +
+    'MetaでThreadsテスター追加 →\n' +
+    'https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n' +
+    '追加したら下記をLINEでコピペ送信 ↓\n' +
     '──────────────\n' +
-    'Threadsとの連携手順をお送りします📱\n\n' +
-    '下記URLを開いて、Instagramアカウントでログインし\n' +
-    '連携を完了してください。\n\n' +
-    connectUrl + '\n\n' +
-    'ご不明な点はいつでもお気軽にご連絡ください😊\n' +
+    copyText + '\n' +
     '──────────────';
 
   var token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
