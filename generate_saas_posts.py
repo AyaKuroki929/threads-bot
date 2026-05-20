@@ -439,31 +439,52 @@ JSON配列以外の文字は一切出力しないでください。"""
 既存投稿（この角度は避ける）：
 {existing if existing else "（まだなし）"}"""
 
-        try:
-            resp = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            raw = resp.content[0].text.strip()
-            start = raw.find("[")
-            end = raw.rfind("]") + 1
-            if start == -1 or end == 0:
-                print(f"[saas] {salon_name} {slot}: JSONが見つからない → スキップ")
-                continue
+        new_posts = None
+        last_error = None
+        for attempt in range(3):
+            try:
+                resp = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=8000,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}]
+                )
+                raw = resp.content[0].text.strip()
+                start = raw.find("[")
+                end = raw.rfind("]") + 1
+                if start == -1 or end == 0:
+                    last_error = "JSONが見つからない"
+                    print(f"[saas] {salon_name} {slot} (試行{attempt+1}): {last_error}")
+                    continue
+                candidate = raw[start:end]
+                try:
+                    new_posts = json.loads(candidate)
+                except json.JSONDecodeError:
+                    import re as _re
+                    candidate = _re.sub(r'(?<!\\)\n', r'\\n', candidate)
+                    new_posts = json.loads(candidate)
+                if not isinstance(new_posts, list):
+                    last_error = "list以外が返された"
+                    new_posts = None
+                    continue
+                break
+            except json.JSONDecodeError as e:
+                last_error = str(e)
+                print(f"[saas] {salon_name} {slot} (試行{attempt+1}): JSONパースエラー → {e}")
+                new_posts = None
+            except Exception as e:
+                last_error = str(e)
+                print(f"[saas] {salon_name} {slot} (試行{attempt+1}): エラー → {e}")
+                new_posts = None
+                break
 
-            new_posts = json.loads(raw[start:end])
-            if not isinstance(new_posts, list):
-                continue
-
-            posts[slot].extend(new_posts)
-            print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
-            generated_any = True
-
-        except Exception as e:
-            print(f"[saas] {salon_name} {slot}: エラー → {e}")
+        if new_posts is None:
+            print(f"[saas] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
             continue
+
+        posts[slot].extend(new_posts)
+        print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
+        generated_any = True
 
     if generated_any:
         with open(posts_path, "w", encoding="utf-8") as f:
