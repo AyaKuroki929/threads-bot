@@ -206,7 +206,7 @@ def handle_checkout_session(obj: dict):
             f"このフォームの回答をもとに、AIがあなたのサロン専用の投稿文を作成します。\n"
             f"書いていただいた内容が詳しいほど、投稿の質が上がります✨\n\n"
             f"「システムにサロンのことを知ってもらう」つもりで、ぜひ丁寧にご記入ください😊\n\n"
-            f"ご記入後、Threads連携の手順をお送りします。"
+            f"ご記入後、担当者より次の手順のご連絡をいたします。"
         )
         line_push_client(line_uid, client_msg)
     else:
