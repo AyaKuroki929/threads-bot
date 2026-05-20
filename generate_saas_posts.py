@@ -338,6 +338,8 @@ def generate_for_salon(salon: dict):
 
     if os.path.exists(posts_path):
         posts = json.load(open(posts_path, encoding="utf-8"))
+        for slot in ["morning", "noon", "evening"]:
+            posts.setdefault(slot, [])
     else:
         posts = {"morning": [], "noon": [], "evening": []}
 
