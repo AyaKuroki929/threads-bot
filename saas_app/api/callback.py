@@ -10,7 +10,32 @@ APP_SECRET = os.environ.get("META_APP_SECRET", "")
 CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")  # Claude通知bot
+LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
+GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
+
+
+def trigger_saas_generate(username: str):
+    if not GITHUB_PAT:
+        return
+    payload = json.dumps({
+        "ref": "main",
+        "inputs": {"salon_name": username},
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.github.com/repos/AyaKuroki929/threads-bot/actions/workflows/saas_generate.yml/dispatches",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {GITHUB_PAT}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
 
 
 def line_notify_oauth_complete(username: str):
@@ -19,9 +44,7 @@ def line_notify_oauth_complete(username: str):
     text = (
         f"✅ とうこさん OAuth完了！\n\n"
         f"Threads ID：@{username}\n\n"
-        f"▼ 次のステップ\n"
-        f"GitHub Actions「SaaS - サロン別投稿生成」を手動実行\n"
-        f"https://github.com/AyaKuroki929/threads-bot/actions/workflows/saas_generate.yml"
+        f"投稿生成を自動実行しました。"
     )
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/broadcast",
@@ -156,6 +179,7 @@ class handler(BaseHTTPRequestHandler):
                 access_token=access_token,
                 stripe_customer_id=customer_id,
             )
+            trigger_saas_generate(username)
             line_notify_oauth_complete(username)
 
             self.send_response(200)
