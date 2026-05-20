@@ -101,7 +101,8 @@ def salon_to_rules(salon: dict) -> str:
     allowed_terms = salon.get("投稿に含めてよい成分名・施術名・商品名（ここに書いたもの以外は使いません）", "")
     post_style = salon.get("特に力を入れてほしい投稿スタイル（当てはまるものをすべて記入）", "")
     post_goal = salon.get("投稿の最終ゴールとして最も重視すること（1つ）", "")
-    churn_pattern = salon.get("途中で来なくなるお客様に多いパターン・理由", "")
+    churn_pattern = (salon.get("途中で来なくなるお客様に多いパターン・理由（わかる範囲でOK）", "")
+                     or salon.get("途中で来なくなるお客様に多いパターン・理由", ""))
     seasonal_focus = salon.get("特に集客を強化したい季節・月（あれば）", "")
     competitor_diff = salon.get("お客様がよく比較検討する他サービスや選択肢（ジム・通販・他サロン等）", "")
     stance = salon.get("お客様への向き合い方・こだわり", "")
@@ -328,7 +329,9 @@ def _remaining(posts, salon_name, slot):
 
 def generate_for_salon(salon: dict):
     salon_name = salon.get("サロン名", "unknown")
-    safe_name = re.sub(r'[^\w\-]', '_', salon_name)
+    threads_id = salon.get("Threadsのアカウント名（@から始まるID）", "").lstrip("@").strip()
+    file_key = threads_id if threads_id else salon_name
+    safe_name = re.sub(r'[^\w\-]', '_', file_key)
 
     Path(POSTS_DIR).mkdir(exist_ok=True)
     posts_path = os.path.join(POSTS_DIR, f"posts_{safe_name}.json")
@@ -355,12 +358,12 @@ def generate_for_salon(salon: dict):
     generated_any = False
 
     for slot in ["morning", "noon", "evening"]:
-        remaining = _remaining(posts, salon_name, slot)
+        remaining = _remaining(posts, file_key, slot)
         if remaining > THRESHOLD:
-            print(f"[saas] {salon_name} {slot}: 残{remaining}本 → 生成不要")
+            print(f"[saas] {file_key} {slot}: 残{remaining}本 → 生成不要")
             continue
 
-        print(f"[saas] {salon_name} {slot}: 残{remaining}本 → {GENERATE_COUNT}本生成開始")
+        print(f"[saas] {file_key} {slot}: 残{remaining}本 → {GENERATE_COUNT}本生成開始")
 
         slot_hint = {
             "morning": "朝投稿（7〜8時頃）。1日の始まりに読む人向け。前向きな気づき・軽い問いかけ・背中を押す内容。",
@@ -474,11 +477,12 @@ def main():
 
     for salon in salons:
         salon_name = salon.get("サロン名", "")
+        threads_id = salon.get("Threadsのアカウント名（@から始まるID）", "").lstrip("@").strip()
         if not salon_name:
             continue
-        if target_salon and salon_name != target_salon:
+        if target_salon and threads_id != target_salon and salon_name != target_salon:
             continue
-        print(f"\n[saas] === {salon_name} の処理開始 ===")
+        print(f"\n[saas] === {salon_name} (@{threads_id}) の処理開始 ===")
         generate_for_salon(salon)
 
     print("\n[saas] 全処理完了")
