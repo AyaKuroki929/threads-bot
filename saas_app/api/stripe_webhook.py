@@ -97,6 +97,25 @@ def reactivate_salon(salon_id: str):
         return r.status
 
 
+def save_line_customer_mapping(line_uid: str, customer_id: str):
+    """line_users に stripe_customer_id を紐づけて保存（send-step で使用）"""
+    data = json.dumps({
+        "line_user_id": line_uid,
+        "stripe_customer_id": customer_id,
+    }).encode()
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/line_users",
+        data=data,
+        headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            _log(f"save_line_customer_mapping: status={r.status}")
+    except Exception as e:
+        _log(f"save_line_customer_mapping error: {e}")
+
+
 # ── LINE ──────────────────────────────────────────────────────
 def line_push_admin(text: str):
     """管理者（Claude通知bot）にbroadcast通知"""
@@ -196,6 +215,10 @@ def handle_checkout_session(obj: dict):
 
     name  = name  or "不明"
     email = email or "不明"
+
+    # line_uid と customer_id のマッピングを保存（send-step エンドポイントで使用）
+    if line_uid and customer_id:
+        save_line_customer_mapping(line_uid, customer_id)
 
     # クライアントにフォームURLを自動送信（customer_idをpre-fill）
     prefilled_form = f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}"
