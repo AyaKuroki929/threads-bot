@@ -18,16 +18,29 @@ def _supabase_headers():
     }
 
 
-def get_line_uid(customer_id: str) -> str:
+def get_line_user(customer_id: str) -> dict:
     url = (f"{SUPABASE_URL}/rest/v1/line_users"
            f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}"
-           f"&select=line_user_id&limit=1")
+           f"&select=line_user_id,step_sent_at&limit=1")
     req = urllib.request.Request(url, headers=_supabase_headers())
     with urllib.request.urlopen(req, timeout=10) as r:
         rows = json.loads(r.read())
     if not rows:
         raise Exception(f"LINEユーザーIDが見つかりません（customer_id={customer_id}）")
-    return rows[0]["line_user_id"]
+    return rows[0]
+
+
+def mark_step_sent(customer_id: str):
+    url = (f"{SUPABASE_URL}/rest/v1/line_users"
+           f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}")
+    data = json.dumps({"step_sent_at": "now()"}).encode()
+    req = urllib.request.Request(
+        url, data=data,
+        headers={**_supabase_headers(), "Prefer": "return=minimal"},
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req, timeout=10):
+        pass
 
 
 def send_step_message(line_uid: str, customer_id: str):
@@ -54,6 +67,18 @@ def send_step_message(line_uid: str, customer_id: str):
     with urllib.request.urlopen(req, timeout=10) as r:
         return r.status
 
+
+ALREADY_SENT_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>送信済み</title>
+<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f9f9f9;}
+h1{color:#e65100;}p{color:#555;}</style>
+</head>
+<body>
+<h1>⚠️ 送信済みです</h1>
+<p>このクライアントにはすでにSTEP1/2を送信しています。<br>
+再送する場合は Supabase で step_sent_at を NULL に更新してください。</p>
+</body></html>"""
 
 SUCCESS_HTML = """<!DOCTYPE html>
 <html lang="ja">
@@ -87,8 +112,16 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            line_uid = get_line_uid(customer_id)
-            send_step_message(line_uid, customer_id)
+            user = get_line_user(customer_id)
+            if user.get("step_sent_at"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(ALREADY_SENT_HTML.encode())
+                return
+
+            send_step_message(user["line_user_id"], customer_id)
+            mark_step_sent(customer_id)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
