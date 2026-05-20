@@ -1,5 +1,6 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from datetime import datetime, timezone
 import json
 import os
 import urllib.request
@@ -33,7 +34,7 @@ def get_line_user(customer_id: str) -> dict:
 def mark_step_sent(customer_id: str):
     url = (f"{SUPABASE_URL}/rest/v1/line_users"
            f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}")
-    data = json.dumps({"step_sent_at": "now()"}).encode()
+    data = json.dumps({"step_sent_at": datetime.now(timezone.utc).isoformat()}).encode()
     req = urllib.request.Request(
         url, data=data,
         headers={**_supabase_headers(), "Prefer": "return=minimal"},
