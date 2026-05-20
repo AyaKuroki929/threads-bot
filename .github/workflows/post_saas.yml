@@ -2,9 +2,9 @@ name: SaaS - サロン自動投稿
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # 毎日 AM7時(JST) - 朝投稿
-    - cron: '0 3 * * *'    # 毎日 PM12時(JST) - 昼投稿
-    - cron: '0 12 * * *'   # 毎日 PM9時(JST) - 夜投稿
+    - cron: '0 21 * * *'   # 毎日 AM6時(JST) - 朝投稿（遅延考慮で前倒し→7時前後に投稿）
+    - cron: '0 0 * * *'    # 毎日 AM9時(JST) - 昼投稿（遅延考慮で前倒し→12時前後に投稿）
+    - cron: '0 9 * * *'    # 毎日 PM6時(JST) - 夜投稿（遅延考慮で前倒し→21時前後に投稿）
   workflow_dispatch:
     inputs:
       slot:
@@ -32,9 +32,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
-              "0 22 * * *") echo "slot=morning" >> $GITHUB_OUTPUT ;;
-              "0 3 * * *")  echo "slot=noon"    >> $GITHUB_OUTPUT ;;
-              "0 12 * * *") echo "slot=evening" >> $GITHUB_OUTPUT ;;
+              "0 21 * * *") echo "slot=morning" >> $GITHUB_OUTPUT ;;
+              "0 0 * * *")  echo "slot=noon"    >> $GITHUB_OUTPUT ;;
+              "0 9 * * *")  echo "slot=evening" >> $GITHUB_OUTPUT ;;
             esac
           else
             echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
