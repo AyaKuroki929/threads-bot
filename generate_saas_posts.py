@@ -109,6 +109,8 @@ def salon_to_rules(salon: dict) -> str:
     ng_words = salon.get("サロンとして「言いたくないこと」「NGワード」", "")
     sns_ng_style = salon.get("自分の発信スタイルのNGライン（やりたくない表現・雰囲気・言葉づかい）", "")
     catchcopy = salon.get("サロンを一言で表すキャッチコピー（あれば）", "")
+    owner_words = salon.get("オーナーの口癖・よく使う言葉・フレーズ", "")
+    concept_words = salon.get("サロン独自のキーワード・コンセプトワード", "")
     tone = tone_map.get(salon.get("投稿のトーン", ""), "丁寧・落ち着いたですます調。")
     emoji = emoji_map.get(salon.get("絵文字を使いますか？", ""), "絵文字は使わない。")
     booking_url = salon.get("予約先のURL（投稿末尾に誘導するリンク）", "")
@@ -189,6 +191,12 @@ def salon_to_rules(salon: dict) -> str:
 
 ## キャッチコピー
 {catchcopy if catchcopy else "（未設定）"}
+
+## このオーナー固有の言葉・文体の個性（差別化の核・必ず反映する）
+{f"口癖・よく使う言葉：{owner_words}" if owner_words else "口癖：（未記入）"}
+{f"独自コンセプトワード：{concept_words}" if concept_words else "独自コンセプトワード：（未記入）"}
+→ 上記の言葉・表現を自然な形で投稿に織り込み、このオーナーにしか書けない文体を作ること。
+→ 他のどのサロンとも被らない個性を出すことが最優先。一般的・テンプレート的な表現は避ける。
 
 ## 価格・体験談の投稿使用ルール（クライアント指定）
 {f"価格記載：{price_ok}" if price_ok else "価格記載ルール：未指定"}
@@ -424,6 +432,7 @@ JSON配列以外の文字は一切出力しないでください。"""
 - ギャップ投稿（「〇〇なのに△△」「実は〇〇だった」）を半数以上に使う
 - オーナーの実体験・失敗談を素材にした投稿を複数本入れる
 - 全{GENERATE_COUNT}本が違う切り口・違う素材
+- このサロン固有の口癖・言葉・コンセプトワードを文体に自然に反映させ、他のどのサロンとも被らない個性を出す
 - ハッシュタグ禁止
 {tree_rule}- {GENERATE_COUNT}本すべてJSON配列に含める
 
