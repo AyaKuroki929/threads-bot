@@ -31,9 +31,9 @@ def get_line_user(customer_id: str) -> dict:
     return rows[0]
 
 
-def mark_step_sent(customer_id: str):
+def mark_step_sent(line_uid: str):
     url = (f"{SUPABASE_URL}/rest/v1/line_users"
-           f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}")
+           f"?line_user_id=eq.{urllib.parse.quote(line_uid)}")
     data = json.dumps({"step_sent_at": datetime.now(timezone.utc).isoformat()}).encode()
     req = urllib.request.Request(
         url, data=data,
@@ -122,7 +122,7 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             send_step_message(user["line_user_id"], customer_id)
-            mark_step_sent(customer_id)
+            mark_step_sent(user["line_user_id"])
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
