@@ -84,6 +84,18 @@ def get_used_posts(salon_id, slot):
     return {r["post_content"] for r in rows}
 
 
+def already_posted_today(salon_id, slot):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rows = supabase_get("post_logs", {
+        "salon_id": f"eq.{salon_id}",
+        "slot": f"eq.{slot}",
+        "posted_at": f"gte.{today}T00:00:00Z",
+        "select": "id",
+        "limit": "1",
+    })
+    return len(rows) > 0
+
+
 def _safe_name(salon_name):
     return re.sub(r'[^\w\-]', '_', salon_name)
 
@@ -288,6 +300,11 @@ def main():
                     raise
 
             account_label = f"@{uname}" if uname else salon_name
+
+            if already_posted_today(salon_id, SLOT):
+                print(f"[SKIP] {salon_name}: {SLOT} は本日投稿済み（重複実行を防止）")
+                results["ok"].append(salon_name)
+                continue
 
             used = get_used_posts(salon_id, SLOT)
             texts = pick_post(salon_name, SLOT, used)
