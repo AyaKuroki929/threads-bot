@@ -56,17 +56,16 @@ def get_active_salons():
     return supabase_get("salons", {"is_active": "eq.true", "select": "id,salon_name,threads_user_id,access_token"})
 
 
-LINE_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-LINE_ADMIN_ID = os.environ.get("LINE_ADMIN_USER_ID", "")
+LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
 
 
 def _notify_line(message: str):
-    if not LINE_TOKEN or not LINE_ADMIN_ID:
+    if not LINE_TOKEN:
         return
     try:
-        body = json.dumps({"to": LINE_ADMIN_ID, "messages": [{"type": "text", "text": message}]}).encode()
+        body = json.dumps({"messages": [{"type": "text", "text": message}]}).encode()
         req = urllib.request.Request(
-            "https://api.line.me/v2/bot/message/push",
+            "https://api.line.me/v2/bot/message/broadcast",
             data=body,
             headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
             method="POST",
