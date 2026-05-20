@@ -180,7 +180,6 @@ class handler(BaseHTTPRequestHandler):
                 stripe_customer_id=customer_id,
             )
             trigger_saas_generate(username)
-            line_notify_oauth_complete(username)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
