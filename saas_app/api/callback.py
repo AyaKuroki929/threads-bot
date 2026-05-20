@@ -117,7 +117,7 @@ h1{color:#333;}p{color:#666;}</style>
 <body>
 <h1>✅ 接続が完了しました</h1>
 <p>Threadsアカウントの自動投稿設定が完了しました。<br>
-初回の投稿は翌朝から自動的に開始されます。</p>
+投稿開始のご連絡はLINEにてお送りします。</p>
 </body></html>"""
 
 ERROR_HTML = """<!DOCTYPE html>
