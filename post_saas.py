@@ -127,21 +127,34 @@ class TokenExpiredError(Exception):
     pass
 
 
+def _keyword_topic(text):
+    """投稿内容のキーワードからトピックを判定する（AIフォールバック用）。"""
+    t = text
+    if any(k in t for k in ["ダイエット", "痩せ", "体重", "脂肪", "減量", "体型"]):
+        return "ダイエット"
+    if any(k in t for k in ["肌", "スキン", "美肌", "毛穴", "シミ", "乾燥", "保湿", "ニキビ"]):
+        return "スキンケア"
+    if any(k in t for k in ["エステ", "フェイシャル", "施術", "トリートメント", "脱毛"]):
+        return "エステ"
+    if any(k in t for k in ["健康", "腸活", "免疫", "睡眠", "疲れ", "体調"]):
+        return "健康"
+    return "美容"
+
+
 def _select_topic(texts, salon_name=""):
     """投稿内容に最適なトピックをClaude APIで選択して返す（SaaS版：全サロン対応）。"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    fallback_candidates = ["美容", "エステ", "スキンケア", "ダイエット", "健康"]
+    post_body = "\n".join(texts)[:600]
     account_hint = f"美容サロン・エステ・スキンケア・ダイエット（{salon_name}）" if salon_name else "美容サロン・エステ・スキンケア・ダイエット"
 
     if not api_key:
-        chosen = random.choice(fallback_candidates)
-        print(f"[topic:{salon_name}] APIキー未設定 → フォールバック: '{chosen}'")
+        chosen = _keyword_topic(post_body)
+        print(f"[topic:{salon_name}] APIキー未設定 → キーワード判定: '{chosen}'")
         return chosen
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
-        post_body = "\n".join(texts)[:600]
         prompt = f"""以下のThreads投稿に最もぴったりなトピック（話題カテゴリ）を1つだけ選んでください。
 アカウントのテーマ：{account_hint}
 
@@ -163,8 +176,8 @@ def _select_topic(texts, salon_name=""):
         print(f"[topic:{salon_name}] AI選択: '{topic}'")
         return topic
     except Exception as e:
-        chosen = random.choice(fallback_candidates)
-        print(f"[topic:{salon_name}] AI選択失敗 → フォールバック '{chosen}': {e}")
+        chosen = _keyword_topic(post_body)
+        print(f"[topic:{salon_name}] AI選択失敗 → キーワード判定 '{chosen}': {e}")
         return chosen
 
 
