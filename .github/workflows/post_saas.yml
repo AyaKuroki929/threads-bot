@@ -46,6 +46,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set +e
           python3 post_saas.py ${{ steps.slot.outputs.slot }}
