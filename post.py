@@ -689,16 +689,6 @@ def _get_target_latest_post(page, account):
         return None, ""
 
 
-_FALLBACK_COMMENTS = [
-    "これ、わかります。",
-    "腑に落ちました。",
-    "そこなんですよね。",
-    "保存しました。",
-    "ずっとモヤモヤしてたこと、言語化していただいた感じです。",
-    "刺さりました。",
-    "読んでよかったです。",
-]
-
 # この投稿トピックへのコメントはブランドイメージ保護のため一切しない
 _NEGATIVE_IMPRESSION_SKIP_WORDS = [
     # 体臭・においの問題
