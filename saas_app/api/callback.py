@@ -117,13 +117,13 @@ def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
     data = json.dumps(payload).encode()
 
     req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/salons",
+        f"{SUPABASE_URL}/rest/v1/salons?on_conflict=threads_user_id",
         data=data,
         headers={
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
             "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
         },
         method="POST"
     )
