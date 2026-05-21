@@ -729,6 +729,37 @@ _ENTERTAINMENT_SKIP_WORDS = [
 ]
 
 
+# Instagram誘導CTAの追加確率（約1/4）
+_INSTAGRAM_CTA_PROB = 0.25
+
+_INSTAGRAM_CTA_BEMOLLE = [
+    "\ninstagram.com/bemolle_diet に施術写真を載せています。",
+    "\ninstagram.com/bemolle_diet にBeforeAfterを載せています。",
+    "\ninstagram.com/bemolle_diet にお客様の声を載せています。",
+    "\ninstagram.com/bemolle_diet に施術の様子を載せています。",
+    "\ninstagram.com/bemolle_diet にサロンの写真を載せています。",
+]
+
+_INSTAGRAM_CTA_PERSONAL = [
+    "\ninstagram.com/aya_kuroki_0929 に自動化の仕組みを載せています。",
+    "\ninstagram.com/aya_kuroki_0929 に日々の記録を載せています。",
+    "\ninstagram.com/aya_kuroki_0929 に詳しい話を載せています。",
+    "\ninstagram.com/aya_kuroki_0929 に続きを書いています。",
+]
+
+
+def _maybe_add_instagram_cta(texts: list) -> list:
+    """1/4の確率でInstagram誘導CTAを末尾テキストに1行追加。"""
+    if random.random() >= _INSTAGRAM_CTA_PROB:
+        return texts
+    cta_list = _INSTAGRAM_CTA_BEMOLLE if USERNAME == "bemolle_diet" else _INSTAGRAM_CTA_PERSONAL
+    cta = random.choice(cta_list)
+    result = list(texts)
+    result[-1] = result[-1].rstrip() + cta
+    print(f"[cta] Instagram誘導追加: 「{cta.strip()}」")
+    return result
+
+
 _SENTENCE_ENDINGS = ("。", "！", "？", "…", "♪", "〜", "ね", "よ", "わ", "な", "か")
 
 def _trim_to_complete_sentence(text: str) -> str:
@@ -1530,6 +1561,7 @@ def main():
     else:
         idx, text = select_post(time_slot)
         texts = [text] if isinstance(text, str) else list(text)
+        texts = _maybe_add_instagram_cta(texts)
 
     # 投稿内容に合ったトピックをAIで選択（dry_run時はフォールバック使用）
     topic = _select_topic_for_post(texts)
