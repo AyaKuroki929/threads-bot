@@ -249,9 +249,25 @@ def threads_post(user_id, token, texts, topic_tag=None):
     reply_to_id = None
     first_post_id = None
     for i, text in enumerate(texts):
-        post_id = _api_post(user_id, token, text,
-                            reply_to_id=reply_to_id,
-                            topic_tag=topic_tag)
+        tag = topic_tag if i == 0 else None  # topic_tagはルート投稿のみ（返信には付けない）
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                post_id = _api_post(user_id, token, text,
+                                    reply_to_id=reply_to_id,
+                                    topic_tag=tag)
+                last_exc = None
+                break
+            except TokenExpiredError:
+                raise
+            except Exception as e:
+                last_exc = e
+                print(f"[api] part {i+1}/{len(texts)} 試行{attempt}/3 失敗: {e}")
+                if attempt < 3:
+                    time.sleep(10)
+        if last_exc:
+            raise last_exc
+
         if i == 0:
             first_post_id = post_id
             reply_to_id = post_id
@@ -310,21 +326,7 @@ def main():
             texts = pick_post(salon_name, SLOT, used)
             topic_tag = _select_topic(texts, salon_name)
 
-            last_exc = None
-            for attempt in range(1, 4):
-                try:
-                    post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
-                    last_exc = None
-                    break
-                except TokenExpiredError:
-                    raise
-                except Exception as e:
-                    last_exc = e
-                    print(f"[{salon_name}] 試行{attempt}/3 失敗: {e}")
-                    if attempt < 3:
-                        time.sleep(10)
-            if last_exc:
-                raise last_exc
+            post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
 
             log_post(salon_id, SLOT, texts[0])
             print(f"[OK] {salon_name}: post_id={post_id}")

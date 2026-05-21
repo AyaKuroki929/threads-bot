@@ -4,7 +4,7 @@ import os
 
 APP_ID = os.environ.get("THREADS_APP_ID", "985270787180212")
 CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
-SCOPE = "threads_basic,threads_content_publish"
+SCOPE = "threads_basic,threads_content_publish,threads_manage_replies"
 
 
 class handler(BaseHTTPRequestHandler):
