@@ -802,18 +802,33 @@ def _generate_comment(post_text: str, account_note: str):
             "・日常生活・仕事・食事・家族・趣味など一般の投稿はSKIPしない（テーマと関係なくてもOK）"
         )
 
-        # 3回に1回、職業の文脈を自然に滲ませて「誰？」とプロフィールを見に来させる
+        # 3回に1回かつ投稿内容が職業と親和性が高いとき、立場をさりげなく滲ませる
+        # 親和性チェック: 美容・健康・ダイエット・仕事・経営・効率化・生活習慣に関わる投稿のみ
+        _IDENTITY_HINT_WORDS_BEMOLLE = [
+            "美容", "エステ", "スキンケア", "ダイエット", "痩せ", "肌", "体型", "むくみ",
+            "セルライト", "たるみ", "フェイシャル", "コスメ", "化粧", "健康", "食事",
+            "生活習慣", "睡眠", "体重", "腸", "サロン", "自分磨き", "ケア",
+        ]
+        _IDENTITY_HINT_WORDS_PERSONAL = [
+            "サロン", "エステ", "美容", "経営", "起業", "集客", "売上", "自動化", "AI",
+            "業務", "効率", "仕組み", "一人", "副業", "スタッフ", "予約", "LINE", "SNS",
+            "Notion", "Instagram", "マーケ", "集客", "事務", "管理",
+        ]
         _r = random.random()
         if USERNAME == "bemolle_diet":
-            identity_hint = (
+            _hint_words = _IDENTITY_HINT_WORDS_BEMOLLE
+            _hint_text = (
                 "・コメントの中に「大阪でエステをやっているので」「サロンを経営していると」「エステの仕事をしていると」"
                 "のような自分の立場を1語だけ自然に入れる（例：「大阪でエステをやってるのでこれわかります。」）\n"
-            ) if _r < 0.33 else ""
+            )
         else:
-            identity_hint = (
+            _hint_words = _IDENTITY_HINT_WORDS_PERSONAL
+            _hint_text = (
                 "・コメントの中に「サロン経営してるので」「一人でサロンをやっていると」「エステをやりながらAIも使っているので」"
                 "のような自分の立場を1語だけ自然に入れる（例：「サロン経営してるのでまさにこれです。」）\n"
-            ) if _r < 0.33 else ""
+            )
+        _post_is_relevant = any(w in post_text for w in _hint_words)
+        identity_hint = _hint_text if (_r < 0.33 and _post_is_relevant) else ""
 
         user_prompt = f"""この投稿を読んで、コメントを1文だけ書いてください。
 
