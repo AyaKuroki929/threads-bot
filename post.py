@@ -740,11 +740,17 @@ _INSTAGRAM_CTA_BEMOLLE = [
     "\ninstagram.com/bemolle_diet にサロンの写真を載せています。",
 ]
 
-_INSTAGRAM_CTA_PERSONAL = [
-    "\ninstagram.com/aya_kuroki_0929 に自動化の仕組みを載せています。",
+_INSTAGRAM_CTA_PERSONAL_GENERIC = [
     "\ninstagram.com/aya_kuroki_0929 に日々の記録を載せています。",
     "\ninstagram.com/aya_kuroki_0929 に詳しい話を載せています。",
     "\ninstagram.com/aya_kuroki_0929 に続きを書いています。",
+]
+_INSTAGRAM_CTA_PERSONAL_AUTOMATION = [
+    "\ninstagram.com/aya_kuroki_0929 に自動化の仕組みを載せています。",
+]
+_INSTAGRAM_CTA_PERSONAL_AUTOMATION_WORDS = [
+    "自動化", "AI", "仕組み", "効率", "Notion", "LINE", "ツール", "プログラム",
+    "スクリプト", "システム", "作業", "時短", "業務",
 ]
 
 
@@ -752,8 +758,14 @@ def _maybe_add_instagram_cta(texts: list) -> list:
     """1/4の確率でInstagram誘導CTAを末尾テキストに1行追加。"""
     if random.random() >= _INSTAGRAM_CTA_PROB:
         return texts
-    cta_list = _INSTAGRAM_CTA_BEMOLLE if USERNAME == "bemolle_diet" else _INSTAGRAM_CTA_PERSONAL
-    cta = random.choice(cta_list)
+    if USERNAME == "bemolle_diet":
+        cta = random.choice(_INSTAGRAM_CTA_BEMOLLE)
+    else:
+        post_body = " ".join(texts)
+        has_automation = any(w in post_body for w in _INSTAGRAM_CTA_PERSONAL_AUTOMATION_WORDS)
+        pool = _INSTAGRAM_CTA_PERSONAL_AUTOMATION + _INSTAGRAM_CTA_PERSONAL_GENERIC if has_automation \
+               else _INSTAGRAM_CTA_PERSONAL_GENERIC
+        cta = random.choice(pool)
     result = list(texts)
     result[-1] = result[-1].rstrip() + cta
     print(f"[cta] Instagram誘導追加: 「{cta.strip()}」")
