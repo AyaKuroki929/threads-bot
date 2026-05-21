@@ -231,7 +231,7 @@
 
   <div class="agree-row" onclick="document.getElementById('agreeCheck').click()">
     <input type="checkbox" id="agreeCheck" onclick="event.stopPropagation(); toggleBtn()">
-    <label for="agreeCheck">利用規約を読み、内容に同意します</label>
+    <label for="agreeCheck"><a href="/terms.html" target="_blank" onclick="event.stopPropagation()">利用規約</a>・<a href="/privacy.html" target="_blank" onclick="event.stopPropagation()">プライバシーポリシー</a>を読み、内容に同意します</label>
   </div>
 
   <a id="registerBtn" class="btn-register" href="#" onclick="return false;" aria-disabled="true">
@@ -242,6 +242,10 @@
     ※ 次のページ（Stripe）でクレジットカードを登録してください。<br>
     登録完了後、担当者よりLINEにてご連絡いたします。<br>
     最低契約期間は3ヶ月です。
+  </p>
+
+  <p style="text-align:center; margin-top:24px; font-size:0.78rem; color:#aaa;">
+    <a href="/tokusho.html" target="_blank" style="color:#aaa;">特定商取引法に基づく表記</a>
   </p>
 
 </div>
