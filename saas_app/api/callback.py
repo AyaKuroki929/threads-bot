@@ -105,30 +105,54 @@ def get_user_info(token):
 
 
 def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
-    # upsert by threads_user_id
+    base_headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+    # 既存レコードを確認
+    check_url = f"{SUPABASE_URL}/rest/v1/salons?threads_user_id=eq.{urllib.parse.quote(str(user_id))}&select=id"
+    check_req = urllib.request.Request(check_url, headers={k: v for k, v in base_headers.items() if k != "Prefer"})
+    try:
+        with urllib.request.urlopen(check_req) as resp:
+            existing = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Supabase check failed HTTP {e.code}: {e.read().decode()}")
+
     payload = {
-        "threads_user_id": user_id,
         "salon_name": username,
         "access_token": access_token,
         "is_active": True,
     }
     if stripe_customer_id:
         payload["stripe_customer_id"] = stripe_customer_id
-    data = json.dumps(payload).encode()
 
-    req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/salons?on_conflict=threads_user_id",
-        data=data,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
-        method="POST"
-    )
-    with urllib.request.urlopen(req) as resp:
-        return resp.status
+    if existing:
+        # 再認証：既存レコードをPATCH
+        salon_id = existing[0]["id"]
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}",
+            data=json.dumps(payload).encode(),
+            headers=base_headers,
+            method="PATCH"
+        )
+    else:
+        # 新規登録：INSERT
+        payload["threads_user_id"] = str(user_id)
+        req = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/salons",
+            data=json.dumps(payload).encode(),
+            headers=base_headers,
+            method="POST"
+        )
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Supabase save failed HTTP {e.code}: {e.read().decode()}")
 
 
 SUCCESS_HTML = """<!DOCTYPE html>
