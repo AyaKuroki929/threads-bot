@@ -26,7 +26,7 @@ COMMENT_TARGETS_FILE = os.environ.get("COMMENT_TARGETS_FILE", os.path.join(_BASE
 COMMENTED_FILE = os.environ.get("COMMENTED_FILE", os.path.join(_BASE, "commented_posts.json"))
 AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
 # 1回の実行でコメントするアカウント数の上限（0=全件）
-MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "0"))
+MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "6"))
 # プール内の未コメントアカウントがこの数を下回ったら自動発掘を実行
 COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "5"))
 # 1回の自動発掘で追加する最大アカウント数
@@ -812,6 +812,19 @@ def _generate_comment(post_text: str, account_note: str):
             "・日常生活・仕事・食事・家族・趣味など一般の投稿はSKIPしない（テーマと関係なくてもOK）"
         )
 
+        # 3回に1回、職業の文脈を自然に滲ませて「誰？」とプロフィールを見に来させる
+        _r = random.random()
+        if USERNAME == "bemolle_diet":
+            identity_hint = (
+                "・コメントの中に「大阪でエステをやっているので」「サロンを経営していると」「エステの仕事をしていると」"
+                "のような自分の立場を1語だけ自然に入れる（例：「大阪でエステをやってるのでこれわかります。」）\n"
+            ) if _r < 0.33 else ""
+        else:
+            identity_hint = (
+                "・コメントの中に「サロン経営してるので」「一人でサロンをやっていると」「エステをやりながらAIも使っているので」"
+                "のような自分の立場を1語だけ自然に入れる（例：「サロン経営してるのでまさにこれです。」）\n"
+            ) if _r < 0.33 else ""
+
         user_prompt = f"""この投稿を読んで、コメントを1文だけ書いてください。
 
 {post_text[:300]}
@@ -820,14 +833,14 @@ def _generate_comment(post_text: str, account_note: str):
 絶対に守ること：
 {skip_rule}
 ・必ず文章を完結させる。「〜と感」「〜ので」など途中で終わらない
-・1文で完結。25文字以内が理想。どんなに長くても40文字まで
+・1〜2文で完結。40文字以内が理想。どんなに長くても55文字まで
 ・です・ます調（敬語）で書く
 ・投稿全体の意図・トーンを読んで反応する（疑問文なら「気になりますよね」、体験談なら感想、主張なら共感など）
 ・投稿の内容を事実として断定・言い換えるコメントは絶対に書かない。必ず感想・疑問・共感にとどめる
 ・「参考になります」「勉強になりました」「素晴らしいですね」「すごいですね」は使わない
 ・「とても」「非常に」「大変」などの強調語は使わない
 ・定型文・テンプレっぽい言い回しは使わない
-・自分の仕事や宣伝は書かない
+{identity_hint}・サロン名や具体的な宣伝は書かない
 ・ハッシュタグなし、絵文字は使わない
 ・一人称は「私」のみ。「うち」「うちの」は絶対に使わない
 ・投稿の内容を否定・批判・「難しい」「疑問」などネガティブに捉えるコメントは絶対に書かない
@@ -876,7 +889,7 @@ def _generate_comment(post_text: str, account_note: str):
             print(f"[comment] Claudeがスキップ判定 → スキップ")
             return None
         if (not comment
-                or len(comment) > 50
+                or len(comment) > 65
                 or any(p in comment for p in _BOT_REVEAL_PATTERNS)):
             print(f"[comment] 生成コメント不適切 → スキップ: {comment!r}")
             return None
