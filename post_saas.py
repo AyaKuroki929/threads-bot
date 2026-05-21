@@ -249,7 +249,7 @@ def threads_post(user_id, token, texts, topic_tag=None):
     reply_to_id = None
     first_post_id = None
     for i, text in enumerate(texts):
-        tag = topic_tag if i == 0 else None  # topic_tagはルート投稿のみ（返信には付けない）
+        tag = topic_tag
         last_exc = None
         for attempt in range(1, 4):
             try:
