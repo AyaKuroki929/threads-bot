@@ -101,20 +101,38 @@ function step3_addDiffQuestions() {
 function onFormSubmit(e) {
   var responses = e.namedValues;
 
-  var salonName  = (responses['サロン名'] || ['不明'])[0].trim();
-  var ownerName  = (responses['オーナー名（投稿で使うお名前）'] || ['不明'])[0].trim();
-  var threadsId  = (responses['Threadsのアカウント名（@から始まるID）'] || ['不明'])[0].trim();
-  var customerId = (responses['_customer_id'] || [''])[0].trim();
+  var salonName    = (responses['サロン名'] || ['不明'])[0].trim();
+  var ownerName    = (responses['オーナー名（投稿で使うお名前）'] || ['不明'])[0].trim();
+  var threadsId    = (responses['Threadsのアカウント名（@から始まるID）'] || ['不明'])[0].trim();
+  var customerId   = (responses['_customer_id'] || [''])[0].trim();
+  var instagramUrl = (responses['インスタグラムのURL'] || [''])[0].trim();
+
+  // instagram_url を Supabase に保存
+  if (customerId && instagramUrl) {
+    try {
+      UrlFetchApp.fetch('https://saas.shikisai.work/api/save-form', {
+        method: 'post',
+        headers: { 'Content-Type': 'application/json' },
+        payload: JSON.stringify({ customer_id: customerId, instagram_url: instagramUrl }),
+        muteHttpExceptions: true
+      });
+    } catch (err) {
+      console.error('save-form失敗:', err);
+    }
+  }
 
   var sendStepUrl = customerId
     ? 'https://saas.shikisai.work/api/send-step?customer_id=' + customerId
     : '⚠️ customer_id未取得（Stripeダッシュボードで確認してください）';
 
+  var instaLine = instagramUrl ? '\nInstagram：' + instagramUrl : '';
+
   var message =
     '📋 とうこさん フォーム回答あり！\n\n' +
     'サロン名：' + salonName + '\n' +
     'オーナー名：' + ownerName + '\n' +
-    'Threads ID：' + threadsId + '\n\n' +
+    'Threads ID：' + threadsId +
+    instaLine + '\n\n' +
     '【やること】\n' +
     '① MetaでThreadsテスター追加 →\n' +
     'https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n' +

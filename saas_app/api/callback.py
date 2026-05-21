@@ -104,6 +104,25 @@ def get_user_info(token):
         raise Exception(f"get_user_info HTTP {e.code}: {body}")
 
 
+def get_instagram_url(customer_id: str) -> str:
+    """line_usersテーブルからフォーム回答時に保存したinstagram_urlを取得。"""
+    if not customer_id:
+        return ""
+    try:
+        url = (f"{SUPABASE_URL}/rest/v1/line_users"
+               f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}"
+               f"&select=instagram_url&limit=1")
+        req = urllib.request.Request(url, headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read())
+        return (rows[0].get("instagram_url") or "").strip() if rows else ""
+    except Exception:
+        return ""
+
+
 def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
     base_headers = {
         "apikey": SUPABASE_KEY,
@@ -121,6 +140,8 @@ def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
     except urllib.error.HTTPError as e:
         raise Exception(f"Supabase check failed HTTP {e.code}: {e.read().decode()}")
 
+    instagram_url = get_instagram_url(stripe_customer_id)
+
     payload = {
         "salon_name": username,
         "access_token": access_token,
@@ -128,6 +149,8 @@ def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
     }
     if stripe_customer_id:
         payload["stripe_customer_id"] = stripe_customer_id
+    if instagram_url:
+        payload["instagram_url"] = instagram_url
 
     if existing:
         # 再認証：既存レコードをPATCH

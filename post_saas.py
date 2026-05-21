@@ -53,7 +53,7 @@ def supabase_post(path, data):
 
 
 def get_active_salons():
-    return supabase_get("salons", {"is_active": "eq.true", "select": "id,salon_name,threads_user_id,access_token"})
+    return supabase_get("salons", {"is_active": "eq.true", "select": "id,salon_name,threads_user_id,access_token,instagram_url"})
 
 
 LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
@@ -121,6 +121,29 @@ def pick_post(salon_name, slot, used_texts):
 
     chosen = random.choice(unused)
     return chosen if isinstance(chosen, list) else [chosen]
+
+
+_INSTAGRAM_CTA_TEMPLATES = [
+    "\ninstagram.com/{handle} に施術写真を載せています。",
+    "\ninstagram.com/{handle} にBeforeAfterを載せています。",
+    "\ninstagram.com/{handle} にお客様の声を載せています。",
+    "\ninstagram.com/{handle} に施術の様子を載せています。",
+    "\ninstagram.com/{handle} にサロンの写真を載せています。",
+]
+
+
+def _maybe_add_instagram_cta_saas(texts: list, instagram_url: str) -> list:
+    """instagram_urlが設定されているサロンのみ、1/4の確率でCTAを末尾に追加。"""
+    if not instagram_url or random.random() >= 0.25:
+        return texts
+    handle = instagram_url.rstrip("/").split("/")[-1].lstrip("@")
+    if not handle:
+        return texts
+    cta = random.choice(_INSTAGRAM_CTA_TEMPLATES).format(handle=handle)
+    result = list(texts)
+    result[-1] = result[-1].rstrip() + cta
+    print(f"[cta] Instagram誘導追加: 「{cta.strip()}」")
+    return result
 
 
 class TokenExpiredError(Exception):
@@ -337,6 +360,7 @@ def main():
 
             used = get_used_posts(salon_id, SLOT)
             texts = pick_post(salon_name, SLOT, used)
+            texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")
             topic_tag = _select_topic(texts, salon_name)
 
             post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
