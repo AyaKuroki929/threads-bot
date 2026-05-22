@@ -28,9 +28,9 @@ AUTO_COMMENT  = os.environ.get("AUTO_COMMENT", "") == "1"
 # 1回の実行でコメントするアカウント数の上限（0=全件）
 MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "6"))
 # プール内の未コメントアカウントがこの数を下回ったら自動発掘を実行
-COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "5"))
+COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "30"))
 # 1回の自動発掘で追加する最大アカウント数
-COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "40"))
+COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "50"))
 # 自動発掘の検索キーワードファイル（JSON配列）
 COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
