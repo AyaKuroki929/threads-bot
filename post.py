@@ -573,7 +573,7 @@ def _check_account_exists(page, account):
         return False
 
 
-def _already_commented_recently(commented, account, days=14):
+def _already_commented_recently(commented, account, days=7):
     """そのアカウントに過去 days 日以内にコメント済みか。
     days 日を超えていれば再コメント可能（プール枯渇防止）。"""
     keys = [k for k in commented.keys() if f"/{account}/" in k]
