@@ -30,7 +30,7 @@ MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "6"))
 # プール内の未コメントアカウントがこの数を下回ったら自動発掘を実行
 COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "30"))
 # 1回の自動発掘で追加する最大アカウント数
-COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "50"))
+COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "80"))
 # コメントクールダウン日数（同一アカウント・同一投稿への再コメント禁止期間）
 COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "7"))
 # 自動発掘の検索キーワードファイル（JSON配列）
@@ -1097,10 +1097,7 @@ def _do_auto_comments(page, dry_run=False):
     eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
     pool_accounts = {t.get("account", "") for t in targets}
 
-    # 未コメントが COMMENT_MIN_POOL を下回ったら自動発掘
-    if len(eligible) < COMMENT_MIN_POOL:
-        # 発掘除外対象：プール内アカウント + 30日以内にコメント済みのアカウント
-        # （30日超の既コメント済みは再発掘対象に戻す）
+    def _run_discovery(targets, pool_accounts, max_new):
         recently_blocked = {
             re.search(r'/([^/]+)/', k).group(1)
             for k in commented.keys()
@@ -1108,15 +1105,26 @@ def _do_auto_comments(page, dry_run=False):
             and _already_commented_recently(commented, re.search(r'/([^/]+)/', k).group(1))
         }
         already_known = pool_accounts | recently_blocked
-        new_targets = _discover_new_accounts(page, already_known, max_new=COMMENT_DISCOVER_MAX)
+        new_targets = _discover_new_accounts(page, already_known, max_new=max_new)
         if new_targets:
             targets = targets + new_targets
+            pool_accounts.update(t.get("account", "") for t in new_targets)
             try:
                 with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
                     json.dump(targets, f, ensure_ascii=False, indent=2)
                 print(f"[discover] {len(new_targets)} 件をプールに追加（合計 {len(targets)} 件）")
             except Exception as e:
                 print(f"[discover] プール保存失敗: {e}")
+        return targets
+
+    # 未コメントが COMMENT_MIN_POOL を下回ったら自動発掘
+    if len(eligible) < COMMENT_MIN_POOL:
+        targets = _run_discovery(targets, pool_accounts, COMMENT_DISCOVER_MAX)
+        eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
+        # eligible が依然 10 件未満なら2回目の発掘（緊急補充）
+        if len(eligible) < 10:
+            print(f"[discover] eligible={len(eligible)} < 10 → 緊急追加発掘")
+            targets = _run_discovery(targets, pool_accounts, COMMENT_DISCOVER_MAX)
             eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
 
     if not eligible:

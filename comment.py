@@ -73,8 +73,14 @@ if not dry_run and ok == 0 and len(results) > 0:
     account_label = "個人" if account == "personal" else "ベモーレ"
     if line_token:
         import urllib.request as _req
-        import urllib.parse as _parse
-        msg = f"⚠️ {account_label} 自動コメント 0件\n処理:{len(results)}件すべてスキップまたはエラー\nAPIキー切れ・フィルター過多の可能性あり"
+        restricted = sum(1 for r in results if r.get("status") == "error" and "制限" in r.get("error", ""))
+        no_new_post = sum(1 for r in results if r.get("status") == "skipped" and "新投稿なし" in str(r.get("reason", "")))
+        filtered = sum(1 for r in results if r.get("status") == "skipped") - no_new_post
+        msg = (
+            f"⚠️ {account_label} 自動コメント 0件\n"
+            f"処理:{len(results)}件 制限:{restricted} フィルター:{filtered} エラー:{errors}\n"
+            f"https://github.com/AyaKuroki929/threads-bot/actions"
+        )
         body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
         req = _req.Request(
             "https://api.line.me/v2/bot/message/broadcast",
