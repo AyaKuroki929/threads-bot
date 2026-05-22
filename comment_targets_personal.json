@@ -255,12 +255,6 @@
     "verified": true
   },
   {
-    "account": "emu_skincafe_osaka",
-    "axis": "自動発見",
-    "note": "検索キーワード: 起業 女性",
-    "verified": true
-  },
-  {
     "account": "eri_someya",
     "axis": "自動発見",
     "note": "検索キーワード: 起業 女性",
@@ -354,6 +348,198 @@
     "account": "eyelash_mei",
     "axis": "自動発見",
     "note": "検索キーワード: 美容サロン 経営",
+    "verified": true
+  },
+  {
+    "account": "beauty_salon.miina",
+    "axis": "自動発見",
+    "note": "検索キーワード: サロンオーナー",
+    "verified": true
+  },
+  {
+    "account": "banbanstrtra",
+    "axis": "自動発見",
+    "note": "検索キーワード: サロンオーナー",
+    "verified": true
+  },
+  {
+    "account": "rikachi_1225",
+    "axis": "自動発見",
+    "note": "検索キーワード: サロンオーナー",
+    "verified": true
+  },
+  {
+    "account": "yamagata_rinpa",
+    "axis": "自動発見",
+    "note": "検索キーワード: サロンオーナー",
+    "verified": true
+  },
+  {
+    "account": "_salon.ciel_",
+    "axis": "自動発見",
+    "note": "検索キーワード: サロンオーナー",
+    "verified": true
+  },
+  {
+    "account": "interior_bymuse",
+    "axis": "自動発見",
+    "note": "検索キーワード: サロンオーナー",
+    "verified": true
+  },
+  {
+    "account": "totonoest",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "kiko_hairsalon",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "body_fun_328",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "minoaka_nail",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "room.283",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "__u.r.a.7__",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "mishima_com",
+    "axis": "自動発見",
+    "note": "検索キーワード: 一人サロン",
+    "verified": true
+  },
+  {
+    "account": "jibunkoutei.labo",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "aya_usuda",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "nunotani.nozomi_sns",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "edanoko3_3",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "kiyom.ing",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "pochi_tenshoku",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "izumi_taira",
+    "axis": "自動発見",
+    "note": "検索キーワード: 女性起業家",
+    "verified": true
+  },
+  {
+    "account": "m___salon",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "relaxation_puchirupo_okayama",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "mmmmmmya",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "relaxation.nyaman",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "privatesalon.ray",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "melino_sango",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "sui.m0t",
+    "axis": "自動発見",
+    "note": "検索キーワード: 個人サロン",
+    "verified": true
+  },
+  {
+    "account": "tubuyaki_tais2",
+    "axis": "自動発見",
+    "note": "検索キーワード: 自宅サロン",
+    "verified": true
+  },
+  {
+    "account": "hitoyasumi.no.niwa",
+    "axis": "自動発見",
+    "note": "検索キーワード: 自宅サロン",
+    "verified": true
+  },
+  {
+    "account": "vibliss_2023",
+    "axis": "自動発見",
+    "note": "検索キーワード: 自宅サロン",
+    "verified": true
+  },
+  {
+    "account": "simicare_mayu_",
+    "axis": "自動発見",
+    "note": "検索キーワード: 自宅サロン",
+    "verified": true
+  },
+  {
+    "account": "sugiura7010",
+    "axis": "自動発見",
+    "note": "検索キーワード: 自宅サロン",
     "verified": true
   }
 ]
