@@ -31,6 +31,8 @@ MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "6"))
 COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "30"))
 # 1回の自動発掘で追加する最大アカウント数
 COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "50"))
+# コメントクールダウン日数（同一アカウント・同一投稿への再コメント禁止期間）
+COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "7"))
 # 自動発掘の検索キーワードファイル（JSON配列）
 COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -573,7 +575,7 @@ def _check_account_exists(page, account):
         return False
 
 
-def _already_commented_recently(commented, account, days=7):
+def _already_commented_recently(commented, account, days=COMMENT_COOLDOWN_DAYS):
     """そのアカウントに過去 days 日以内にコメント済みか。
     days 日を超えていれば再コメント可能（プール枯渇防止）。"""
     keys = [k for k in commented.keys() if f"/{account}/" in k]
@@ -1129,7 +1131,12 @@ def _do_auto_comments(page, dry_run=False):
             log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
             # コメント直前に再度ファイルを読み直して二重チェック（並走・遅延対策）
             commented = _load_commented()
-            if log_key in commented or _already_commented_recently(commented, account):
+            _cutoff = datetime.now() - timedelta(days=COMMENT_COOLDOWN_DAYS)
+            _same_post_recent = (
+                log_key in commented
+                and datetime.fromisoformat(commented[log_key]) > _cutoff
+            )
+            if _same_post_recent or _already_commented_recently(commented, account):
                 print(f"[comment] @{account} コメント済み（直前再チェック） → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
