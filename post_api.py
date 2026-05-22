@@ -32,6 +32,42 @@ PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_po
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 USERNAME      = os.environ.get("THREADS_USERNAME", "")
 
+_INSTAGRAM_CTA_PROB = 0.25
+_INSTAGRAM_CTA_BEMOLLE = [
+    "\ninstagram.com/bemolle_diet に施術写真を載せています。",
+    "\ninstagram.com/bemolle_diet にBeforeAfterを載せています。",
+    "\ninstagram.com/bemolle_diet にお客様の声を載せています。",
+    "\ninstagram.com/bemolle_diet に施術の様子を載せています。",
+    "\ninstagram.com/bemolle_diet にサロンの写真を載せています。",
+]
+_INSTAGRAM_CTA_PERSONAL_GENERIC = [
+    "\ninstagram.com/aya_kuroki_0929 に日々の記録を載せています。",
+    "\ninstagram.com/aya_kuroki_0929 に詳しい話を載せています。",
+    "\ninstagram.com/aya_kuroki_0929 に続きを書いています。",
+]
+_INSTAGRAM_CTA_PERSONAL_AUTOMATION = [
+    "\ninstagram.com/aya_kuroki_0929 に自動化の仕組みを載せています。",
+]
+_INSTAGRAM_CTA_PERSONAL_AUTOMATION_WORDS = [
+    "自動化", "自動投稿", "仕組み", "システム", "AI", "GH Actions", "スクリプト",
+]
+
+def _maybe_add_instagram_cta(texts: list) -> list:
+    if random.random() >= _INSTAGRAM_CTA_PROB:
+        return texts
+    if USERNAME == "bemolle_diet":
+        cta = random.choice(_INSTAGRAM_CTA_BEMOLLE)
+    else:
+        post_body = " ".join(texts)
+        has_automation = any(w in post_body for w in _INSTAGRAM_CTA_PERSONAL_AUTOMATION_WORDS)
+        pool = _INSTAGRAM_CTA_PERSONAL_AUTOMATION + _INSTAGRAM_CTA_PERSONAL_GENERIC if has_automation \
+               else _INSTAGRAM_CTA_PERSONAL_GENERIC
+        cta = random.choice(pool)
+    result = list(texts)
+    result[-1] = result[-1].rstrip() + cta
+    print(f"[cta] Instagram誘導追加: 「{cta.strip()}」")
+    return result
+
 THREADS_ACCESS_TOKEN = os.environ.get("THREADS_ACCESS_TOKEN", "")
 THREADS_USER_ID      = os.environ.get("THREADS_USER_ID", "")
 THREADS_API = "https://graph.threads.net/v1.0"
@@ -394,6 +430,7 @@ def main():
     else:
         idx, text = select_post(time_slot)
         texts = [text] if isinstance(text, str) else list(text)
+        texts = _maybe_add_instagram_cta(texts)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     print(f"[{now}] {time_slot} 投稿{'（dry-run）' if dry_run else '開始'}")
