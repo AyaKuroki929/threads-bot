@@ -1131,6 +1131,21 @@ def _do_auto_comments(page, dry_run=False):
         print("[comment] コメント可能なアカウントなし")
         return []
 
+    # グローバル制限中チェック（アカウント自体がスロットリングされている場合）
+    _GLOBAL_RATELIMIT_KEY = "_GLOBAL_RATELIMIT_"
+    _GLOBAL_RATELIMIT_HOURS = 12
+    rl_ts = commented.get(_GLOBAL_RATELIMIT_KEY, "")
+    if rl_ts:
+        try:
+            rl_time = datetime.strptime(rl_ts, "%Y-%m-%d %H:%M:%S")
+            hours_since = (datetime.now() - rl_time).total_seconds() / 3600
+            if hours_since < _GLOBAL_RATELIMIT_HOURS:
+                remaining = _GLOBAL_RATELIMIT_HOURS - hours_since
+                print(f"[comment] グローバル制限クールダウン中（残り{remaining:.1f}時間）→ この実行をスキップ")
+                return []
+        except Exception:
+            pass
+
     # 全eligibleをシャッフルして、MAX_COMMENTS_PER_RUN件成功するまで順に試す
     max_ok = MAX_COMMENTS_PER_RUN if MAX_COMMENTS_PER_RUN > 0 else len(eligible)
     all_candidates = eligible.copy()
@@ -1139,6 +1154,7 @@ def _do_auto_comments(page, dry_run=False):
 
     results = []
     ok_count = 0
+    consecutive_restrictions = 0
 
     for t in all_candidates:
         if ok_count >= max_ok:
@@ -1236,6 +1252,7 @@ def _do_auto_comments(page, dry_run=False):
             print(f"[comment] @{account} コメント完了 ✅")
             results.append({"account": account, "status": "ok", "url": post_url, "comment": comment_text})
             ok_count += 1
+            consecutive_restrictions = 0
 
             # アカウント間に少し待機（bot臭を消す）
             page.wait_for_timeout(random.randint(4000, 8000))
@@ -1244,17 +1261,28 @@ def _do_auto_comments(page, dry_run=False):
             err_msg = str(e)
             print(f"[comment] @{account} コメント失敗: {err_msg}")
             results.append({"account": account, "status": "error", "error": err_msg})
-            # コメント制限アカウントはプールから永続除外
+            # コメント制限アカウントはプールから永続除外 + _skipで再発掘も防ぐ
             if "コメント制限アカウント" in err_msg:
+                consecutive_restrictions += 1
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 try:
                     with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
                         pool = json.load(f)
                     pool = [p for p in pool if p.get("account") != account]
                     with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
                         json.dump(pool, f, ensure_ascii=False, indent=2)
-                    print(f"[comment] @{account} コメント制限 → プールから削除")
+                    print(f"[comment] @{account} コメント制限 → プールから削除（連続{consecutive_restrictions}件目）")
                 except Exception as fe:
                     print(f"[comment] プール更新失敗: {fe}")
+                # 5件連続でアカウント自体のスロットリングと判断 → 12時間休止
+                if consecutive_restrictions >= 5:
+                    print(f"[comment] 連続制限{consecutive_restrictions}件 → アカウントがスロットリング中と判断 → 12時間休止")
+                    commented[_GLOBAL_RATELIMIT_KEY] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    _save_commented(commented)
+                    break
+            else:
+                consecutive_restrictions = 0
 
     return results
 
