@@ -52,13 +52,8 @@ jobs:
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
             echo "bemolle=true" >> $GITHUB_OUTPUT
+            echo "personal=true" >> $GITHUB_OUTPUT
             echo "dry=false" >> $GITHUB_OUTPUT
-            # 個人アカウントは朝（JST 7:10 = UTC 22:10）のみ。スロットリング防止
-            if [ "${{ github.event.schedule }}" = "10 22 * * *" ] || [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-              echo "personal=true" >> $GITHUB_OUTPUT
-            else
-              echo "personal=false" >> $GITHUB_OUTPUT
-            fi
           fi
 
       - name: Pull latest state
