@@ -1148,8 +1148,19 @@ def _do_auto_comments(page, dry_run=False):
             log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
             # コメント直前に再度ファイルを読み直して二重チェック（並走・遅延対策）
             commented = _load_commented()
-            if log_key in commented or _already_commented_recently(commented, account):
-                print(f"[comment] @{account} コメント済み（直前再チェック） → スキップ")
+            if log_key in commented:
+                # 同一投稿・新投稿なし → _stale タイムスタンプで7日クールダウンに乗せる
+                stale_key = f"/{account}/_stale"
+                stale_ts = commented.get(stale_key, "")
+                stale_old = not stale_ts or datetime.strptime(stale_ts, "%Y-%m-%d %H:%M:%S") < datetime.now() - timedelta(days=COMMENT_COOLDOWN_DAYS)
+                if stale_old:
+                    commented[stale_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    _save_commented(commented)
+                print(f"[comment] @{account} 新投稿なし（前回コメント済み投稿のまま）→ スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+            if _already_commented_recently(commented, account):
+                print(f"[comment] @{account} コメント済み（直前再チェック）→ スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
