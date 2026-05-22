@@ -35,6 +35,9 @@ COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "80"))
 COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "7"))
 # グローバルスロットリング休止時間（時間単位）
 COMMENT_GLOBAL_RATELIMIT_HOURS = int(os.environ.get("GLOBAL_RATELIMIT_HOURS", "12"))
+# アカウント間待機時間（ミリ秒）。人間らしいペースに調整
+COMMENT_WAIT_MIN_MS = int(os.environ.get("COMMENT_WAIT_MIN_MS", "4000"))
+COMMENT_WAIT_MAX_MS = int(os.environ.get("COMMENT_WAIT_MAX_MS", "8000"))
 # 自動発掘の検索キーワードファイル（JSON配列）
 COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -1255,8 +1258,8 @@ def _do_auto_comments(page, dry_run=False):
             ok_count += 1
             consecutive_restrictions = 0
 
-            # アカウント間に少し待機（bot臭を消す）
-            page.wait_for_timeout(random.randint(4000, 8000))
+            # アカウント間に待機（人間らしいペース）
+            page.wait_for_timeout(random.randint(COMMENT_WAIT_MIN_MS, COMMENT_WAIT_MAX_MS))
 
         except Exception as e:
             err_msg = str(e)

@@ -87,6 +87,8 @@ jobs:
           THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
           MAX_COMMENTS_PER_RUN: "3"
           GLOBAL_RATELIMIT_HOURS: "48"
+          COMMENT_WAIT_MIN_MS: "30000"
+          COMMENT_WAIT_MAX_MS: "90000"
         run: |
           if [ -z "$THREADS_SESSION_PERSONAL" ]; then
             echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → スキップ"
