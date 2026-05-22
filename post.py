@@ -30,7 +30,7 @@ MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "6"))
 # プール内の未コメントアカウントがこの数を下回ったら自動発掘を実行
 COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "5"))
 # 1回の自動発掘で追加する最大アカウント数
-COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "30"))
+COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "40"))
 # 自動発掘の検索キーワードファイル（JSON配列）
 COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -573,7 +573,7 @@ def _check_account_exists(page, account):
         return False
 
 
-def _already_commented_recently(commented, account, days=30):
+def _already_commented_recently(commented, account, days=14):
     """そのアカウントに過去 days 日以内にコメント済みか。
     days 日を超えていれば再コメント可能（プール枯渇防止）。"""
     keys = [k for k in commented.keys() if f"/{account}/" in k]
@@ -996,8 +996,13 @@ def _select_topic_for_post(texts: list) -> str:
 
 def _post_comment_to_url(page, post_url, comment_text):
     """post_url の投稿にコメント（返信）を投稿する。"""
-    page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
-    page.wait_for_timeout(4000)
+    page.goto(post_url, wait_until="domcontentloaded", timeout=25000)
+    # インタラクティブ要素の描画を待つ（ボタンは遅れて表示されることがある）
+    try:
+        page.wait_for_selector('div[data-pressable-container="true"]', timeout=8000)
+    except Exception:
+        pass
+    page.wait_for_timeout(2000)
     post_id = post_url.rstrip("/").split("/")[-1]
     # 元投稿コンテナの返信ボタンを探す
     reply_btn = None

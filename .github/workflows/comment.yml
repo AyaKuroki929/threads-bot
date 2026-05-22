@@ -113,7 +113,7 @@ jobs:
       - name: Commit state
         if: steps.target.outputs.dry != 'true'
         run: |
-          git add commented_posts.json commented_posts_personal.json 2>/dev/null || true
+          git add commented_posts.json commented_posts_personal.json comment_targets.json comment_targets_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no changes"
           else
