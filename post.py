@@ -33,6 +33,8 @@ COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "30"))
 COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "80"))
 # コメントクールダウン日数（同一アカウント・同一投稿への再コメント禁止期間）
 COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "7"))
+# グローバルスロットリング休止時間（時間単位）
+COMMENT_GLOBAL_RATELIMIT_HOURS = int(os.environ.get("GLOBAL_RATELIMIT_HOURS", "12"))
 # 自動発掘の検索キーワードファイル（JSON配列）
 COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -1133,14 +1135,13 @@ def _do_auto_comments(page, dry_run=False):
 
     # グローバル制限中チェック（アカウント自体がスロットリングされている場合）
     _GLOBAL_RATELIMIT_KEY = "_GLOBAL_RATELIMIT_"
-    _GLOBAL_RATELIMIT_HOURS = 12
     rl_ts = commented.get(_GLOBAL_RATELIMIT_KEY, "")
     if rl_ts:
         try:
             rl_time = datetime.strptime(rl_ts, "%Y-%m-%d %H:%M:%S")
             hours_since = (datetime.now() - rl_time).total_seconds() / 3600
-            if hours_since < _GLOBAL_RATELIMIT_HOURS:
-                remaining = _GLOBAL_RATELIMIT_HOURS - hours_since
+            if hours_since < COMMENT_GLOBAL_RATELIMIT_HOURS:
+                remaining = COMMENT_GLOBAL_RATELIMIT_HOURS - hours_since
                 print(f"[comment] グローバル制限クールダウン中（残り{remaining:.1f}時間）→ この実行をスキップ")
                 return []
         except Exception:
@@ -1277,7 +1278,7 @@ def _do_auto_comments(page, dry_run=False):
                     print(f"[comment] プール更新失敗: {fe}")
                 # 5件連続でアカウント自体のスロットリングと判断 → 12時間休止
                 if consecutive_restrictions >= 5:
-                    print(f"[comment] 連続制限{consecutive_restrictions}件 → アカウントがスロットリング中と判断 → 12時間休止")
+                    print(f"[comment] 連続制限{consecutive_restrictions}件 → アカウントがスロットリング中と判断 → {COMMENT_GLOBAL_RATELIMIT_HOURS}時間休止")
                     commented[_GLOBAL_RATELIMIT_KEY] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     _save_commented(commented)
                     break
