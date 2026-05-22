@@ -617,34 +617,49 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
             page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
             page.wait_for_timeout(4000)
 
-            links = page.eval_on_selector_all(
+            # 投稿URLとその周辺テキストを一緒に取得（日本語フィルター用）
+            post_data = page.eval_on_selector_all(
                 'a[href*="/post/"]',
-                'els => els.map(e => e.href)'
+                '''els => els.map(e => ({
+                    href: e.href,
+                    text: e.closest("article, div[data-pressable-container]")?.innerText || ""
+                }))'''
             )
             candidates = []
-            for link in links:
+            for item in post_data:
+                link = item.get("href", "")
+                text = item.get("text", "")
                 m = re.search(r'threads\.com/@([^/]+)/post/', link)
                 if not m:
                     continue
                 account = m.group(1)
-                if account not in seen and account != USERNAME:
-                    seen.add(account)
-                    candidates.append(account)
+                if account in seen or account == USERNAME:
+                    continue
+                # 日本語文字（ひらがな・カタカナ・漢字）が含まれない投稿はスキップ
+                if not any('぀' <= ch <= '鿿' for ch in text):
+                    continue
+                seen.add(account)
+                candidates.append(account)
 
             # 実在確認してから追加
             for account in candidates:
                 if len(discovered) >= max_new:
                     break
-                if _check_account_exists(page, account):
-                    print(f"[discover] @{account} 実在確認 ✅ → プール追加")
-                    discovered.append({
-                        "account": account,
-                        "axis": "自動発見",
-                        "note": f"検索キーワード: {keyword}",
-                        "verified": True
-                    })
-                else:
+                post_url, post_text = _get_target_latest_post(page, account)
+                if not post_url:
                     print(f"[discover] @{account} 存在しない/投稿なし → スキップ")
+                    continue
+                # プロフィールの最新投稿も日本語チェック
+                if not any('぀' <= ch <= '鿿' for ch in post_text):
+                    print(f"[discover] @{account} 日本語投稿なし → スキップ")
+                    continue
+                print(f"[discover] @{account} ✅ → プール追加")
+                discovered.append({
+                    "account": account,
+                    "axis": "自動発見",
+                    "note": f"検索キーワード: {keyword}",
+                    "verified": True
+                })
 
             page.wait_for_timeout(random.randint(2000, 4000))
         except Exception as e:
