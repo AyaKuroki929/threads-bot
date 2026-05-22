@@ -1104,20 +1104,22 @@ def _do_auto_comments(page, dry_run=False):
                 print(f"[discover] プール保存失敗: {e}")
             eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
 
-    # 今回コメントするアカウントをランダム選択
-    n = MAX_COMMENTS_PER_RUN if MAX_COMMENTS_PER_RUN > 0 else len(eligible)
-    if len(eligible) > n:
-        targets = random.sample(eligible, n)
-        print(f"[comment] 未コメント{len(eligible)}件中{n}件をランダム選択")
-    else:
-        targets = eligible
-        if not targets:
-            print("[comment] コメント可能なアカウントなし")
-            return []
+    if not eligible:
+        print("[comment] コメント可能なアカウントなし")
+        return []
+
+    # 全eligibleをシャッフルして、MAX_COMMENTS_PER_RUN件成功するまで順に試す
+    max_ok = MAX_COMMENTS_PER_RUN if MAX_COMMENTS_PER_RUN > 0 else len(eligible)
+    all_candidates = eligible.copy()
+    random.shuffle(all_candidates)
+    print(f"[comment] 未コメント{len(all_candidates)}件から最大{max_ok}件成功まで試行")
 
     results = []
+    ok_count = 0
 
-    for t in targets:
+    for t in all_candidates:
+        if ok_count >= max_ok:
+            break
         account = t.get("account", "")
         if not account:
             continue
@@ -1131,12 +1133,7 @@ def _do_auto_comments(page, dry_run=False):
             log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
             # コメント直前に再度ファイルを読み直して二重チェック（並走・遅延対策）
             commented = _load_commented()
-            _cutoff = datetime.now() - timedelta(days=COMMENT_COOLDOWN_DAYS)
-            _same_post_recent = (
-                log_key in commented
-                and datetime.fromisoformat(commented[log_key]) > _cutoff
-            )
-            if _same_post_recent or _already_commented_recently(commented, account):
+            if log_key in commented or _already_commented_recently(commented, account):
                 print(f"[comment] @{account} コメント済み（直前再チェック） → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
@@ -1189,6 +1186,7 @@ def _do_auto_comments(page, dry_run=False):
             _save_commented(commented)
             print(f"[comment] @{account} コメント完了 ✅")
             results.append({"account": account, "status": "ok", "url": post_url, "comment": comment_text})
+            ok_count += 1
 
             # アカウント間に少し待機（bot臭を消す）
             page.wait_for_timeout(random.randint(4000, 8000))
