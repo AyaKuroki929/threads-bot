@@ -158,6 +158,22 @@ def line_push_client(uid: str, text: str):
 
 
 # ── Stripe API ───────────────────────────────────────────────
+def get_session_line_items(session_id: str) -> list:
+    """Fetch line items for a checkout session (with price.product expanded)"""
+    if not STRIPE_SECRET_KEY or not session_id:
+        return []
+    url = f"https://api.stripe.com/v1/checkout/sessions/{session_id}/line_items?expand[]=data.price.product"
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"Bearer {STRIPE_SECRET_KEY}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+            return data.get("data", [])
+    except Exception as e:
+        _log(f"get_session_line_items error: {e}")
+        return []
+
+
 def get_stripe_customer(customer_id: str) -> dict:
     if not STRIPE_SECRET_KEY or not customer_id:
         return {}
@@ -198,8 +214,16 @@ def handle_checkout_session(obj: dict):
     - client_reference_id にLINE user IDが入っている場合、クライアントにフォームURLを自動送信
     - 管理者にも新規登録通知を送る（名前・メール・connect URLを含む）
     """
+    session_id  = obj.get("id", "")
     line_uid    = obj.get("client_reference_id", "") or ""
     customer_id = obj.get("customer", "") or ""
+
+    # とうこさんの商品か確認（他サービスのStripe決済を除外）
+    if session_id:
+        items = get_session_line_items(session_id)
+        if items and not _is_toukosan_product(items):
+            _log(f"handle_checkout_session: product not matched, skipping (session={session_id})")
+            return
     details     = obj.get("customer_details") or {}
     name        = details.get("name") or obj.get("customer_name") or ""
     email       = details.get("email") or obj.get("customer_email") or ""
