@@ -17,6 +17,7 @@ if account == "personal":
     os.environ.setdefault("SESSION_FILE", os.path.join(_BASE, "session_personal.json"))
     os.environ.setdefault("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets_personal.json"))
     os.environ.setdefault("COMMENTED_FILE", os.path.join(_BASE, "commented_posts_personal.json"))
+    os.environ.setdefault("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords_personal.json"))
 else:
     os.environ.setdefault("THREADS_USERNAME", "bemolle_diet")
     os.environ.setdefault("SESSION_FILE", os.path.join(_BASE, "session.json"))

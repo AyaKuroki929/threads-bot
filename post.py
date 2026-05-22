@@ -997,7 +997,7 @@ def _select_topic_for_post(texts: list) -> str:
 def _post_comment_to_url(page, post_url, comment_text):
     """post_url の投稿にコメント（返信）を投稿する。"""
     page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(4000)
     post_id = post_url.rstrip("/").split("/")[-1]
     # 元投稿コンテナの返信ボタンを探す
     reply_btn = None
@@ -1014,8 +1014,9 @@ def _post_comment_to_url(page, post_url, comment_text):
             if btn.count() > 0:
                 reply_btn = btn
                 break
+    # コメント制限アカウントの判定（ボタンが存在しない場合）
     if reply_btn is None or reply_btn.count() == 0:
-        raise RuntimeError("返信ボタンが見つかりません")
+        raise RuntimeError("コメント制限アカウント（返信ボタンが見つかりません）")
     reply_btn.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
     reply_btn.click()
@@ -1181,8 +1182,20 @@ def _do_auto_comments(page, dry_run=False):
             page.wait_for_timeout(random.randint(4000, 8000))
 
         except Exception as e:
-            print(f"[comment] @{account} コメント失敗: {e}")
-            results.append({"account": account, "status": "error", "error": str(e)})
+            err_msg = str(e)
+            print(f"[comment] @{account} コメント失敗: {err_msg}")
+            results.append({"account": account, "status": "error", "error": err_msg})
+            # コメント制限アカウントはプールから永続除外
+            if "コメント制限アカウント" in err_msg:
+                try:
+                    with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+                        pool = json.load(f)
+                    pool = [p for p in pool if p.get("account") != account]
+                    with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                        json.dump(pool, f, ensure_ascii=False, indent=2)
+                    print(f"[comment] @{account} コメント制限 → プールから削除")
+                except Exception as fe:
+                    print(f"[comment] プール更新失敗: {fe}")
 
     return results
 
