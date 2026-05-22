@@ -1150,7 +1150,10 @@ def _do_auto_comments(page, dry_run=False):
             post_url, post_text = _get_target_latest_post(page, account)
             if not post_url:
                 print(f"[comment] @{account} 最新投稿取得できず → スキップ")
-                results.append({"account": account, "status": "no_post"})
+                results.append({"account": account, "status": "skipped", "reason": "最新投稿取得できず"})
+                skip_key = f"/{account}/_skip"
+                commented[skip_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
@@ -1176,29 +1179,39 @@ def _do_auto_comments(page, dry_run=False):
             if len(post_text.strip()) < 15:
                 print(f"[comment] @{account} 投稿が短すぎる（{len(post_text.strip())}文字） → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             # 質問型投稿はスキップ
             if any(w in post_text for w in _QUESTION_SKIP_WORDS):
                 print(f"[comment] @{account} 質問型投稿 → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             # エンタメ・無関係トピックはスキップ
             if any(w in post_text for w in _ENTERTAINMENT_SKIP_WORDS):
                 print(f"[comment] @{account} エンタメ系 → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             # ブランドイメージ保護・不適切トピックはスキップ
             if any(w in post_text for w in _NEGATIVE_IMPRESSION_SKIP_WORDS):
                 print(f"[comment] @{account} マイナス印象トピック → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             if any(w in post_text for w in _ILLNESS_DEATH_WORDS):
                 print(f"[comment] @{account} 病気・メンタル関連 → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             # 投稿内容に合ったコメントをClaude APIで生成
@@ -1207,6 +1220,8 @@ def _do_auto_comments(page, dry_run=False):
             if comment_text is None:
                 print(f"[comment] @{account} 適切なコメント生成不可 → スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
             print(f"[comment] @{account} 生成コメント: 「{comment_text}」")
 
