@@ -148,10 +148,21 @@ jobs:
             echo "no changes"
           else
             git commit -m "state: auto comment $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
-            for i in 1 2 3; do
-              git pull --rebase -X theirs origin main 2>/dev/null || true
-              git push && break || sleep 3
+            PUSHED=false
+            for i in 1 2 3 4 5; do
+              git pull --rebase -X ours origin main 2>&1 || true
+              if git push; then
+                PUSHED=true
+                break
+              fi
+              WAIT=$((RANDOM % 10 + 5))
+              echo "push retry $i failed, wait ${WAIT}s"
+              sleep $WAIT
             done
+            if [ "$PUSHED" = "false" ]; then
+              echo "⚠️ push 5回失敗 → force-with-lease で強制push"
+              git push --force-with-lease || echo "force-with-lease も失敗"
+            fi
           fi
 
       - name: LINE通知（エラー時）
