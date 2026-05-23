@@ -58,17 +58,16 @@ def _send_line(token, msg):
 
 
 def _is_logged_in(page):
-    """Threadsのフィードを開いてログイン状態を確認する"""
+    """Threadsのフィードを開いてログイン状態を確認する（URLリダイレクトのみで判断）"""
     try:
         page.goto("https://www.threads.com/", timeout=20000, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
-        # ログアウト状態ならURLがloginページにリダイレクトされる
         current_url = page.url
+        # ログアウト状態ならloginページにリダイレクトされる
         if "login" in current_url or "instagram.com" in current_url:
             return False
-        # フィードのコンテンツが存在すれば OK
-        feed = page.query_selector('div[role="main"], article, [data-pressable-container]')
-        return feed is not None
+        # threads.com に留まっていればログイン済み
+        return "threads.com" in current_url
     except Exception:
         return False
 
@@ -77,45 +76,57 @@ def _auto_login(page, username, password, line_token=""):
     """資格情報を使って自動ログインを試みる。2FAが必要な場合はFalseを返す"""
     print("[comment] セッション切れ検知 → 自動ログインを試みます")
     try:
-        page.goto("https://www.threads.com/", timeout=20000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
+        # 直接ログインページに遷移
+        page.goto("https://www.threads.com/login", timeout=20000, wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
 
-        # 「Log in」または「Continue with Instagram」ボタンをクリック
-        for sel in ['a[href*="login"]', 'button:has-text("Log in")', 'a:has-text("Log in")']:
-            btn = page.query_selector(sel)
-            if btn:
-                btn.click()
-                page.wait_for_timeout(2000)
+        # ログインフォームが見つからない場合はInstagramログインページも試みる
+        user_input = None
+        pass_input = None
+        for attempt_url in [None, "https://www.instagram.com/accounts/login/"]:
+            if attempt_url:
+                page.goto(attempt_url, timeout=20000, wait_until="domcontentloaded")
+                page.wait_for_timeout(3000)
+            user_input = page.query_selector('input[name="username"], input[type="text"]')
+            pass_input = page.query_selector('input[name="password"], input[type="password"]')
+            if user_input and pass_input:
                 break
 
-        # Instagram ログインフォームに入力
-        user_input = page.query_selector('input[name="username"], input[type="text"]')
-        pass_input = page.query_selector('input[name="password"], input[type="password"]')
         if not user_input or not pass_input:
             print("[comment] ログインフォームが見つかりません")
+            account_label = "ベモーレアカウント" if username and "bemolle" in username else "個人アカウント"
+            if line_token:
+                _send_line(line_token, f"⚠️ {account_label} セッション切れ\nログインフォームが見つかりません。手動でpython3 playwright_login.py を実行してください。")
             return False
 
         user_input.fill(username)
         pass_input.fill(password)
         page.keyboard.press("Enter")
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(6000)
 
         # 2FAチェック（認証コード入力欄が出たら失敗）
         twofa = page.query_selector('input[name="verificationCode"], input[aria-label*="code"], input[aria-label*="コード"]')
         if twofa:
             print("[comment] 2FA が必要です → 自動化できません")
             if line_token:
-                _send_line(line_token, "⚠️ 個人アカウント セッション切れ\n2FA認証が必要なため自動ログイン不可。\npython3 playwright_login.py を実行してください。")
+                _send_line(line_token, "⚠️ セッション切れ＋2FA必要\npython3 playwright_login.py を実行してください。")
             return False
 
-        # フィードが表示されれば成功
+        # ログイン後のURL確認（threads.com に戻れば成功）
         page.wait_for_timeout(3000)
-        feed = page.query_selector('div[role="main"], article, [data-pressable-container]')
-        if feed:
+        current_url = page.url
+        if "threads.com" in current_url and "login" not in current_url:
             print("[comment] 自動ログイン成功 ✅")
             return True
 
-        print("[comment] ログイン後フィードが確認できませんでした")
+        # Threadsへの遷移を試みる
+        page.goto("https://www.threads.com/", timeout=20000, wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        if "threads.com" in page.url and "login" not in page.url:
+            print("[comment] 自動ログイン成功 ✅")
+            return True
+
+        print("[comment] ログイン後Threadsに遷移できませんでした")
         return False
     except Exception as e:
         print(f"[comment] 自動ログインエラー: {e}")

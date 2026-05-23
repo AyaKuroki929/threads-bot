@@ -31,8 +31,10 @@ MAX_COMMENTS_PER_RUN = int(os.environ.get("MAX_COMMENTS_PER_RUN", "6"))
 COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "30"))
 # 1回の自動発掘で追加する最大アカウント数
 COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "80"))
-# コメントクールダウン日数（同一アカウント・同一投稿への再コメント禁止期間）
+# コメントクールダウン日数（同一アカウントへの再コメント禁止期間）
 COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "30"))
+# staleクールダウン日数（休眠アカウント再チェック間隔）
+STALE_COOLDOWN_DAYS = int(os.environ.get("STALE_COOLDOWN_DAYS", "7"))
 # グローバルスロットリング休止時間（時間単位）
 COMMENT_GLOBAL_RATELIMIT_HOURS = int(os.environ.get("GLOBAL_RATELIMIT_HOURS", "12"))
 # アカウント間待機時間（ミリ秒）。人間らしいペースに調整
@@ -582,15 +584,36 @@ def _check_account_exists(page, account):
 
 def _already_commented_recently(commented, account, days=COMMENT_COOLDOWN_DAYS):
     """そのアカウントに過去 days 日以内にコメント済みか。
-    days 日を超えていれば再コメント可能（プール枯渇防止）。"""
-    keys = [k for k in commented.keys() if f"/{account}/" in k]
-    if not keys:
-        return False
-    try:
-        latest = max(datetime.strptime(commented[k], "%Y-%m-%d %H:%M:%S") for k in keys)
-        return (datetime.now() - latest).days < days
-    except Exception:
-        return True
+    _stale / _skip キーはコメントクールダウン計算から除外し別途判定する。"""
+    # 実コメントキーのみ（_stale/_skip はクールダウン計算に含めない）
+    comment_keys = [
+        k for k in commented.keys()
+        if f"/{account}/" in k and not k.endswith("/_stale") and not k.endswith("/_skip")
+    ]
+    if comment_keys:
+        try:
+            latest = max(datetime.strptime(commented[k], "%Y-%m-%d %H:%M:%S") for k in comment_keys)
+            if (datetime.now() - latest).days < days:
+                return True
+        except Exception:
+            return True
+    # _stale チェック（別クールダウン）
+    stale_ts = commented.get(f"/{account}/_stale", "")
+    if stale_ts:
+        try:
+            if (datetime.now() - datetime.strptime(stale_ts, "%Y-%m-%d %H:%M:%S")).days < STALE_COOLDOWN_DAYS:
+                return True
+        except Exception:
+            pass
+    # _skip チェック（7日固定）
+    skip_ts = commented.get(f"/{account}/_skip", "")
+    if skip_ts:
+        try:
+            if (datetime.now() - datetime.strptime(skip_ts, "%Y-%m-%d %H:%M:%S")).days < 7:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _discover_new_accounts(page, already_done_accounts, max_new=20):
@@ -650,7 +673,7 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
             for account in candidates:
                 if len(discovered) >= max_new:
                     break
-                post_url, post_text = _get_target_latest_post(page, account)
+                post_url, post_text, _post_dt = _get_target_latest_post(page, account)
                 if not post_url:
                     print(f"[discover] @{account} 存在しない/投稿なし → スキップ")
                     continue
@@ -1208,7 +1231,7 @@ def _do_auto_comments(page, dry_run=False):
                 # 同一投稿・新投稿なし → _stale タイムスタンプで7日クールダウンに乗せる
                 stale_key = f"/{account}/_stale"
                 stale_ts = commented.get(stale_key, "")
-                stale_old = not stale_ts or datetime.strptime(stale_ts, "%Y-%m-%d %H:%M:%S") < datetime.now() - timedelta(days=COMMENT_COOLDOWN_DAYS)
+                stale_old = not stale_ts or datetime.strptime(stale_ts, "%Y-%m-%d %H:%M:%S") < datetime.now() - timedelta(days=STALE_COOLDOWN_DAYS)
                 if stale_old:
                     commented[stale_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     _save_commented(commented)
