@@ -675,7 +675,7 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
 
 
 def _get_target_latest_post(page, account):
-    """@account の最新投稿のURLとテキストを取得。取得できなければ (None, '') を返す。"""
+    """@account の最新投稿のURLとテキストを取得。取得できなければ (None, '', None) を返す。"""
     try:
         page.goto(f"https://www.threads.com/@{account}", wait_until="domcontentloaded", timeout=20000)
         page.wait_for_timeout(3000)
@@ -683,15 +683,24 @@ def _get_target_latest_post(page, account):
         if articles.count() == 0:
             articles = page.locator('article')
         if articles.count() == 0:
-            return None, ""
+            return None, "", None
         first = articles.first
         # URL取得
         time_link = first.locator('time').first
         if time_link.count() == 0:
-            return None, ""
+            return None, "", None
         href = time_link.evaluate("el => el.closest('a')?.href")
         if not href or "/post/" not in href:
-            return None, ""
+            return None, "", None
+        # 投稿日時取得
+        post_dt = None
+        try:
+            dt_str = time_link.get_attribute("datetime")
+            if dt_str:
+                from datetime import timezone
+                post_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception:
+            pass
         # テキスト取得（投稿本文を抜き出す）
         post_text = ""
         try:
@@ -705,10 +714,10 @@ def _get_target_latest_post(page, account):
             post_text = " ".join(texts[:6])[:400]
         except Exception:
             pass
-        return href, post_text
+        return href, post_text, post_dt
     except Exception as e:
         print(f"[comment] @{account} 最新投稿取得失敗: {e}")
-        return None, ""
+        return None, "", None
 
 
 # この投稿トピックへのコメントはブランドイメージ保護のため一切しない
@@ -1174,12 +1183,21 @@ def _do_auto_comments(page, dry_run=False):
         if not account:
             continue
         try:
-            post_url, post_text = _get_target_latest_post(page, account)
+            post_url, post_text, post_dt = _get_target_latest_post(page, account)
             if not post_url:
                 print(f"[comment] @{account} 最新投稿取得できず → スキップ")
                 results.append({"account": account, "status": "skipped", "reason": "最新投稿取得できず"})
                 skip_key = f"/{account}/_skip"
                 commented[skip_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
+                continue
+
+            # 7日以上前の投稿はコメントしない
+            if post_dt and post_dt < datetime.utcnow() - timedelta(days=7):
+                age_days = (datetime.utcnow() - post_dt).days
+                print(f"[comment] @{account} 最新投稿が{age_days}日前 → スキップ（7日超）")
+                results.append({"account": account, "status": "skipped", "reason": f"投稿が古い({age_days}日前)"})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _save_commented(commented)
                 continue
 

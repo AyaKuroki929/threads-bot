@@ -124,8 +124,15 @@ def _auto_login(page, username, password, line_token=""):
 
 print(f"[comment] アカウント: {os.environ.get('THREADS_USERNAME')} / dry_run={dry_run}")
 
-ig_username = os.environ.get("IG_USERNAME_PERSONAL", "") if account == "personal" else ""
-ig_password = os.environ.get("IG_PASSWORD_PERSONAL", "") if account == "personal" else ""
+if account == "personal":
+    ig_username = os.environ.get("IG_USERNAME_PERSONAL", "")
+    ig_password = os.environ.get("IG_PASSWORD_PERSONAL", "")
+elif account == "bemolle":
+    ig_username = os.environ.get("IG_USERNAME_BEMOLLE", "")
+    ig_password = os.environ.get("IG_PASSWORD_BEMOLLE", "")
+else:
+    ig_username = ""
+    ig_password = ""
 line_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 with sync_playwright() as p:
@@ -137,17 +144,17 @@ with sync_playwright() as p:
     )
     page = context.new_page()
 
-    # セッション有効性チェック（personalのみ）
-    session_ok = True
-    if account == "personal":
-        session_ok = _is_logged_in(page)
-        if not session_ok:
-            if ig_username and ig_password:
-                session_ok = _auto_login(page, ig_username, ig_password, line_token)
-            else:
-                print("[comment] IG_USERNAME_PERSONAL / IG_PASSWORD_PERSONAL 未設定 → 自動ログイン不可")
-                if line_token:
-                    _send_line(line_token, "⚠️ 個人アカウント セッション切れ\npython3 playwright_login.py を実行してください。")
+    # セッション有効性チェック（全アカウント共通）
+    session_ok = _is_logged_in(page)
+    if not session_ok:
+        if ig_username and ig_password:
+            session_ok = _auto_login(page, ig_username, ig_password, line_token)
+        else:
+            creds_env = "IG_USERNAME_PERSONAL / IG_PASSWORD_PERSONAL" if account == "personal" else "IG_USERNAME_BEMOLLE / IG_PASSWORD_BEMOLLE"
+            account_label = "個人アカウント" if account == "personal" else "ベモーレアカウント"
+            print(f"[comment] {creds_env} 未設定 → 自動ログイン不可")
+            if line_token:
+                _send_line(line_token, f"⚠️ {account_label} セッション切れ\npython3 playwright_login.py を実行してください。")
 
     results = []
     if session_ok:

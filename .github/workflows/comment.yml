@@ -64,6 +64,8 @@ jobs:
         continue-on-error: true
         env:
           THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
+          IG_USERNAME_BEMOLLE: ${{ secrets.IG_USERNAME_BEMOLLE }}
+          IG_PASSWORD_BEMOLLE: ${{ secrets.IG_PASSWORD_BEMOLLE }}
           COMMENT_WAIT_MIN_MS: "10000"
           COMMENT_WAIT_MAX_MS: "30000"
         run: |
