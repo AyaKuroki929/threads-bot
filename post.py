@@ -32,7 +32,7 @@ COMMENT_MIN_POOL = int(os.environ.get("COMMENT_MIN_POOL", "30"))
 # 1回の自動発掘で追加する最大アカウント数
 COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "80"))
 # コメントクールダウン日数（同一アカウント・同一投稿への再コメント禁止期間）
-COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "7"))
+COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "30"))
 # グローバルスロットリング休止時間（時間単位）
 COMMENT_GLOBAL_RATELIMIT_HOURS = int(os.environ.get("GLOBAL_RATELIMIT_HOURS", "12"))
 # アカウント間待機時間（ミリ秒）。人間らしいペースに調整
@@ -907,7 +907,7 @@ def _generate_comment(post_text: str, account_note: str):
 ・です・ます調（敬語）で書く
 ・投稿全体の意図・トーンを読んで反応する（疑問文なら「気になりますよね」、体験談なら感想、主張なら共感など）
 ・投稿の内容を事実として断定・言い換えるコメントは絶対に書かない。必ず感想・疑問・共感にとどめる
-・「参考になります」「勉強になりました」「素晴らしいですね」「すごいですね」は使わない
+・「参考になります」「勉強になりました」「素晴らしいですね」「すごいですね」「興味深いですね」「興味深い企画」は使わない
 ・「とても」「非常に」「大変」などの強調語は使わない
 ・定型文・テンプレっぽい言い回しは使わない
 {identity_hint}・サロン名や具体的な宣伝は書かない
@@ -1193,6 +1193,14 @@ def _do_auto_comments(page, dry_run=False):
             if _already_commented_recently(commented, account):
                 print(f"[comment] @{account} コメント済み（直前再チェック）→ スキップ")
                 results.append({"account": account, "status": "skipped", "url": post_url})
+                continue
+
+            # 日本語（ひらがな・カタカナ・漢字）が含まれない投稿はスキップ
+            if not any('぀' <= ch <= '鿿' for ch in post_text):
+                print(f"[comment] @{account} 日本語投稿でない → スキップ")
+                results.append({"account": account, "status": "skipped", "url": post_url})
+                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _save_commented(commented)
                 continue
 
             # 投稿本文が短すぎる（15文字未満）はコメントしない
