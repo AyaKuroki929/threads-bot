@@ -1279,8 +1279,8 @@ def _do_auto_comments(page, dry_run=False):
                     print(f"[comment] @{account} コメント制限 → プールから削除（連続{consecutive_restrictions}件目）")
                 except Exception as fe:
                     print(f"[comment] プール更新失敗: {fe}")
-                # 5件連続でアカウント自体のスロットリングと判断 → 12時間休止
-                if consecutive_restrictions >= 5:
+                # 2件連続でアカウント自体のスロットリングと判断 → 休止
+                if consecutive_restrictions >= 2:
                     print(f"[comment] 連続制限{consecutive_restrictions}件 → アカウントがスロットリング中と判断 → {COMMENT_GLOBAL_RATELIMIT_HOURS}時間休止")
                     commented[_GLOBAL_RATELIMIT_KEY] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     _save_commented(commented)
