@@ -192,7 +192,8 @@ with sync_playwright() as p:
     print(f"[comment] 完了: ok={ok} skipped={skipped} error={errors}")
 
     # 実行後に更新済みCookieを保存（GH Secretsへの書き戻しに使う）
-    if not dry_run and session_ok:
+    # dry_run でも auto-login が成功した場合はセッションを保存する（次回 2FA 再発防止）
+    if session_ok:
         context.storage_state(path=session_file)
         print(f"[comment] セッション更新を保存: {session_file}")
 
