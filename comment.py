@@ -68,14 +68,19 @@ def _is_logged_in(page):
         if "threads.com" not in current_url:
             return False
         # 2段階目: 通知ページ（要ログイン）にアクセスしてリダイレクト確認
-        page.goto("https://www.threads.com/activity", timeout=15000, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
-        activity_url = page.url
-        if "login" in activity_url or "instagram.com" in activity_url:
-            print("[comment] activityページがloginにリダイレクト → セッション無効")
-            return False
-        print("[comment] ログイン状態を確認（URLチェック + activityページ確認）")
-        return "threads.com" in activity_url
+        try:
+            page.goto("https://www.threads.com/activity", timeout=12000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+            activity_url = page.url
+            if "login" in activity_url or "instagram.com" in activity_url:
+                print("[comment] activityページがloginにリダイレクト → セッション無効")
+                return False
+            print("[comment] ログイン状態を確認（URLチェック + activityページ確認）")
+            return "threads.com" in activity_url
+        except Exception:
+            # activityページ確認失敗 → メインページチェックのみで判断（フォールバック）
+            print("[comment] ログイン状態を確認（URLチェックのみ、activityページ確認失敗）")
+            return True
     except Exception:
         return False
 
