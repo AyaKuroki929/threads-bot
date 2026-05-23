@@ -375,12 +375,6 @@
     "verified": true
   },
   {
-    "account": "_salon.ciel_",
-    "axis": "自動発見",
-    "note": "検索キーワード: サロンオーナー",
-    "verified": true
-  },
-  {
     "account": "interior_bymuse",
     "axis": "自動発見",
     "note": "検索キーワード: サロンオーナー",
@@ -394,12 +388,6 @@
   },
   {
     "account": "kiko_hairsalon",
-    "axis": "自動発見",
-    "note": "検索キーワード: 一人サロン",
-    "verified": true
-  },
-  {
-    "account": "body_fun_328",
     "axis": "自動発見",
     "note": "検索キーワード: 一人サロン",
     "verified": true
@@ -465,12 +453,6 @@
     "verified": true
   },
   {
-    "account": "izumi_taira",
-    "axis": "自動発見",
-    "note": "検索キーワード: 女性起業家",
-    "verified": true
-  },
-  {
     "account": "m___salon",
     "axis": "自動発見",
     "note": "検索キーワード: 個人サロン",
@@ -501,12 +483,6 @@
     "verified": true
   },
   {
-    "account": "melino_sango",
-    "axis": "自動発見",
-    "note": "検索キーワード: 個人サロン",
-    "verified": true
-  },
-  {
     "account": "sui.m0t",
     "axis": "自動発見",
     "note": "検索キーワード: 個人サロン",
@@ -520,12 +496,6 @@
   },
   {
     "account": "hitoyasumi.no.niwa",
-    "axis": "自動発見",
-    "note": "検索キーワード: 自宅サロン",
-    "verified": true
-  },
-  {
-    "account": "vibliss_2023",
     "axis": "自動発見",
     "note": "検索キーワード: 自宅サロン",
     "verified": true
