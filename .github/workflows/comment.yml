@@ -81,6 +81,8 @@ jobs:
         continue-on-error: true
         env:
           THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
+          IG_USERNAME_PERSONAL: ${{ secrets.IG_USERNAME_PERSONAL }}
+          IG_PASSWORD_PERSONAL: ${{ secrets.IG_PASSWORD_PERSONAL }}
           MAX_COMMENTS_PER_RUN: "3"
           GLOBAL_RATELIMIT_HOURS: "6"
           COMMENT_WAIT_MIN_MS: "30000"
