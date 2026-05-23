@@ -62,10 +62,9 @@ def _is_logged_in(page):
     try:
         page.goto("https://www.threads.com/", timeout=20000, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
-        # ログイン済みならフィードまたはプロフィールアイコンが存在する
-        # ログアウト状態なら「Log in」ボタンが出る
-        login_btn = page.query_selector('a[href*="login"], a[href*="instagram.com"]')
-        if login_btn:
+        # ログアウト状態ならURLがloginページにリダイレクトされる
+        current_url = page.url
+        if "login" in current_url or "instagram.com" in current_url:
             return False
         # フィードのコンテンツが存在すれば OK
         feed = page.query_selector('div[role="main"], article, [data-pressable-container]')
