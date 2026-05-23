@@ -635,6 +635,9 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
     seen = set(already_done_accounts)
     kw_list = keywords[:]
     random.shuffle(kw_list)
+    # タイムアウト防止: 1回の発掘で最大40キーワードまで検索（残りは次回以降）
+    MAX_KW_PER_RUN = int(os.environ.get("DISCOVER_MAX_KW_PER_RUN", "40"))
+    kw_list = kw_list[:MAX_KW_PER_RUN]
 
     for keyword in kw_list:
         if len(discovered) >= max_new:
