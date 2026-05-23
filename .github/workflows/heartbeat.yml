@@ -20,7 +20,7 @@ jobs:
       TZ: Asia/Tokyo
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Determine expected slot (cron-schedule-based + valid-hour guard)
         id: slot
