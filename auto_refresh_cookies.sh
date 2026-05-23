@@ -128,11 +128,11 @@ print(uid)
     return 0
 }
 
-# bemolle_diet: Profile 3, min 5 cookies, UID=73523451930
-refresh_account "bemolle_diet" "3" "THREADS_SESSION" "session.json" "5" "73523451930"
+# bemolle_diet: Profile 1, min 5 cookies, UID=73523451930
+refresh_account "bemolle_diet" "1" "THREADS_SESSION" "session.json" "5" "73523451930"
 
-# aya_kuroki_0929: Profile 1, min 10 cookies, UID=63084943935
-refresh_account "aya_kuroki_0929" "1" "THREADS_SESSION_PERSONAL" "session_personal.json" "10" "63084943935"
+# aya_kuroki_0929: Profile 3, min 10 cookies, UID=63084943935
+refresh_account "aya_kuroki_0929" "3" "THREADS_SESSION_PERSONAL" "session_personal.json" "10" "63084943935"
 
 # 最終実行時刻を記録
 date +%s > "$LAST_RUN_FILE"
