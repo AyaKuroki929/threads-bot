@@ -64,6 +64,8 @@ jobs:
         continue-on-error: true
         env:
           THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
+          COMMENT_WAIT_MIN_MS: "10000"
+          COMMENT_WAIT_MAX_MS: "30000"
         run: |
           if [ -z "$THREADS_SESSION" ]; then
             echo "⚠️ THREADS_SESSION 未設定 → スキップ"
