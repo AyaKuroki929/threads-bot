@@ -102,6 +102,30 @@ jobs:
             python3 comment.py personal
           fi
 
+      - name: セッションをスリム化（GH Secrets上限対策）
+        if: steps.target.outputs.dry != 'true'
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          for fname in ["session.json", "session_personal.json"]:
+              if not os.path.exists(fname):
+                  continue
+              try:
+                  data = json.load(open(fname, encoding="utf-8"))
+                  domains = ["threads.net", "threads.com", "instagram.com"]
+                  original = len(data.get("cookies", []))
+                  data["cookies"] = [
+                      c for c in data.get("cookies", [])
+                      if any(d in c.get("domain", "") for d in domains)
+                  ]
+                  slimmed = len(data["cookies"])
+                  with open(fname, "w", encoding="utf-8") as f:
+                      json.dump(data, f, ensure_ascii=False)
+                  print(f"{fname}: {original} → {slimmed} cookies (slimmed)")
+              except Exception as e:
+                  print(f"{fname}: slim化失敗 ({e})")
+          EOF
+
       - name: セッションをGH Secretsに書き戻し（Mac不要化）
         if: steps.target.outputs.dry != 'true'
         env:

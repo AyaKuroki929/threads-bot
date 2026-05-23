@@ -58,16 +58,24 @@ def _send_line(token, msg):
 
 
 def _is_logged_in(page):
-    """Threadsのフィードを開いてログイン状態を確認する（URLリダイレクトのみで判断）"""
+    """ログイン状態を2段階で確認: メインページURL + 要認証ページのリダイレクト"""
     try:
         page.goto("https://www.threads.com/", timeout=20000, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
         current_url = page.url
-        # ログアウト状態ならloginページにリダイレクトされる
         if "login" in current_url or "instagram.com" in current_url:
             return False
-        # threads.com に留まっていればログイン済み
-        return "threads.com" in current_url
+        if "threads.com" not in current_url:
+            return False
+        # 2段階目: 通知ページ（要ログイン）にアクセスしてリダイレクト確認
+        page.goto("https://www.threads.com/activity", timeout=15000, wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
+        activity_url = page.url
+        if "login" in activity_url or "instagram.com" in activity_url:
+            print("[comment] activityページがloginにリダイレクト → セッション無効")
+            return False
+        print("[comment] ログイン状態を確認（URLチェック + activityページ確認）")
+        return "threads.com" in activity_url
     except Exception:
         return False
 

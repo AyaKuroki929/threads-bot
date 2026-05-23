@@ -677,6 +677,11 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
                 if not post_url:
                     print(f"[discover] @{account} 存在しない/投稿なし → スキップ")
                     continue
+                # 7日以上前の投稿を持つアカウントはプールに追加しない
+                if _post_dt and _post_dt < datetime.utcnow() - timedelta(days=7):
+                    age_days = (datetime.utcnow() - _post_dt).days
+                    print(f"[discover] @{account} 最新投稿が{age_days}日前 → 追加しない")
+                    continue
                 # プロフィールの最新投稿も日本語チェック
                 if not any('぀' <= ch <= '鿿' for ch in post_text):
                     print(f"[discover] @{account} 日本語投稿なし → スキップ")
@@ -1110,6 +1115,30 @@ def _do_auto_comments(page, dry_run=False):
 
     commented = _load_commented()
 
+    # プール整理: _skip が30日以上続いているアカウントはプールから削除（恒久フィルター対象の自動除去）
+    long_skipped = set()
+    for k, v in commented.items():
+        if k.endswith("/_skip"):
+            m = re.search(r'/([^/]+)/_skip', k)
+            if m:
+                try:
+                    dt = datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+                    if (datetime.now() - dt).days >= 30:
+                        long_skipped.add(m.group(1))
+                except Exception:
+                    pass
+    if long_skipped:
+        before_len = len(targets)
+        targets = [t for t in targets if t.get("account") not in long_skipped]
+        removed = before_len - len(targets)
+        if removed > 0:
+            print(f"[cleanup] 長期フィルター済み {removed} 件をプールから削除（合計 {len(targets)} 件）")
+            try:
+                with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(targets, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[cleanup] プール保存失敗: {e}")
+
     # 未コメントのアカウントを絞り込む
     # verified フィールドがないアカウントを実在確認してプールをクリーンアップ
     unverified = [t for t in targets if t.get("verified") is None]
@@ -1198,6 +1227,8 @@ def _do_auto_comments(page, dry_run=False):
     results = []
     ok_count = 0
     consecutive_restrictions = 0
+    consecutive_no_text = 0  # 連続テキスト取得失敗カウンター（セッション異常検知）
+    MAX_CONSECUTIVE_NO_TEXT = 5
 
     for t in all_candidates:
         if ok_count >= max_ok:
@@ -1213,15 +1244,27 @@ def _do_auto_comments(page, dry_run=False):
                 skip_key = f"/{account}/_skip"
                 commented[skip_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _save_commented(commented)
+                consecutive_no_text += 1
+                if consecutive_no_text >= MAX_CONSECUTIVE_NO_TEXT:
+                    print(f"[comment] ⚠️ 連続{MAX_CONSECUTIVE_NO_TEXT}件投稿取得失敗 → セッション異常の可能性。この実行を中断")
+                    break
                 continue
 
-            # 7日以上前の投稿はコメントしない
+            # 7日以上前の投稿はコメントしない → プールからも即削除（投稿日時は過去に戻らないため）
             if post_dt and post_dt < datetime.utcnow() - timedelta(days=7):
                 age_days = (datetime.utcnow() - post_dt).days
-                print(f"[comment] @{account} 最新投稿が{age_days}日前 → スキップ（7日超）")
+                print(f"[comment] @{account} 最新投稿が{age_days}日前 → プールから削除")
                 results.append({"account": account, "status": "skipped", "reason": f"投稿が古い({age_days}日前)"})
                 commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _save_commented(commented)
+                try:
+                    with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+                        pool = json.load(f)
+                    pool = [p for p in pool if p.get("account") != account]
+                    with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                        json.dump(pool, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
                 continue
 
             log_key = f"/{account}/{post_url.rstrip('/').split('/')[-1]}"
@@ -1243,13 +1286,28 @@ def _do_auto_comments(page, dry_run=False):
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 continue
 
-            # 日本語（ひらがな・カタカナ・漢字）が含まれない投稿はスキップ
+            # 日本語（ひらがな・カタカナ・漢字）が含まれない投稿はスキップ → プールからも削除
             if not any('぀' <= ch <= '鿿' for ch in post_text):
-                print(f"[comment] @{account} 日本語投稿でない → スキップ")
+                print(f"[comment] @{account} 日本語投稿でない → プールから削除")
                 results.append({"account": account, "status": "skipped", "url": post_url})
                 commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _save_commented(commented)
+                try:
+                    with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+                        pool = json.load(f)
+                    pool = [p for p in pool if p.get("account") != account]
+                    with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                        json.dump(pool, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                consecutive_no_text += 1
+                if consecutive_no_text >= MAX_CONSECUTIVE_NO_TEXT:
+                    print(f"[comment] ⚠️ 連続{MAX_CONSECUTIVE_NO_TEXT}件テキスト不正 → セッション異常の可能性。この実行を中断")
+                    break
                 continue
+
+            # ここまで来たら正常にテキスト取得できているのでカウンターリセット
+            consecutive_no_text = 0
 
             # 投稿本文が短すぎる（15文字未満）はコメントしない
             if len(post_text.strip()) < 15:

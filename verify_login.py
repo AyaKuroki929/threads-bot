@@ -58,14 +58,27 @@ def verify():
             print("スクリーンショット保存: verify.png")
             browser.close()
             return True
-        else:
-            print("❌ ログインできていません。")
-            if page.locator('text=/ログイン|Log in/').first.is_visible():
-                print("   → ログインボタンが見えています（セッション切れ）")
-            page.screenshot(path="verify.png", full_page=False)
-            print("スクリーンショット保存: verify.png")
-            browser.close()
-            return False
+
+        # DOMセレクタが見つからない場合はURL確認で二次判定
+        if "threads.com" in url and "login" not in url and "instagram.com" not in url:
+            # activityページ（要ログイン）にアクセスして確認
+            page.goto("https://www.threads.com/activity", wait_until="domcontentloaded", timeout=15000)
+            page.wait_for_timeout(2000)
+            activity_url = page.url
+            if "threads.com" in activity_url and "login" not in activity_url and "instagram.com" not in activity_url:
+                print(f"✅ ログイン状態を確認（URLフォールバック）")
+                page.screenshot(path="verify.png", full_page=False)
+                print("スクリーンショット保存: verify.png")
+                browser.close()
+                return True
+
+        print("❌ ログインできていません。")
+        if page.locator('text=/ログイン|Log in/').first.is_visible():
+            print("   → ログインボタンが見えています（セッション切れ）")
+        page.screenshot(path="verify.png", full_page=False)
+        print("スクリーンショット保存: verify.png")
+        browser.close()
+        return False
 
 if __name__ == "__main__":
     verify()
