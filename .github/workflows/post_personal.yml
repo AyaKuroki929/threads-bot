@@ -5,6 +5,8 @@ on:
     - cron: '0 22 * * *'    # JST 7:00 morning
     - cron: '0 3 * * *'     # JST 12:00 noon
     - cron: '0 12 * * *'    # JST 21:00 evening
+  repository_dispatch:
+    types: [post-personal-morning, post-personal-noon, post-personal-evening]
   workflow_dispatch:
     inputs:
       slot:
@@ -21,7 +23,7 @@ on:
         default: true
 
 concurrency:
-  group: threads-personal-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (contains(github.event.schedule, ' 3 ') && 'noon') || (contains(github.event.schedule, ' 12 ') && 'evening') || github.event.inputs.slot || 'manual' }}
+  group: threads-personal-${{ (contains(github.event.schedule, ' 22 ') && 'morning') || (github.event.action == 'post-personal-morning' && 'morning') || (contains(github.event.schedule, ' 3 ') && 'noon') || (github.event.action == 'post-personal-noon' && 'noon') || (contains(github.event.schedule, ' 12 ') && 'evening') || (github.event.action == 'post-personal-evening' && 'evening') || github.event.inputs.slot || 'manual' }}
   cancel-in-progress: false
 
 jobs:
@@ -57,6 +59,13 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "name=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            case "${{ github.event.action }}" in
+              "post-personal-morning") echo "name=morning" >> $GITHUB_OUTPUT ;;
+              "post-personal-noon")    echo "name=noon"    >> $GITHUB_OUTPUT ;;
+              "post-personal-evening") echo "name=evening" >> $GITHUB_OUTPUT ;;
+            esac
+            echo "dry=false" >> $GITHUB_OUTPUT
           else
             case "${{ github.event.schedule }}" in
               "0 22 * * *") echo "name=morning" >> $GITHUB_OUTPUT ;;
@@ -77,7 +86,7 @@ jobs:
         id: post
         env:
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_API_TOKEN_PERSONAL }}
-          SKIP_TIME_GUARD: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          SKIP_TIME_GUARD: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch') && '1' || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "${{ secrets.THREADS_API_TOKEN_PERSONAL }}" ]; then
