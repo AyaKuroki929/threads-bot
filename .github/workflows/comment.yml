@@ -70,6 +70,8 @@ jobs:
           COMMENT_COOLDOWN_DAYS: "14"
           COMMENT_WAIT_MIN_MS: "15000"
           COMMENT_WAIT_MAX_MS: "40000"
+          COMMENT_MIN_POOL: "15"
+          DISCOVER_MAX_KW_PER_RUN: "15"
         run: |
           if [ -z "$THREADS_SESSION" ]; then
             echo "⚠️ THREADS_SESSION 未設定 → スキップ"
@@ -93,6 +95,8 @@ jobs:
           GLOBAL_RATELIMIT_HOURS: "6"
           COMMENT_WAIT_MIN_MS: "30000"
           COMMENT_WAIT_MAX_MS: "90000"
+          COMMENT_MIN_POOL: "15"
+          DISCOVER_MAX_KW_PER_RUN: "15"
         run: |
           if [ -z "$THREADS_SESSION_PERSONAL" ]; then
             echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → スキップ"
