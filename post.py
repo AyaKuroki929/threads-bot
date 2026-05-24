@@ -1180,7 +1180,15 @@ def _do_auto_comments(page, dry_run=False):
             if re.search(r'/([^/]+)/', k)
             and _already_commented_recently(commented, re.search(r'/([^/]+)/', k).group(1))
         }
-        already_known = pool_accounts | recently_blocked
+        # _skipアカウントも除外対象に含める（削除済み不良アカウントの再混入防止）
+        skip_blocked = {
+            m.group(1)
+            for k in commented.keys()
+            if k.endswith("/_skip")
+            for m in [re.search(r'/([^/]+)/_skip', k)]
+            if m
+        }
+        already_known = pool_accounts | recently_blocked | skip_blocked
         new_targets = _discover_new_accounts(page, already_known, max_new=max_new)
         if new_targets:
             targets = targets + new_targets
