@@ -203,12 +203,32 @@ with sync_playwright() as p:
 if not dry_run and ok == 0 and len(results) > 0:
     account_label = "個人" if account == "personal" else "ベモーレ"
     if line_token:
-        restricted = sum(1 for r in results if r.get("status") == "error" and "制限" in r.get("error", ""))
-        no_new_post = sum(1 for r in results if r.get("status") == "skipped" and "新投稿なし" in str(r.get("reason", "")))
-        filtered = sum(1 for r in results if r.get("status") == "skipped") - no_new_post
+        # エラー種別を細分化して原因を一目で判断できるようにする
+        disabled = sum(1 for r in results if r.get("status") == "error" and "コメント制限アカウント" in r.get("error", ""))
+        throttle_errors = sum(1 for r in results if r.get("status") == "error" and "コメント制限アカウント" not in r.get("error", ""))
+        filtered = sum(1 for r in results if r.get("status") == "skipped")
+        # グローバルスロットリング休止中かどうか確認
+        commented_file = os.environ.get("COMMENTED_FILE", "")
+        throttle_active = False
+        if commented_file and os.path.exists(commented_file):
+            try:
+                with open(commented_file, encoding="utf-8") as _f:
+                    _cd = json.load(_f)
+                username = os.environ.get("THREADS_USERNAME", "")
+                _gl_key = f"/{username}/_global_ratelimit"
+                if _gl_key in _cd:
+                    from datetime import datetime
+                    _gl_ts = datetime.strptime(_cd[_gl_key], "%Y-%m-%d %H:%M:%S")
+                    throttle_active = (datetime.now() - _gl_ts).total_seconds() < 6 * 3600
+            except Exception:
+                pass
+        throttle_line = "\n🚫 スロットリング休止中（6h）" if throttle_active else ""
         msg = (
-            f"⚠️ {account_label} 自動コメント 0件\n"
-            f"処理:{len(results)}件 制限:{restricted} フィルター:{filtered} エラー:{errors}\n"
+            f"⚠️ {account_label} 自動コメント 0件{throttle_line}\n"
+            f"処理:{len(results)}件\n"
+            f"  返信無効アカウント:{disabled}件（プール除外済み）\n"
+            f"  Playwrightエラー:{throttle_errors}件\n"
+            f"  フィルタースキップ:{filtered}件\n"
             f"https://github.com/AyaKuroki929/threads-bot/actions"
         )
         _send_line(line_token, msg)
