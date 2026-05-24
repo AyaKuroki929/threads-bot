@@ -48,7 +48,8 @@ def generate_for_account(account, posts_file, used_file, rules_file):
 
     generated_any = False
 
-    for slot in ["morning", "noon", "evening"]:
+    all_slots = [s for s in ["morning", "morning2", "noon", "evening2", "evening"] if s in posts]
+    for slot in all_slots:
         remaining = _remaining(posts, used, slot)
         if remaining > THRESHOLD:
             print(f"[generate] {account} {slot}: 残{remaining}本 → 生成不要")
@@ -58,7 +59,9 @@ def generate_for_account(account, posts_file, used_file, rules_file):
 
         slot_hint = {
             "morning": "朝投稿（7:30頃配信）。1日の始まりに読む人向け。前向きな気づき・軽い問いかけ・背中を押す内容が向く。",
+            "morning2": "朝2本目投稿（9:00頃配信）。朝イチより少し落ち着いた時間。具体的なTips・保存型・チェックリスト系が向く。",
             "noon": "昼投稿（12:00頃配信）。移動中・休憩中に読む人向け。共感しやすい体験談・サロンあるある・具体的な失敗談が向く。",
+            "evening2": "夜1本目投稿（21:00前後配信）。帰宅後・夕食後の時間。今日起きた気づき・お客様エピソード・共感系が向く。",
             "evening": "夜投稿（21:00頃配信）。1日の終わりに読む人向け。内省・本音・静かな気づき・今日学んだことが向く。",
         }[slot]
 
