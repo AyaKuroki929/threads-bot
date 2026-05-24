@@ -28,9 +28,9 @@ jobs:
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -70,7 +70,7 @@ jobs:
           COMMENT_COOLDOWN_DAYS: "14"
           COMMENT_WAIT_MIN_MS: "15000"
           COMMENT_WAIT_MAX_MS: "40000"
-          COMMENT_MIN_POOL: "15"
+          COMMENT_MIN_POOL: "30"
           DISCOVER_MAX_KW_PER_RUN: "15"
         run: |
           if [ -z "$THREADS_SESSION" ]; then
