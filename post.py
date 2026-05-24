@@ -689,6 +689,18 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
                 if not any('぀' <= ch <= '鿿' for ch in post_text):
                     print(f"[discover] @{account} 日本語投稿なし → スキップ")
                     continue
+                # コメント有効チェック（プロフィールページで返信ボタンが見えるか）
+                try:
+                    first_article = page.locator('div[data-pressable-container="true"]').first
+                    reply_ok = any(
+                        first_article.locator(lbl).count() > 0
+                        for lbl in ['[aria-label*="返信"]', '[aria-label*="Reply"]']
+                    )
+                    if not reply_ok:
+                        print(f"[discover] @{account} コメント無効化アカウント → 追加しない")
+                        continue
+                except Exception:
+                    pass  # チェック失敗時は追加（false negative 防止）
                 print(f"[discover] @{account} ✅ → プール追加")
                 discovered.append({
                     "account": account,
