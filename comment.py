@@ -148,6 +148,43 @@ def _auto_login(page, username, password, line_token=""):
 
 print(f"[comment] アカウント: {os.environ.get('THREADS_USERNAME')} / dry_run={dry_run}")
 
+# ① 起動時config確認ログ（デフォルト使用中の変数を警告）
+_CONFIG_CHECK = {
+    "MAX_COMMENTS_PER_RUN":   (post.MAX_COMMENTS_PER_RUN,           6),
+    "COMMENT_COOLDOWN_DAYS":  (post.COMMENT_COOLDOWN_DAYS,          30),
+    "COMMENT_MIN_POOL":       (post.COMMENT_MIN_POOL,               100),
+    "GLOBAL_RATELIMIT_HOURS": (post.COMMENT_GLOBAL_RATELIMIT_HOURS, 12),
+    "COMMENT_WAIT_MIN_MS":    (post.COMMENT_WAIT_MIN_MS,            4000),
+    "COMMENT_WAIT_MAX_MS":    (post.COMMENT_WAIT_MAX_MS,            8000),
+}
+_config_warn = []
+for _k, (_v, _default) in _CONFIG_CHECK.items():
+    if os.environ.get(_k) is None:
+        _config_warn.append(f"  ⚠️ {_k}={_v}（未設定→デフォルト{_default}）")
+    else:
+        print(f"  [config] {_k}={_v}")
+
+# ③ 必須変数が未設定のときはLINE通知も飛ばす
+if _config_warn:
+    _warn_header = f"[config] ⚠️ {'個人' if account == 'personal' else 'ベモーレ'} デフォルト値使用中の変数:"
+    print(_warn_header)
+    for _w in _config_warn:
+        print(_w)
+    _config_warn_msg = _warn_header + "\n" + "\n".join(_config_warn)
+    _line_token_early = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if _line_token_early:
+        import urllib.request as _ureq
+        _body = json.dumps({"messages": [{"type": "text", "text": _config_warn_msg}]}).encode()
+        _req = _ureq.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=_body,
+            headers={"Authorization": f"Bearer {_line_token_early}", "Content-Type": "application/json"},
+        )
+        try:
+            _ureq.urlopen(_req, timeout=10)
+        except Exception:
+            pass
+
 if account == "personal":
     ig_username = os.environ.get("IG_USERNAME_PERSONAL", "")
     ig_password = os.environ.get("IG_PASSWORD_PERSONAL", "")
@@ -179,6 +216,32 @@ with sync_playwright() as p:
             print(f"[comment] {creds_env} 未設定 → 自動ログイン不可")
             if line_token:
                 _send_line(line_token, f"⚠️ {account_label} セッション切れ\npython3 playwright_login.py を実行してください。")
+
+    # ② 実行前プールヘルスチェック（eligible が少ないうちに警告）
+    if session_ok and not dry_run:
+        try:
+            with open(post.COMMENT_TARGETS_FILE, encoding="utf-8") as _f:
+                _targets = json.load(_f)
+            with open(post.COMMENTED_FILE, encoding="utf-8") as _f:
+                _cmted = json.load(_f)
+            _eligible = [t for t in _targets if not post._already_commented_recently(_cmted, t.get("account", ""))]
+            _warn_th = post.MAX_COMMENTS_PER_RUN * 3  # 3回分を下回ったら警告
+            print(f"[pool] 実行前 eligible={len(_eligible)} / pool={len(_targets)} / 警告閾値={_warn_th}")
+            if len(_eligible) < _warn_th:
+                _acct_label = "個人" if account == "personal" else "ベモーレ"
+                _pool_warn = (
+                    f"⚠️ {_acct_label} プール残り少\n"
+                    f"eligible={len(_eligible)}件 / pool={len(_targets)}件\n"
+                    f"自動発掘を実行しますが今後の運用要確認\n"
+                    f"https://github.com/AyaKuroki929/threads-bot/actions"
+                )
+                if line_token:
+                    _send_line(line_token, _pool_warn)
+                    print("[pool] プール残り少 LINE通知送信")
+        except FileNotFoundError:
+            print("[pool] プールファイル未存在（初回実行）")
+        except Exception as _e:
+            print(f"[pool] ヘルスチェック失敗: {_e}")
 
     results = []
     if session_ok:

@@ -1192,13 +1192,18 @@ def _do_auto_comments(page, dry_run=False):
             if re.search(r'/([^/]+)/', k)
             and _already_commented_recently(commented, re.search(r'/([^/]+)/', k).group(1))
         }
-        # _skipアカウントも除外対象に含める（削除済み不良アカウントの再混入防止）
+        # _skipアカウントは30日以内のみ除外（古いものは再発掘対象に戻す）
+        # 永久除外だとプール枯渇の原因になるため時間制限を設ける
+        _SKIP_REDISC_DAYS = 30
         skip_blocked = {
             m.group(1)
             for k in commented.keys()
             if k.endswith("/_skip")
             for m in [re.search(r'/([^/]+)/_skip', k)]
             if m
+            and (datetime.now() - datetime.strptime(
+                commented.get(k, "2000-01-01 00:00:00"), "%Y-%m-%d %H:%M:%S"
+            )).days < _SKIP_REDISC_DAYS
         }
         # クールダウン中のプールアカウントは already_known から除外する
         # （除外しないと検索結果がすべて「既知」として弾かれ新規0件になる）
@@ -1225,10 +1230,24 @@ def _do_auto_comments(page, dry_run=False):
     if len(eligible) < COMMENT_MIN_POOL:
         targets = _run_discovery(targets, pool_accounts, COMMENT_DISCOVER_MAX)
         eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
-        # eligible が依然 10 件未満なら2回目の発掘（緊急補充）
+        # eligible が依然 10 件未満なら2回目の発掘（緊急補充・キーワード数2倍）
         if len(eligible) < 10:
-            print(f"[discover] eligible={len(eligible)} < 10 → 緊急追加発掘")
+            print(f"[discover] eligible={len(eligible)} < 10 → 緊急追加発掘（キーワード数2倍）")
+            _orig_kw = os.environ.get("DISCOVER_MAX_KW_PER_RUN")
+            _cur_kw = int(_orig_kw) if _orig_kw else 40
+            os.environ["DISCOVER_MAX_KW_PER_RUN"] = str(_cur_kw * 2)
             targets = _run_discovery(targets, pool_accounts, COMMENT_DISCOVER_MAX)
+            if _orig_kw is not None:
+                os.environ["DISCOVER_MAX_KW_PER_RUN"] = _orig_kw
+            else:
+                os.environ.pop("DISCOVER_MAX_KW_PER_RUN", None)
+            eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
+        # それでも 0 件なら3回目（全キーワード使用）
+        if len(eligible) == 0:
+            print(f"[discover] eligible=0 → 全キーワード使用で最終発掘")
+            os.environ["DISCOVER_MAX_KW_PER_RUN"] = "999"
+            targets = _run_discovery(targets, pool_accounts, COMMENT_DISCOVER_MAX)
+            os.environ.pop("DISCOVER_MAX_KW_PER_RUN", None)
             eligible = [t for t in targets if not _already_commented_recently(commented, t.get("account", ""))]
 
     if not eligible:
