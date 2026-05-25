@@ -1200,9 +1200,17 @@ def _do_auto_comments(page, dry_run=False):
             for m in [re.search(r'/([^/]+)/_skip', k)]
             if m
         }
-        already_known = pool_accounts | recently_blocked | skip_blocked
+        # クールダウン中のプールアカウントは already_known から除外する
+        # （除外しないと検索結果がすべて「既知」として弾かれ新規0件になる）
+        cooldown_pool = {
+            t.get("account", "") for t in targets
+            if _already_commented_recently(commented, t.get("account", ""))
+        }
+        already_known = (pool_accounts - cooldown_pool) | recently_blocked | skip_blocked
         new_targets = _discover_new_accounts(page, already_known, max_new=max_new)
         if new_targets:
+            existing_names = {t.get("account", "") for t in targets}
+            new_targets = [t for t in new_targets if t.get("account", "") not in existing_names]
             targets = targets + new_targets
             pool_accounts.update(t.get("account", "") for t in new_targets)
             try:

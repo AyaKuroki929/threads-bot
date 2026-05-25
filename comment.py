@@ -200,7 +200,7 @@ with sync_playwright() as p:
     browser.close()
 
 # 0件コメントの場合はLINE通知（dry-runは除く）
-if not dry_run and ok == 0 and len(results) > 0:
+if not dry_run and ok == 0 and session_ok:
     account_label = "個人" if account == "personal" else "ベモーレ"
     if line_token:
         # エラー種別を細分化して原因を一目で判断できるようにする
