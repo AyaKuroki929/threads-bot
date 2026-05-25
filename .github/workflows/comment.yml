@@ -97,7 +97,6 @@ jobs:
           COMMENT_WAIT_MAX_MS: "90000"
           COMMENT_MIN_POOL: "15"
           DISCOVER_MAX_KW_PER_RUN: "15"
-          COMMENT_COOLDOWN_DAYS: "7"
         run: |
           if [ -z "$THREADS_SESSION_PERSONAL" ]; then
             echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → スキップ"
