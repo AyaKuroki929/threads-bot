@@ -68,6 +68,7 @@ jobs:
           IG_PASSWORD_BEMOLLE: ${{ secrets.IG_PASSWORD_BEMOLLE }}
           MAX_COMMENTS_PER_RUN: "3"
           COMMENT_COOLDOWN_DAYS: "14"
+          GLOBAL_RATELIMIT_HOURS: "12"
           COMMENT_WAIT_MIN_MS: "15000"
           COMMENT_WAIT_MAX_MS: "40000"
           COMMENT_MIN_POOL: "30"

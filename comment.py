@@ -164,15 +164,16 @@ for _k, (_v, _default) in _CONFIG_CHECK.items():
     else:
         print(f"  [config] {_k}={_v}")
 
-# ③ 必須変数が未設定のときはLINE通知も飛ばす
+# ③ COMMENT_COOLDOWN_DAYS が未設定のときだけLINE通知（その他はログのみ）
+_critical_warn = [w for w in _config_warn if "COMMENT_COOLDOWN_DAYS" in w]
 if _config_warn:
     _warn_header = f"[config] ⚠️ {'個人' if account == 'personal' else 'ベモーレ'} デフォルト値使用中の変数:"
     print(_warn_header)
     for _w in _config_warn:
         print(_w)
-    _config_warn_msg = _warn_header + "\n" + "\n".join(_config_warn)
+    _config_warn_msg = _warn_header + "\n" + "\n".join(_critical_warn) if _critical_warn else None
     _line_token_early = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if _line_token_early:
+    if _line_token_early and _config_warn_msg:
         import urllib.request as _ureq
         _body = json.dumps({"messages": [{"type": "text", "text": _config_warn_msg}]}).encode()
         _req = _ureq.Request(

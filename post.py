@@ -35,6 +35,8 @@ COMMENT_DISCOVER_MAX = int(os.environ.get("COMMENT_DISCOVER_MAX", "150"))
 COMMENT_COOLDOWN_DAYS = int(os.environ.get("COMMENT_COOLDOWN_DAYS", "30"))
 # staleクールダウン日数（休眠アカウント再チェック間隔）
 STALE_COOLDOWN_DAYS = int(os.environ.get("STALE_COOLDOWN_DAYS", "7"))
+# 発掘・コメント時の最新投稿の許容日数（これより古い投稿のアカウントはスキップ）
+POST_AGE_LIMIT_DAYS = int(os.environ.get("POST_AGE_LIMIT_DAYS", "14"))
 # グローバルスロットリング休止時間（時間単位）
 COMMENT_GLOBAL_RATELIMIT_HOURS = int(os.environ.get("GLOBAL_RATELIMIT_HOURS", "12"))
 # アカウント間待機時間（ミリ秒）。人間らしいペースに調整
@@ -680,8 +682,8 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
                 if not post_url:
                     print(f"[discover] @{account} 存在しない/投稿なし → スキップ")
                     continue
-                # 7日以上前の投稿を持つアカウントはプールに追加しない
-                if _post_dt and _post_dt < datetime.utcnow() - timedelta(days=7):
+                # POST_AGE_LIMIT_DAYS 以上前の投稿を持つアカウントはプールに追加しない
+                if _post_dt and _post_dt < datetime.utcnow() - timedelta(days=POST_AGE_LIMIT_DAYS):
                     age_days = (datetime.utcnow() - _post_dt).days
                     print(f"[discover] @{account} 最新投稿が{age_days}日前 → 追加しない")
                     continue
@@ -1300,8 +1302,8 @@ def _do_auto_comments(page, dry_run=False):
                     break
                 continue
 
-            # 7日以上前の投稿はコメントしない → プールからも即削除（投稿日時は過去に戻らないため）
-            if post_dt and post_dt < datetime.utcnow() - timedelta(days=7):
+            # POST_AGE_LIMIT_DAYS 以上前の投稿はコメントしない → プールからも即削除
+            if post_dt and post_dt < datetime.utcnow() - timedelta(days=POST_AGE_LIMIT_DAYS):
                 age_days = (datetime.utcnow() - post_dt).days
                 print(f"[comment] @{account} 最新投稿が{age_days}日前 → プールから削除")
                 results.append({"account": account, "status": "skipped", "reason": f"投稿が古い({age_days}日前)"})
