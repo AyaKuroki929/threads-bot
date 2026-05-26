@@ -202,3 +202,17 @@ jobs:
             done
             if [ $push_ok -eq 0 ]; then echo "::warning::git push failed after 3 retries"; fi
           fi
+
+      - name: Healthcheck ping（投稿成功の証明）
+        if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'
+        env:
+          HC_MORNING: ${{ secrets.HC_PING_URL_MORNING }}
+          HC_NOON: ${{ secrets.HC_PING_URL_NOON }}
+          HC_EVENING: ${{ secrets.HC_PING_URL_EVENING }}
+        run: |
+          case "${{ steps.params.outputs.name }}" in
+            morning) URL="$HC_MORNING" ;;
+            noon)    URL="$HC_NOON" ;;
+            evening) URL="$HC_EVENING" ;;
+          esac
+          [ -n "$URL" ] && curl -sS --retry 3 "$URL" || true
