@@ -69,13 +69,13 @@ def generate_for_account(account, posts_file, used_file, rules_file):
             str(posts[slot][i])[:80] for i in range(min(5, len(posts[slot])))
         ])
 
-        system_prompt = f"""あなたはThreads投稿の専門家です。
-以下のルールに厳密に従って、{account}アカウントの{slot}用投稿を生成してください。
+        system_cached = f"""あなたはThreads投稿の専門家です。
+以下のルールに厳密に従って、{account}アカウントの投稿を生成してください。
 
 === 投稿生成ルール ===
-{rules}
+{rules}"""
 
-=== 時間帯の特性 ===
+        system_dynamic = f"""=== 時間帯の特性（{slot}） ===
 {slot_hint}
 
 === 医療・成分・学術名称の取り扱い（最優先ルール）===
@@ -97,6 +97,11 @@ def generate_for_account(account, posts_file, used_file, rules_file):
 ]
 
 JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
+
+        system_prompt = [
+            {"type": "text", "text": system_cached, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": system_dynamic},
+        ]
 
         user_prompt = f"""{GENERATE_COUNT}本の投稿を生成してください。
 
