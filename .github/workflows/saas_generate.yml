@@ -59,8 +59,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add posts_saas/
-          git diff --cached --quiet || git commit -m "saas: posts_saas を更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "saas: posts_saas を更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+          # Push競合に強くする：失敗したら git pull --rebase してリトライ（最大5回）
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "Push succeeded on attempt $i"
+              exit 0
+            fi
+            echo "Push failed on attempt $i, pulling latest and retrying..."
+            git pull --rebase origin main
+            sleep 2
+          done
+          echo "Push failed after 5 attempts"
+          exit 1
 
       - name: Notify LINE on completion
         if: success() && github.event.inputs.salon_name != ''
