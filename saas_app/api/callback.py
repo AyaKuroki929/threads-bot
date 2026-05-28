@@ -267,16 +267,22 @@ strong.warn{{color:#d32f2f;}}
 <h2>🅰️ 別アカウントでログイン中</h2>
 <div class="case">
 <p><strong class="warn">これが一番ありがちです</strong>。<br>
-ブラウザやアプリで<strong>別のInstagramアカウント</strong>に
+ブラウザで<strong>別のInstagramアカウント</strong>に
 既にログインしていると、そのアカウントで承認しようとして
 失敗します。</p>
 <div class="steps">
-<strong>解決方法：</strong><br>
-① スマホのブラウザで「シークレットモード」「プライベートタブ」を開く<br>
-② そこからもう一度このページに来る<br>
-③ 今度はログイン画面が出るので、<br>
-　 <strong>Threads用のアカウント</strong>でログイン
+<strong>解決方法（シークレットモードを使う）：</strong><br>
+① スマホのブラウザアプリを開く<br>
+② 「シークレットタブ/プライベートタブ」を開く<br>
+　📍Safari：右下のタブアイコン → 左下「プライベート」<br>
+　📍Chrome：右下「︙」→「新しいシークレットタブ」<br>
+③ そのタブに連携URLを貼って開く<br>
+④ Threads用のアカウントでログイン → 承認
 </div>
+<p style="margin-top:12px;color:#d32f2f;font-weight:bold;">
+🚫 InstagramアプリやThreadsアプリはログアウトしないでください！<br>
+（普段の利用に影響します）
+</p>
 </div>
 
 <h2>🅱️ STEP1の承認反映待ち</h2>
