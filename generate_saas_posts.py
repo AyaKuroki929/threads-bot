@@ -37,6 +37,23 @@ SCOPES = [
 ]
 
 
+def normalize_threads_id(raw: str) -> str:
+    """Threads IDを正規化（全角＠・半角@・大文字・前後スペース・全角英数を吸収）"""
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    # 全角英数記号 → 半角に変換
+    s = s.translate(str.maketrans(
+        "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ．＿－",
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
+    ))
+    # 先頭の @ または ＠ を全部除去（連続していても）
+    while s and s[0] in ("@", "＠"):
+        s = s[1:]
+    # 末尾スペース除去・小文字化（Threads usernameは大文字小文字を区別しない）
+    return s.strip().lower()
+
+
 def load_sheet_data():
     creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     gc = gspread.authorize(creds)
@@ -67,7 +84,7 @@ def salon_to_rules(salon: dict) -> str:
     location = salon.get("所在地（最寄り駅・徒歩時間）", "")
     hours = salon.get("営業時間", "")
     holiday = salon.get("定休日", "")
-    threads_id = salon.get("Threadsのアカウント名（@から始まるID）", "")
+    threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
     homepage_url = salon.get("ホームページURL", "")
     instagram_id = salon.get("InstagramアカウントID（@から・あれば）", "") or salon.get("インスタグラムのURL", "")
     hotpepper_url = salon.get("ホットペッパービューティーのURL", "")
@@ -345,7 +362,7 @@ def _remaining(posts, salon_name, slot):
 
 def generate_for_salon(salon: dict):
     salon_name = salon.get("サロン名", "unknown")
-    threads_id = salon.get("Threadsのアカウント名（@から始まるID）", "").lstrip("@").strip()
+    threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
     file_key = threads_id if threads_id else salon_name
     safe_name = re.sub(r'[^\w\-]', '_', file_key)
 
@@ -517,7 +534,7 @@ def main():
 
     for salon in salons:
         salon_name = salon.get("サロン名", "")
-        threads_id = salon.get("Threadsのアカウント名（@から始まるID）", "").lstrip("@").strip()
+        threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
         if not salon_name:
             continue
         if target_salon and threads_id != target_salon and salon_name != target_salon:
