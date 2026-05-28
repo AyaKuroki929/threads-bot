@@ -87,3 +87,17 @@ jobs:
             -H "Authorization: Bearer $LINE_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          SALON="${{ github.event.inputs.salon_name }}"
+          if [ -z "$SALON" ]; then SALON="全サロン"; fi
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 とうこさんSaaS 投稿生成ワークフロー失敗\n\n対象：$SALON\nトリガー：${{ github.event_name }}\n\n→ クライアントの自動投稿が始まらないリスクあり。\n\nログ確認：\n$RUN_URL"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
