@@ -1,0 +1,39 @@
+name: SaaS - OAuth未完了リマインダー
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 毎日AM10時(JST)
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run OAuth reminder
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: python3 oauth_reminder.py
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 とうこさんSaaS OAuthリマインダーワークフロー失敗\n\nログ確認：\n$RUN_URL"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
