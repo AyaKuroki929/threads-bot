@@ -243,6 +243,35 @@ ERROR_HTML = """<!DOCTYPE html>
 <head><meta charset="UTF-8"><title>エラー</title></head>
 <body><h1>❌ エラーが発生しました</h1><p>{message}</p></body></html>"""
 
+PENDING_APPROVAL_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>承認反映待ち</title>
+<style>
+body{{font-family:sans-serif;text-align:center;padding:40px 20px;background:#fff8e1;}}
+h1{{color:#e65100;margin-bottom:20px;}}
+p{{color:#555;line-height:1.8;font-size:16px;}}
+.box{{background:#fff;border:2px solid #ffb74d;border-radius:12px;padding:24px;margin:24px auto;max-width:480px;}}
+.btn{{display:inline-block;background:#ff9800;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;margin-top:16px;}}
+.btn:hover{{background:#f57c00;}}
+.steps{{text-align:left;background:#fafafa;padding:16px 20px;border-radius:8px;margin-top:16px;}}
+</style>
+</head>
+<body>
+<h1>⏰ STEP1の承認反映待ちです</h1>
+<div class="box">
+<p>Threadsアプリで【同意する】を押した直後の場合、<br>
+Meta側で反映に<strong>数分かかります</strong>。</p>
+<div class="steps">
+<strong>確認してほしいこと：</strong><br>
+① Threadsアプリで【同意する】を押しましたか？<br>
+② 押してから5分以上経っていますか？
+</div>
+<p style="margin-top:20px;">5分待ってから、もう一度こちらをタップしてください👇</p>
+<a class="btn" href="{retry_url}">🔄 もう一度試す</a>
+</div>
+<p style="font-size:14px;color:#888;">それでも解決しない場合は、サポートまでご連絡ください。</p>
+</body></html>"""
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -311,8 +340,25 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             import logging, traceback
             logging.error("callback error: %s", e)
+            detail = f"{type(e).__name__}: {e}"
+
+            # STEP1 承認反映待ちエラーを検知してクライアント向けの分かりやすい画面を出す
+            err_str = str(e)
+            is_pending = (
+                "threads_basic permission" in err_str
+                or '"error_subcode":10' in err_str
+                or "list of Threads testers" in err_str
+            )
+            if is_pending:
+                customer_id = query.get("state", [""])[0]
+                retry_url = f"https://saas.shikisai.work/api/connect?customer_id={urllib.parse.quote(customer_id)}" if customer_id else "#"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(PENDING_APPROVAL_HTML.format(retry_url=retry_url).encode())
+                return
+
             self.send_response(500)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            detail = f"{type(e).__name__}: {e}"
             self.wfile.write(ERROR_HTML.format(message=f"認証処理中にエラーが発生しました。<br><br><code>{detail}</code>").encode())
