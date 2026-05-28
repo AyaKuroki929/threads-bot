@@ -18,10 +18,18 @@ def _headers():
     }
 
 
-def save_instagram_url(customer_id: str, instagram_url: str):
+def save_form_data(customer_id: str, instagram_url: str, expected_threads_id: str):
+    """フォーム回答時にline_usersへ Instagram URL と Threads ID を保存。"""
     url = (f"{SUPABASE_URL}/rest/v1/line_users"
            f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}")
-    data = json.dumps({"instagram_url": instagram_url}).encode()
+    payload = {}
+    if instagram_url:
+        payload["instagram_url"] = instagram_url
+    if expected_threads_id:
+        payload["expected_threads_id"] = expected_threads_id
+    if not payload:
+        return 204
+    data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers=_headers(), method="PATCH")
     with urllib.request.urlopen(req, timeout=10) as r:
         return r.status
@@ -33,6 +41,7 @@ class handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length)) if length else {}
         customer_id = body.get("customer_id", "")
         instagram_url = body.get("instagram_url", "").strip()
+        expected_threads_id = body.get("expected_threads_id", "").strip()
 
         if not customer_id:
             self.send_response(400)
@@ -41,7 +50,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            save_instagram_url(customer_id, instagram_url)
+            save_form_data(customer_id, instagram_url, expected_threads_id)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

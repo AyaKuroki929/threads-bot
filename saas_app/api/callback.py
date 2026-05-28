@@ -14,8 +14,30 @@ LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
 GITHUB_PAT = os.environ.get("GITHUB_PAT", "")
 
 
+def _notify_admin_line(text: str):
+    """管理者LINE（Claude通知Bot）へ通知。失敗してもエラーを伝播しない。"""
+    if not LINE_TOKEN:
+        return
+    try:
+        req = urllib.request.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+            headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+
 def trigger_saas_generate(username: str):
     if not GITHUB_PAT:
+        _notify_admin_line(
+            f"⚠️ workflow_dispatch失敗（GITHUB_PAT未設定）\n\n"
+            f"Threads ID：@{username}\n"
+            f"OAuthは完了しているが、投稿生成が自動実行されていない。\n"
+            f"手動で saas_generate.yml を実行してください。"
+        )
         return
     payload = json.dumps({
         "ref": "main",
@@ -34,8 +56,15 @@ def trigger_saas_generate(username: str):
     )
     try:
         urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    except Exception as e:
+        _notify_admin_line(
+            f"⚠️ workflow_dispatch失敗\n\n"
+            f"Threads ID：@{username}\n"
+            f"エラー：{type(e).__name__}: {e}\n\n"
+            f"OAuthは完了しているが、投稿生成が自動実行されていない。\n"
+            f"手動で saas_generate.yml を実行してください。\n"
+            f"https://github.com/AyaKuroki929/threads-bot/actions/workflows/saas_generate.yml"
+        )
 
 
 def line_notify_oauth_complete(username: str):
@@ -119,6 +148,25 @@ def get_instagram_url(customer_id: str) -> str:
         with urllib.request.urlopen(req, timeout=10) as resp:
             rows = json.loads(resp.read())
         return (rows[0].get("instagram_url") or "").strip() if rows else ""
+    except Exception:
+        return ""
+
+
+def get_expected_threads_id(customer_id: str) -> str:
+    """line_usersテーブルからフォーム回答時に保存したexpected_threads_idを取得。"""
+    if not customer_id:
+        return ""
+    try:
+        url = (f"{SUPABASE_URL}/rest/v1/line_users"
+               f"?stripe_customer_id=eq.{urllib.parse.quote(customer_id)}"
+               f"&select=expected_threads_id&limit=1")
+        req = urllib.request.Request(url, headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read())
+        return (rows[0].get("expected_threads_id") or "").strip().lower() if rows else ""
     except Exception:
         return ""
 
@@ -220,6 +268,33 @@ class handler(BaseHTTPRequestHandler):
 
             user_info = get_user_info(access_token)
             username = user_info.get("username", "")
+
+            # ⭐ OAuth で取得したThreadsアカウントが、フォームに記載されたThreads IDと一致するか確認
+            # 不一致なら他人のアカウントで承認した可能性 → 拒否＋管理者通知
+            expected_id = get_expected_threads_id(customer_id)
+            actual_id = (username or "").strip().lower()
+            if expected_id and actual_id and expected_id != actual_id:
+                _notify_admin_line(
+                    f"🚨 OAuthアカウント不一致を検出！\n\n"
+                    f"フォーム記載：@{expected_id}\n"
+                    f"OAuth承認：@{actual_id}\n"
+                    f"Stripe顧客：{customer_id}\n\n"
+                    f"⚠️ 他人のアカウントで承認した可能性。\n"
+                    f"Supabaseへの保存・投稿生成は中断しました。\n"
+                    f"クライアントに正しいアカウントで再認証してもらってください。"
+                )
+                # クライアントに表示するエラー
+                self.send_response(403)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(ERROR_HTML.format(
+                    message=(
+                        f"承認したアカウント（@{actual_id}）が、お申込み時に記載されたアカウント（@{expected_id}）と異なります。<br><br>"
+                        f"正しいThreadsアカウントでログインし直してから、もう一度STEP2のリンクをタップしてください。"
+                    )
+                ).encode())
+                return
+
             save_to_supabase(
                 user_id=user_info["id"],
                 username=username,
