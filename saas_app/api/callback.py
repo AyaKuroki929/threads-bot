@@ -245,31 +245,55 @@ ERROR_HTML = """<!DOCTYPE html>
 
 PENDING_APPROVAL_HTML = """<!DOCTYPE html>
 <html lang="ja">
-<head><meta charset="UTF-8"><title>承認反映待ち</title>
+<head><meta charset="UTF-8"><title>連携できません</title>
 <style>
-body{{font-family:sans-serif;text-align:center;padding:40px 20px;background:#fff8e1;}}
-h1{{color:#e65100;margin-bottom:20px;}}
-p{{color:#555;line-height:1.8;font-size:16px;}}
-.box{{background:#fff;border:2px solid #ffb74d;border-radius:12px;padding:24px;margin:24px auto;max-width:480px;}}
-.btn{{display:inline-block;background:#ff9800;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;margin-top:16px;}}
+body{{font-family:sans-serif;text-align:left;padding:30px 20px;background:#fff8e1;max-width:560px;margin:0 auto;}}
+h1{{color:#e65100;margin-bottom:16px;text-align:center;font-size:22px;}}
+h2{{color:#1565c0;margin-top:24px;font-size:18px;border-bottom:2px solid #1565c0;padding-bottom:6px;}}
+p{{color:#444;line-height:1.7;font-size:15px;}}
+.box{{background:#fff;border:2px solid #ffb74d;border-radius:12px;padding:20px;margin:16px 0;}}
+.btn{{display:block;background:#ff9800;color:#fff;padding:14px 24px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px;margin:20px auto;text-align:center;max-width:280px;}}
 .btn:hover{{background:#f57c00;}}
-.steps{{text-align:left;background:#fafafa;padding:16px 20px;border-radius:8px;margin-top:16px;}}
+.steps{{background:#f5f5f5;padding:14px 18px;border-radius:8px;margin-top:8px;}}
+.case{{background:#e3f2fd;border-left:4px solid #1565c0;padding:12px 16px;margin:12px 0;}}
+strong.warn{{color:#d32f2f;}}
 </style>
 </head>
 <body>
-<h1>⏰ STEP1の承認反映待ちです</h1>
+<h1>❌ 連携できませんでした</h1>
 <div class="box">
+<p>主な原因は <strong>2つ</strong> あります。<br>当てはまる方を確認してください👇</p>
+
+<h2>🅰️ 別アカウントでログイン中</h2>
+<div class="case">
+<p><strong class="warn">これが一番ありがちです</strong>。<br>
+ブラウザやアプリで<strong>別のInstagramアカウント</strong>に
+既にログインしていると、そのアカウントで承認しようとして
+失敗します。</p>
+<div class="steps">
+<strong>解決方法：</strong><br>
+① スマホのブラウザで「シークレットモード」「プライベートタブ」を開く<br>
+② そこからもう一度このページに来る<br>
+③ 今度はログイン画面が出るので、<br>
+　 <strong>Threads用のアカウント</strong>でログイン
+</div>
+</div>
+
+<h2>🅱️ STEP1の承認反映待ち</h2>
+<div class="case">
 <p>Threadsアプリで【同意する】を押した直後の場合、<br>
-Meta側で反映に<strong>数分かかります</strong>。</p>
+Meta側で反映に<strong>5〜10分</strong>かかります。</p>
 <div class="steps">
 <strong>確認してほしいこと：</strong><br>
-① Threadsアプリで【同意する】を押しましたか？<br>
+① Threadsアプリの【Invites】タブで【同意する】を押しましたか？<br>
 ② 押してから5分以上経っていますか？
 </div>
-<p style="margin-top:20px;">5分待ってから、もう一度こちらをタップしてください👇</p>
+</div>
+
+<p style="margin-top:24px;text-align:center;">解決したら、もう一度こちらをタップしてください👇</p>
 <a class="btn" href="{retry_url}">🔄 もう一度試す</a>
 </div>
-<p style="font-size:14px;color:#888;">それでも解決しない場合は、サポートまでご連絡ください。</p>
+<p style="font-size:13px;color:#888;text-align:center;">それでも解決しない場合は、サポートまでご連絡ください。</p>
 </body></html>"""
 
 
