@@ -83,12 +83,22 @@ function notifyAdmin_(text) {
 function onFormSubmit(e) {
   var responses = e.namedValues;
 
+  // メールアドレス（customer_id空のときStripe逆引きに使う）
+  var email = (responses['メールアドレス'] || [''])[0].trim();
+  if (!email) {
+    // 項目名が違う場合の保険：@とドットを含む最初の回答をメールとみなす
+    for (var key in responses) {
+      var v = (responses[key] || [''])[0] || '';
+      if (v.indexOf('@') > 0 && v.indexOf('.') > 0) { email = v.trim(); break; }
+    }
+  }
+
   // ⭐ #4対策：必須項目の存在チェック（フォーム項目名が変わると検知）
+  // ※ _customer_id は空でもメール逆引きで復元するため、ここでは検知対象から外す
   var requiredFields = [
     'サロン名',
     'オーナー名（投稿で使うお名前）',
-    'Threadsのアカウント名（@から始まるID）',
-    '_customer_id'
+    'Threadsのアカウント名（@から始まるID）'
   ];
   var missing = requiredFields.filter(function(f) {
     return !responses[f] || !responses[f][0];
@@ -125,28 +135,48 @@ function onFormSubmit(e) {
     console.error('Threads ID正規化失敗:', err);
   }
 
-  // ⭐ #2対策：instagram_url と expected_threads_id を Supabase に保存
-  // → callback.py で OAuth したアカウントが一致するか確認するため
-  if (customerId) {
-    try {
-      UrlFetchApp.fetch('https://saas.shikisai.work/api/save-form', {
-        method: 'post',
-        headers: { 'Content-Type': 'application/json' },
-        payload: JSON.stringify({
-          customer_id: customerId,
-          instagram_url: instagramUrl,
-          expected_threads_id: threadsId
-        }),
-        muteHttpExceptions: true
-      });
-    } catch (err) {
-      console.error('save-form失敗:', err);
+  // ⭐ #2対策 + メール逆引きフォールバック：
+  // save-form を必ず呼ぶ（customer_idが空でも email で Stripe逆引きして復元）。
+  // → フォームをクリアされても・別リンクで回答されても、メールさえ一致すれば自動で紐付く。
+  // → ついでに instagram_url と expected_threads_id を Supabase に保存（callback.pyの照合用）。
+  var recovered = false;
+  try {
+    var resp = UrlFetchApp.fetch('https://saas.shikisai.work/api/save-form', {
+      method: 'post',
+      headers: { 'Content-Type': 'application/json' },
+      payload: JSON.stringify({
+        customer_id: customerId,
+        email: email,
+        instagram_url: instagramUrl,
+        expected_threads_id: threadsId
+      }),
+      muteHttpExceptions: true
+    });
+    var j = JSON.parse(resp.getContentText() || '{}');
+    if (j && j.customer_id) {
+      if (!customerId) recovered = true;   // 空だったのが埋まった＝復元成功
+      customerId = j.customer_id;
     }
+  } catch (err) {
+    console.error('save-form失敗:', err);
+  }
+
+  // 逆引きしても customer_id が取れなければアラート
+  if (!customerId) {
+    notifyAdmin_(
+      '🚨 customer_id未取得！\n\n' +
+      'フォーム回答に _customer_id が無く、メール(' + (email || '不明') + ')での\n' +
+      'Stripe逆引きも失敗しました（メール不一致の可能性）。\n\n' +
+      'サロン名: ' + salonName + '\n' +
+      'Stripeダッシュボードで顧客IDを確認し手動対応してください。'
+    );
   }
 
   var sendStepUrl = customerId
     ? 'https://saas.shikisai.work/api/send-step?customer_id=' + customerId
     : '⚠️ customer_id未取得（Stripeダッシュボードで確認してください）';
+
+  var recoveredLine = recovered ? '\n♻️ customer_idはメールから自動復元しました' : '';
 
   var instaLine = instagramUrl ? '\nInstagram：' + instagramUrl : '';
 
@@ -155,7 +185,7 @@ function onFormSubmit(e) {
     'サロン名：' + salonName + '\n' +
     'オーナー名：' + ownerName + '\n' +
     'Threads ID：' + threadsId +
-    instaLine + '\n\n' +
+    instaLine + recoveredLine + '\n\n' +
     '【やること】\n' +
     '① MetaでThreadsテスター追加 →\n' +
     'https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n' +
