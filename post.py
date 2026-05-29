@@ -1281,6 +1281,12 @@ def _do_auto_comments(page, dry_run=False):
     consecutive_restrictions = 0
     consecutive_no_text = 0  # 連続テキスト取得失敗カウンター（セッション異常検知）
     MAX_CONSECUTIVE_NO_TEXT = 5
+    # 「返信ボタンが見つからない」を即プール削除すると、bot自身のセッション半失効
+    # （パスワード強制変更・チェックポイント等）時に正常アカウントを大量に焼いてしまう。
+    # → 削除は保留リストに溜め、run終了時に「1件でも成功した＝botは返信可能」場合だけ実行する。
+    pending_disabled = []          # (account,) 返信ボタン欠落で無効化疑いのアカウント
+    consecutive_reply_missing = 0  # 0成功のまま連続で返信ボタン欠落 → bot側制限の疑い
+    MAX_CONSECUTIVE_REPLY_MISSING = 8
 
     for t in all_candidates:
         if ok_count >= max_ok:
@@ -1423,6 +1429,7 @@ def _do_auto_comments(page, dry_run=False):
             results.append({"account": account, "status": "ok", "url": post_url, "comment": comment_text})
             ok_count += 1
             consecutive_restrictions = 0
+            consecutive_reply_missing = 0
 
             # アカウント間に待機（人間らしいペース）
             page.wait_for_timeout(random.randint(COMMENT_WAIT_MIN_MS, COMMENT_WAIT_MAX_MS))
@@ -1432,19 +1439,20 @@ def _do_auto_comments(page, dry_run=False):
             print(f"[comment] @{account} コメント失敗: {err_msg}")
             results.append({"account": account, "status": "error", "error": err_msg})
             if "コメント制限アカウント" in err_msg:
-                # 返信ボタンが存在しない = そのアカウントがコメントを無効化しているだけ。
-                # プラットフォームのスロットリングとは無関係なのでconsecutive_restrictionsを加算しない。
-                commented[f"/{account}/_skip"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                _save_commented(commented)
-                try:
-                    with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
-                        pool = json.load(f)
-                    pool = [p for p in pool if p.get("account") != account]
-                    with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
-                        json.dump(pool, f, ensure_ascii=False, indent=2)
-                    print(f"[comment] @{account} コメント無効化アカウント → プール削除・_skip記録（スロットリングカウント対象外）")
-                except Exception as fe:
-                    print(f"[comment] プール更新失敗: {fe}")
+                # 返信ボタンが存在しない = 相手がコメント無効化している「可能性」。
+                # ただし bot 自身のセッション半失効（パスワード変更・チェックポイント）でも
+                # 全投稿で返信ボタンが消えるため、ここでは即削除せず保留にする。
+                # 実削除は run 終了時「ok_count > 0（＝botは実際に返信できている）」の場合のみ。
+                pending_disabled.append(account)
+                consecutive_reply_missing += 1
+                print(f"[comment] @{account} 返信ボタン欠落 → 削除保留（後で判定）")
+                if ok_count == 0 and consecutive_reply_missing >= MAX_CONSECUTIVE_REPLY_MISSING:
+                    print(
+                        f"[comment] ⚠️ 0成功のまま返信ボタン欠落が連続{consecutive_reply_missing}件。"
+                        f"相手側ではなく bot アカウントの制限/セッション半失効の疑い → "
+                        f"プールを保持したままこの実行を中断"
+                    )
+                    break
             else:
                 # コメント無効化以外のエラー（ネットワーク・Playwright等）のみスロットリングとして扱う
                 consecutive_restrictions += 1
@@ -1453,6 +1461,31 @@ def _do_auto_comments(page, dry_run=False):
                     commented[_GLOBAL_RATELIMIT_KEY] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     _save_commented(commented)
                     break
+
+    # 返信ボタン欠落アカウントの後処理:
+    # ok_count > 0 → bot は実際に返信できている＝欠落は相手側の無効化。プール削除＆_skip記録。
+    # ok_count == 0 → bot 自身が一度も返信できていない＝セッション半失効の疑い。
+    #                 プールも _skip も一切触らず温存し、誤った大量削除を防ぐ。
+    if pending_disabled:
+        if ok_count > 0:
+            try:
+                with open(COMMENT_TARGETS_FILE, encoding="utf-8") as f:
+                    pool = json.load(f)
+                pool = [p for p in pool if p.get("account") not in set(pending_disabled)]
+                with open(COMMENT_TARGETS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(pool, f, ensure_ascii=False, indent=2)
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for acc in pending_disabled:
+                    commented[f"/{acc}/_skip"] = now_str
+                _save_commented(commented)
+                print(f"[comment] 返信無効アカウント {len(pending_disabled)} 件を確定削除（ok={ok_count}件成功済み）")
+            except Exception as fe:
+                print(f"[comment] プール更新失敗: {fe}")
+        else:
+            print(
+                f"[comment] ⚠️ 返信ボタン欠落 {len(pending_disabled)} 件あるが ok=0 のため削除を見送り。"
+                f"bot アカウントのセッション/制限を確認してください（プールは温存）"
+            )
 
     return results
 
