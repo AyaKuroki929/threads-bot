@@ -23,6 +23,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SPREADSHEET_ID = "1Af6ZnH7Ghzn1APpVrFy5nFlftNaIX5YOeSvfFjSdU-U"
+# スクール版（晶子サロンアカデミー等）の回答シート。createSchoolForm 実行後の SPREADSHEET_ID をここに入れる。
+# 空文字のままなら従来どおりサロンのみ処理（スクールはスキップ）。
+SCHOOL_SPREADSHEET_ID = "1sX130Vbe0UBrCjkLuAM68UbfbLv4wVpAQmee9Od5kps"
 SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "google_service_account.json")
 POSTS_DIR = os.path.join(os.path.dirname(__file__), "posts_saas")
 GENERATE_COUNT = 15
@@ -61,6 +64,33 @@ def load_sheet_data():
     ws = sh.get_worksheet(0)
     records = ws.get_all_records()
     return records
+
+
+def load_school_data():
+    """スクール版の回答シートを読み込み、共通パイプラインが使うキーへエイリアスして返す。"""
+    if not SCHOOL_SPREADSHEET_ID:
+        return []
+    try:
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SCHOOL_SPREADSHEET_ID)
+        ws = sh.get_worksheet(0)
+        records = ws.get_all_records()
+    except Exception as e:
+        print(f"[saas] スクールシート読み込みスキップ（共有設定/IDを確認）: {e}")
+        return []
+    out = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        rec["_type"] = "school"
+        # 共通の識別キー（名前・Threads ID）へエイリアス
+        if not rec.get("サロン名"):
+            rec["サロン名"] = rec.get("スクール・アカデミー名", "")
+        if not rec.get("Threadsのアカウント名（@から始まるID）"):
+            rec["Threadsのアカウント名（@から始まるID）"] = rec.get("ThreadsのアカウントID（@から始まるID）", "")
+        out.append(rec)
+    return out
 
 
 def salon_to_rules(salon: dict) -> str:
@@ -316,6 +346,216 @@ def salon_to_rules(salon: dict) -> str:
     return rules
 
 
+def school_to_rules(school: dict) -> str:
+    """スクール（サロン経営スクール）の1行をThreads投稿生成ルールに変換する。
+    読者はエステサロンのオーナー。一般の美容客向けではない点がサロン版と決定的に異なる。"""
+
+    tone_map = {
+        "丁寧・落ち着いた（ですます調）": "丁寧・落ち着いたですます調。断言は控えめに。",
+        "親しみやすい・フレンドリー": "親しみやすく、温かみがある。でも馴れ合いにならない程度の敬語。",
+        "プロとして言い切る・強め": "自信を持って言い切る。「ハッキリ言います」「正直に書きます」などの強い導入も使う。",
+        "柔らかく共感ベース": "まず共感から入る。「わかります」「私もそうでした」の温度感。",
+    }
+    emoji_map = {
+        "使わない（または最小限）": "絵文字は使わない。または最小限（1〜2個まで）。",
+        "適度に使う": "絵文字を適度に使う（投稿あたり2〜4個程度）。",
+        "たくさん使う": "絵文字を積極的に使う（投稿あたり5個以上OK）。",
+    }
+
+    def v(key, *alts):
+        s = str(school.get(key, "") or "").strip()
+        if not s:
+            for a in alts:
+                s = str(school.get(a, "") or "").strip()
+                if s:
+                    break
+        if s in ("特になし", "なし", "ない", "特に無し", "無し"):
+            return ""
+        return s
+
+    school_name = str(school.get("スクール・アカデミー名", "") or "").strip()
+    teacher = str(school.get("講師名（投稿で使うお名前）", "") or "").strip()
+    self_pronoun = (str(school.get("投稿で自分を何と呼びますか？", "") or "").strip() or "私")
+    threads_id = normalize_threads_id(school.get("ThreadsのアカウントID（@から始まるID）", "")
+                                      or school.get("Threadsのアカウント名（@から始まるID）", ""))
+    other_sns = v("その他のSNS・HPのURL")
+
+    goal_multi = v("このアカウントで一番達成したいこと（複数選択可）", "このアカウントで一番達成したいこと")
+    goal_detail = v("目的の具体的な中身")
+    reader_outcome = v("投稿を読んだサロンオーナーに最終的にどうなってほしいか")
+    success_3m = v("3ヶ月後にこうなっていたら成功という状態")
+
+    cta_actions = v("投稿の最後で読者にしてほしい行動（複数選択可）", "投稿の最後で読者にしてほしい行動")
+    cta_detail = v("CTAの誘導先と具体的な文言・キーワード")
+    dm_ok = v("DM・コメントでの相談は受け付けてOKですか？")
+    cta_freq = v("CTAを出す頻度")
+
+    target = v("どんなエステサロンオーナーに届けたいか")
+    pain = v("そのオーナーが今一番抱えている悩み・痛み")
+    not_target = v("こういう人には来てほしくないという人物像")
+
+    why = v("なぜこのスクールを作ったか")
+    failure = v("一番の失敗・どん底と、そこからどう立て直したか")
+    highprice = v("「低単価で満席を目指すサロン」との違い（高単価で本当に結果を出すサロンとは）")
+    retail_reason = v("物販・ホームケア教育を必須にする理由")
+    menu_combo = v("メニューの組み合わせ方で大事にしている考え方")
+    worklife = v("サロンオーナーが働き詰めにならず、時間とお金の余裕を持って働くために必要なこと")
+    misbelief = v("サロンオーナーがよく持っている思い込み・勘違い")
+    one_message = v("サロンオーナーに一番気づいてほしいことを一言で")
+
+    courses = v("提供している講座・コースと価格")
+    best_course = v("一番おすすめ・一番成果が出る講座とその理由")
+    mechanism = v("投稿で触れてOKな講座の特徴的な仕組み")
+    price_ok = v("価格を投稿に出してもOKですか？")
+
+    testi_ok = v("受講生・卒業生の成果や体験談を投稿に使ってもOKですか？")
+    results = v("印象的な受講生の成果・変化")
+    voices = v("受講生からよく言われる感想・変化")
+
+    diff = v("他のサロン経営スクール・コンサルとの違い・強み")
+    competitor = v("受講を迷う人がよく比較する他の選択肢")
+    churn = v("途中で挫折・離脱しやすい人のパターン")
+    words = v("先生の口癖・よく使う言葉・フレーズ")
+    concept = v("スクール独自のキーワード・コンセプトワード")
+    tone = tone_map.get(school.get("投稿のトーン", ""), "丁寧・落ち着いたですます調。")
+    emoji = emoji_map.get(school.get("絵文字をどうしますか？", ""), "絵文字は使わない。")
+    ng_line = v("発信スタイルのNGライン")
+    privacy = v("先生自身について投稿に出してOKな情報・出してほしくない情報")
+    ng_words = v("スクールとして言いたくないこと・NGワード")
+
+    rules = f"""# {school_name} Threads投稿生成ルール（スクール／サロン経営塾）
+
+## 発信者プロフィール
+- **スクール名**：{school_name}
+- **講師名**：{teacher}
+- **Threads**：{threads_id}
+{f"- **その他SNS・HP**：{other_sns}" if other_sns else ""}
+
+## このアカウントの読者（ターゲット）
+読者は「エステサロンのオーナー（経営者）」です。一般の美容のお客様ではありません。
+施術を受けに来てもらうための投稿ではなく、サロン経営に悩むオーナーの心を動かす投稿を書きます。
+{f"届けたい相手：{target}" if target else ""}
+{f"その人が今抱えている悩み・痛み：{pain}" if pain else ""}
+{f"逆に来てほしくない人：{not_target}" if not_target else ""}
+
+## このThreadsアカウントの目的
+{f"一番達成したいこと：{goal_multi}" if goal_multi else ""}
+{f"具体的には：{goal_detail}" if goal_detail else ""}
+{f"読者に最終的にどうなってほしいか：{reader_outcome}" if reader_outcome else ""}
+{f"成功の状態（3ヶ月後）：{success_3m}" if success_3m else ""}
+→ 読者であるサロンオーナーの心を動かし、この目的につながる投稿を最優先する。
+エンゲージメント（いいね・保存・返信）が増える投稿を最優先する。
+
+## 講師の想い・哲学（投稿の核・最重要）
+### なぜこのスクールを作ったか
+{why if why else "（未記入）"}
+
+{f"### 一番の失敗・どん底とそこからの立て直し（ギャップ素材・最強の発信材料）{chr(10)}{failure}" if failure else ""}
+
+{f"### 「低単価で満席」ではなく「高単価で本当に結果を出すサロン」を教える理由{chr(10)}{highprice}{chr(10)}→ この信念を投稿の軸に据える。安売り・低単価を勧める内容は書かない。" if highprice else ""}
+
+{f"### 物販・ホームケア教育を必須にする理由（重要な指導テーマ）{chr(10)}{retail_reason}{chr(10)}→ 「物販やホームケア教育こそがお客様に結果を出させ、サロンの売上も安定させる」という指導内容として発信する。物販を“押し売り”ではなく“結果を出すための必須要素”として伝える。" if retail_reason else ""}
+
+{f"### メニューの組み合わせ方の考え方（指導テーマ）{chr(10)}{menu_combo}" if menu_combo else ""}
+
+{f"### オーナーが働き詰めにならず、時間とお金の余裕を持って幸せに働くために必要なこと（指導テーマ）{chr(10)}{worklife}{chr(10)}→ 「頑張って働き続ける」ではなく「仕組みで余裕を作る」という価値観を伝える。" if worklife else ""}
+
+{f"### サロンオーナーに一番気づいてほしいこと{chr(10)}{one_message}" if one_message else ""}
+
+## サロンオーナーがよく持つ思い込み・勘違い（刺さる投稿・保存型投稿の素材）
+{misbelief if misbelief else "（未記入）"}
+
+## 講座・サービス
+{f"提供講座・コースと価格：{courses}" if courses else "（未記入）"}
+{f"一番おすすめ・成果が出る講座：{best_course}" if best_course else ""}
+{f"投稿で触れてよい講座の仕組み：{mechanism}" if mechanism else ""}
+
+## 受講生の成果・声
+{f"成果・変化（数字含む）：{results}" if results else "（未記入）"}
+{f"受講生からよく言われる感想：{voices}" if voices else ""}
+
+{f"## 他スクール・コンサルとの違い（差別化の核）{chr(10)}{diff}" if diff else ""}
+
+{f"## 受講を迷う人が比較する選択肢（差別化投稿の素材）{chr(10)}{competitor}{chr(10)}→ これらと比べたときの価値を投稿素材にする。" if competitor else ""}
+
+{f"## 挫折・離脱しやすい人のパターン（先回り投稿の素材）{chr(10)}{churn}" if churn else ""}
+
+## この講師固有の言葉・文体の個性（差別化の核・必ず反映する）
+{f"口癖・よく使う言葉：{words}" if words else "口癖：（未記入）"}
+{f"独自コンセプトワード：{concept}" if concept else "独自コンセプトワード：（未記入）"}
+→ 上記の言葉・表現を自然に投稿へ織り込み、この講師にしか書けない文体を作る。一般的・テンプレ的な表現は避ける。
+
+## CTA（投稿末尾の誘導）
+{f"してほしい行動：{cta_actions}" if cta_actions else ""}
+{f"誘導先・文言：{cta_detail}" if cta_detail else "プロフィールのリンクへ自然に誘導する"}
+{f"DM・コメント相談：{dm_ok}" if dm_ok else ""}
+{f"CTAの頻度：{cta_freq}（押し売り感を出さない）" if cta_freq else ""}
+
+## 価格・体験談の投稿使用ルール（クライアント指定）
+{f"価格記載：{price_ok}" if price_ok else "価格記載ルール：未指定"}
+{f"受講生の成果・体験談の使用：{testi_ok}" if testi_ok else "体験談使用ルール：未指定"}
+
+## NGワード・避けるべき表現（クライアント指定）
+{ng_words if ng_words else "特になし"}
+
+{f"## 発信スタイルのNGライン（クライアント指定）{chr(10)}{ng_line}" if ng_line else ""}
+
+{f"## 講師自身についてのOK/NG情報{chr(10)}{privacy}" if privacy else ""}
+
+## トーン・スタイル
+{tone}
+{emoji}
+ハッシュタグは付けない。
+短い文の改行を多用しThreadsで読みやすくする。
+
+## 投稿の構造（ギャップ技法・常時適用）
+- タイトル行で「え？」と思わせるズレを作る：「〇〇なのに△△」「〇〇じゃない、実は△△」
+- 講師自身の過去の失敗（廃業・赤字など）を素材にしたギャップを積極的に使う
+- 失敗→転換点→成果のW型ストーリーを複数本に使う
+- サロンオーナーの「よくある思い込み」を正す保存型まとめ投稿（〇選、チェックリスト）を定期的に入れる
+- 受講生の成果を冒頭フックに使う投稿を複数本入れる
+
+---
+
+## 【スクール版・必ず守るルール】（クライアントの要望より優先）
+
+### 読者・呼び方
+- 読者は「エステサロンのオーナー（経営者）」。一般の美容のお客様向けに書かない。
+- 「うち」「うちの」は使わない。スクールを指すときは「{school_name}」または「当スクール」を使う。
+- 自分（講師）を指すときは「{self_pronoun}」を使う。
+- 一般客向けの「来店」「ご予約」「施術を受けに来てください」という誘導は書かない（読者は施術客ではなくサロンを経営するオーナー）。
+
+### 敬語ルール
+- 基本は「です・ます」調。読者（サロンオーナー）に敬意を持って語りかける。
+- タメ口・ぞんざいな語尾は禁止（「〜だよ」「〜してね」「〜じゃん」）。「〜なんです」「〜ですよね」「〜してみてください」で着地。
+- 断言・攻めた導入はOKだが、文末は敬語で着地させる。
+
+### 物販・ホームケアの扱い（スクールとして重要）
+- 物販・ホームケア教育は「サロンオーナーが取り入れるべき、結果を出すための必須要素」として前向きに発信する。
+- 「物販は押し売り」「物を売るのは悪」という否定的な描き方はしない。
+- 「お客様がサロンに来ていない日の習慣（ホームケア）こそが結果を作る。だからオーナーはホームケアを教えるべき」という考えを基本にする。
+
+### ネガティブ表現の禁止
+- 他のスクール・コンサル・他の手法を名指しで批判・否定しない（比較で自分の価値を語るのはOK）。
+- 読み手が不安になるだけで終わる表現を使わない（必ず希望・解決策で着地）。
+- 人格否定・見下しはしない。否定してよいのは「やり方・思い込み」であって「人」ではない。
+
+### AI臭の排除
+- 形式ワード禁止：「〜することが大切です」「〜していきましょう」「ぜひ〜してみてください」「いかがでしょうか」「ポイントは3つ」「まずは〜から」「日々の積み重ね」
+- 整いすぎた見出し→3項目→まとめ構造を使わない。
+- 「自分を大切に」「無理せず」など誰でも書ける抽象フレーズは禁止。
+- 同じ語尾を3文以上繰り返さない。文の長さにバラつきをつける。
+
+### 禁則（絶対遵守）
+- 医療的な断定・病気が治る等の表現禁止。
+- 「絶対」「100%」などの誇大表現は避ける（「ほとんど」「多くの場合」に言い換える）。
+- 「必ず儲かる」「誰でも成功する」などの断定的な収益保証はしない。
+- 政治・宗教・占いの断定は避ける。
+- ハッシュタグ禁止。
+"""
+    return rules
+
+
 def _get_supabase_used_count(salon_name: str, slot: str) -> int:
     """Supabaseのpost_logsから実際の使用済み投稿数を取得する。"""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -376,7 +616,7 @@ def generate_for_salon(salon: dict):
     else:
         posts = {"morning": [], "noon": [], "evening": []}
 
-    rules = salon_to_rules(salon)
+    rules = school_to_rules(salon) if salon.get("_type") == "school" else salon_to_rules(salon)
 
     # 週次リサーチから更新される共通インサイトを追加
     saas_rules_path = os.path.join(os.path.dirname(__file__), "GENERATE_RULES_saas.md")
@@ -524,7 +764,7 @@ def main():
 
     print("[saas] スプレッドシートを読み込み中...")
     try:
-        salons = load_sheet_data()
+        salons = load_sheet_data() + load_school_data()
     except Exception as e:
         print(f"[saas] スプレッドシート読み込みエラー: {e}")
         print("[saas] google_service_account.json が設定されているか確認してください")
