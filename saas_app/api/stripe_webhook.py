@@ -19,6 +19,23 @@ TOUKOSAN_PRODUCT_ID  = "prod_UWa5BZv291uQts"
 GOOGLE_FORM_URL      = "https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform"
 CUSTOMER_ID_ENTRY    = "entry.1831716486"
 
+# ── スクール版フォーム（晶子サロンアカデミー等）──────────────
+# createSchoolForm 実行後に PUBLISHED_URL と CUSTOMER_ID_ENTRY を入れる。
+# 空のままなら全員サロン用フォームが送られる（従来動作）。
+SCHOOL_FORM_URL          = "https://docs.google.com/forms/d/e/1FAIpQLScl761NYd6YWj3EfRyr91BcZwUxZpBTt3oVxnerOnoMdlsfFg/viewform"
+SCHOOL_CUSTOMER_ID_ENTRY = "entry.860086005"
+# このメールアドレスで決済した顧客にはスクール用フォームを送る（小文字で比較）
+SCHOOL_EMAILS = {"syokokumamoto0205@gmail.com"}
+
+
+def build_prefilled_form(email: str, customer_id: str) -> str:
+    """メールがスクール客ならスクール用フォーム、それ以外はサロン用フォームを
+    customer_id でプリフィルして返す。スクール用URLが未設定なら常にサロン用。"""
+    is_school = bool(SCHOOL_FORM_URL) and (email or "").strip().lower() in SCHOOL_EMAILS
+    url   = SCHOOL_FORM_URL if is_school else GOOGLE_FORM_URL
+    entry = SCHOOL_CUSTOMER_ID_ENTRY if is_school else CUSTOMER_ID_ENTRY
+    return f"{url}?{entry}={urllib.parse.quote(customer_id)}"
+
 
 def _log(msg: str):
     print(f"[stripe_webhook] {msg}", file=sys.stderr, flush=True)
@@ -245,7 +262,7 @@ def handle_checkout_session(obj: dict):
         save_line_customer_mapping(line_uid, customer_id)
 
     # クライアントにフォームURLを自動送信（customer_idをpre-fill）
-    prefilled_form = f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}"
+    prefilled_form = build_prefilled_form(email, customer_id)
     if line_uid:
         client_msg = (
             f"サロン情報のご入力をお願いします📋\n\n"
@@ -345,7 +362,7 @@ def handle_invoice_paid(obj: dict):
         email = email or "不明"
         amount = obj.get("amount_paid", 0)
         _log(f"handle_invoice_paid fallback notify: name={name!r}, email={email!r}")
-        prefilled = f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}"
+        prefilled = build_prefilled_form(email, customer_id)
         line_push_admin(
             f"🎉 とうこさん 新規登録！（invoice.paid）\n\n"
             f"名前: {name}\n"
