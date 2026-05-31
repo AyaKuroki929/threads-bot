@@ -2,9 +2,12 @@ name: SaaS - サロン自動投稿
 
 on:
   schedule:
-    - cron: '0 21 * * *'   # 毎日 AM6時(JST) - 朝投稿（遅延考慮で前倒し→7時前後に投稿）
-    - cron: '0 0 * * *'    # 毎日 AM9時(JST) - 昼投稿（遅延考慮で前倒し→12時前後に投稿）
-    - cron: '0 9 * * *'    # 毎日 PM6時(JST) - 夜投稿（遅延考慮で前倒し→21時前後に投稿）
+    # 正時の投稿は cron-job.org が担当（7:00/12:00/21:00 JST ぴったり）。
+    # 下のGH cronは「正時の30分後」に走る予備。cron-job.orgが投稿済みならスキップされる。
+    # （旧設定は18時狙い等で早すぎ→GitHub遅延で20時に投稿してしまう不具合があった）
+    - cron: '30 22 * * *'  # 毎日 AM7:30(JST) - 朝投稿の予備
+    - cron: '30 3 * * *'   # 毎日 PM12:30(JST) - 昼投稿の予備
+    - cron: '30 12 * * *'  # 毎日 PM9:30(JST) - 夜投稿の予備
   workflow_dispatch:
     inputs:
       slot:
@@ -32,9 +35,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
-              "0 21 * * *") echo "slot=morning" >> $GITHUB_OUTPUT ;;
-              "0 0 * * *")  echo "slot=noon"    >> $GITHUB_OUTPUT ;;
-              "0 9 * * *")  echo "slot=evening" >> $GITHUB_OUTPUT ;;
+              "30 22 * * *") echo "slot=morning" >> $GITHUB_OUTPUT ;;
+              "30 3 * * *")  echo "slot=noon"    >> $GITHUB_OUTPUT ;;
+              "30 12 * * *") echo "slot=evening" >> $GITHUB_OUTPUT ;;
             esac
           else
             echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT

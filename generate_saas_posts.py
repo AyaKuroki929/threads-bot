@@ -660,6 +660,7 @@ def generate_for_salon(salon: dict):
 - 1部目末尾は答えを出さずに途中で止めるクリフハンガー形式（「続きに書きます」などの予告文は絶対禁止）
 - 2部目は接続詞・前置きなしで答えから書き始める
 """
+            length_rule = "- 各部（1部目・2部目）は150〜300字。どの部も350字を超えないこと"
         else:
             output_format = """各要素は単発投稿の文字列。改行は\\nで表現。
 
@@ -669,6 +670,7 @@ def generate_for_salon(salon: dict):
   "別の投稿のフック\\n\\n本文。"
 ]"""
             tree_rule = "- 全投稿を単発（文字列）で生成する\n"
+            length_rule = "- 各投稿は200〜300字を目安に、最長でも350字。長すぎる投稿は禁止（スクロールで一気に読み切れる短さが最も読まれる）"
 
         system_prompt = f"""あなたはSNS投稿の専門家です。
 以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
@@ -699,6 +701,7 @@ JSON配列以外の文字は一切出力しないでください。"""
 - 全{GENERATE_COUNT}本が違う切り口・違う素材
 - このサロン固有の口癖・言葉・コンセプトワードを文体に自然に反映させ、他のどのサロンとも被らない個性を出す
 - ハッシュタグ禁止
+{length_rule}
 {tree_rule}- {GENERATE_COUNT}本すべてJSON配列に含める
 
 既存投稿（この角度は避ける）：
@@ -746,6 +749,17 @@ JSON配列以外の文字は一切出力しないでください。"""
         if new_posts is None:
             print(f"[saas] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
             continue
+
+        # 長さ検証：基準を超える投稿は保存しない（単発350字・ツリー各部400字まで）
+        def _within_length(p):
+            if isinstance(p, list):
+                return all(len(str(x)) <= 400 for x in p)
+            return len(str(p)) <= 350
+        kept = [p for p in new_posts if _within_length(p)]
+        dropped = len(new_posts) - len(kept)
+        if dropped:
+            print(f"[saas] {salon_name} {slot}: 長すぎる投稿 {dropped}本を除外（基準: 単発350字/ツリー各部400字）")
+        new_posts = kept
 
         posts[slot].extend(new_posts)
         print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")

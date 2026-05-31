@@ -280,6 +280,38 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
         raise RuntimeError(f"公開失敗 HTTP {e.code}: {body[:150]}")
 
 
+THREADS_TEXT_LIMIT = 500
+
+
+def _split_long(text, limit=480):
+    """Threadsの500字制限の安全網：limitを超えるテキストを文/段落境界で分割する。
+    通常は生成側で350字以内に収まるが、万一の超過でも投稿失敗しないようツリー分割する。"""
+    text = str(text)
+    if len(text) <= limit:
+        return [text]
+    parts = []
+    rest = text
+    while len(rest) > limit:
+        window = rest[:limit]
+        cut = max(window.rfind("\n\n"), window.rfind("。"), window.rfind("！"),
+                  window.rfind("？"), window.rfind("\n"))
+        if cut < int(limit * 0.5):
+            cut = limit - 1  # 良い区切りがなければ強制カット
+        parts.append(rest[:cut + 1].strip())
+        rest = rest[cut + 1:].strip()
+    if rest:
+        parts.append(rest)
+    return [p for p in parts if p]
+
+
+def _enforce_threads_limit(texts):
+    """各パートが500字以内になるよう必要なら分割。texts: list[str] → list[str]"""
+    out = []
+    for t in texts:
+        out.extend(_split_long(t))
+    return out
+
+
 def threads_post(user_id, token, texts, topic_tag=None):
     """単発またはツリー投稿。texts: list[str]"""
     reply_to_id = None
@@ -361,6 +393,7 @@ def main():
             used = get_used_posts(salon_id, SLOT)
             texts = pick_post(salon_name, SLOT, used)
             texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")
+            texts = _enforce_threads_limit(texts)  # 安全網：500字超は自動でツリー分割
             topic_tag = _select_topic(texts, salon_name)
 
             post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
