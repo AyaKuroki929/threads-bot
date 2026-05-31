@@ -110,7 +110,14 @@ def pick_post(salon_name, slot, used_texts):
 
     candidates = data.get(slot, [])
     if not candidates:
-        raise ValueError(f"{salon_name}: {slot} スロットの投稿がありません")
+        # フォールバック：このスロットが空でも、他スロットの投稿を借りて投稿を止めない
+        for alt in ("morning", "noon", "evening"):
+            if data.get(alt):
+                candidates = data[alt]
+                print(f"[fallback] {salon_name}: {slot}が空 → {alt}スロットから投稿")
+                break
+    if not candidates:
+        raise ValueError(f"{salon_name}: 全スロットの投稿がありません")
 
     def _key(p):
         return p if isinstance(p, str) else p[0]
