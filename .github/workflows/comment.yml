@@ -47,8 +47,17 @@ jobs:
             echo "personal=${{ github.event.inputs.account == 'personal' || github.event.inputs.account == 'both' }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
-            echo "bemolle=true" >> $GITHUB_OUTPUT
-            echo "personal=true" >> $GITHUB_OUTPUT
+            # 【回復モード 2026-06-01】アクション制限からの回復のため1日1回だけ軽くプローブする。
+            # comment-morning の dispatch のみ実行し、noon/evening は何もしない＝footprintを激減。
+            # 反映確認できる日が来たら検証コードが自動でLINE通知する（=回復検知）。
+            # 通常運用に戻す時はこの if を消して bemolle/personal を無条件 true に戻す。
+            if [ "${{ github.event.action }}" = "comment-morning" ]; then
+              echo "bemolle=true" >> $GITHUB_OUTPUT
+              echo "personal=true" >> $GITHUB_OUTPUT
+            else
+              echo "bemolle=false" >> $GITHUB_OUTPUT
+              echo "personal=false" >> $GITHUB_OUTPUT
+            fi
             echo "dry=false" >> $GITHUB_OUTPUT
           fi
 
@@ -66,7 +75,7 @@ jobs:
           THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
           IG_USERNAME_BEMOLLE: ${{ secrets.IG_USERNAME_BEMOLLE }}
           IG_PASSWORD_BEMOLLE: ${{ secrets.IG_PASSWORD_BEMOLLE }}
-          MAX_COMMENTS_PER_RUN: "3"
+          MAX_COMMENTS_PER_RUN: "1"
           COMMENT_COOLDOWN_DAYS: "14"
           GLOBAL_RATELIMIT_HOURS: "12"
           COMMENT_WAIT_MIN_MS: "15000"
@@ -92,7 +101,7 @@ jobs:
           THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
           IG_USERNAME_PERSONAL: ${{ secrets.IG_USERNAME_PERSONAL }}
           IG_PASSWORD_PERSONAL: ${{ secrets.IG_PASSWORD_PERSONAL }}
-          MAX_COMMENTS_PER_RUN: "3"
+          MAX_COMMENTS_PER_RUN: "1"
           COMMENT_COOLDOWN_DAYS: "14"
           GLOBAL_RATELIMIT_HOURS: "6"
           COMMENT_WAIT_MIN_MS: "30000"
