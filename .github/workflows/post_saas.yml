@@ -14,6 +14,10 @@ on:
         description: '投稿スロット（morning / noon / evening）'
         required: true
         default: 'morning'
+      only_salon:
+        description: '特定サロンのみ投稿（テスト/デモ用・空なら全サロン）'
+        required: false
+        default: ''
 
 jobs:
   post:
@@ -50,6 +54,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ONLY_SALON: ${{ github.event.inputs.only_salon }}
         run: |
           set +e
           python3 post_saas.py ${{ steps.slot.outputs.slot }}

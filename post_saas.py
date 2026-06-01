@@ -20,6 +20,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 POSTS_DIR = os.path.join(os.path.dirname(__file__), "posts_saas")
 
 SLOT = sys.argv[1] if len(sys.argv) > 1 else "morning"  # morning / noon / evening
+# 特定サロンのみ投稿（テスト/デモ用）。argv[2] または環境変数 ONLY_SALON。
+# 通常運用（スケジュール）では空＝全サロン。指定時は重複チェックも飛ばして必ず投稿する。
+SALON_FILTER = (sys.argv[2] if len(sys.argv) > 2 else os.environ.get("ONLY_SALON", "")).strip()
 THREADS_API = "https://graph.threads.net/v1.0"
 
 
@@ -367,6 +370,13 @@ def main():
         print("アクティブなサロンがありません")
         return
 
+    if SALON_FILTER:
+        salons = [s for s in salons if s.get("salon_name") == SALON_FILTER]
+        print(f"[filter] 対象サロンを {SALON_FILTER} のみに限定（{len(salons)}件）")
+        if not salons:
+            print(f"[filter] {SALON_FILTER} が見つかりません")
+            return
+
     results = {"ok": [], "error": [], "token_expired": []}
 
     for salon in salons:
@@ -392,7 +402,7 @@ def main():
 
             account_label = f"@{uname}" if uname else salon_name
 
-            if already_posted_today(salon_id, SLOT):
+            if not SALON_FILTER and already_posted_today(salon_id, SLOT):
                 print(f"[SKIP] {salon_name}: {SLOT} は本日投稿済み（重複実行を防止）")
                 results["ok"].append(salon_name)
                 continue
