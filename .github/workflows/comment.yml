@@ -160,7 +160,10 @@ jobs:
             git commit -m "state: auto comment $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             PUSHED=false
             for i in 1 2 3 4 5; do
-              git pull --rebase -X ours origin main 2>&1 || true
+              # --autostash: api_usage_log.json 等の未ステージ変更があっても rebase を止めない。
+              # これが無いと「You have unstaged changes」で pull が失敗し push が永久に rejected になる
+              # （2026-05-25〜06-01 にコメント記録が一切保存されなかった原因）。
+              git pull --rebase --autostash -X ours origin main 2>&1 || true
               if git push; then
                 PUSHED=true
                 break
@@ -171,7 +174,18 @@ jobs:
             done
             if [ "$PUSHED" = "false" ]; then
               echo "⚠️ push 5回失敗 → force-with-lease で強制push"
-              git push --force-with-lease || echo "force-with-lease も失敗"
+              if git push --force-with-lease; then
+                PUSHED=true
+              else
+                echo "force-with-lease も失敗"
+              fi
+            fi
+            # push が最終的に失敗したら必ず通知（state保存失敗は無音だと数日気づけないため）
+            if [ "$PUSHED" = "false" ] && [ -n "$LINE_CHANNEL_ACCESS_TOKEN" ]; then
+              curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+                -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 自動コメントのstate保存(push)が失敗。コメント記録が永続化されていません→重複コメントの恐れ。\\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
             fi
           fi
 
