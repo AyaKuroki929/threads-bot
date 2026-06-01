@@ -253,7 +253,11 @@ with sync_playwright() as p:
     ok = sum(1 for r in results if r.get("status") == "ok")
     skipped = sum(1 for r in results if r.get("status") == "skipped")
     errors = sum(1 for r in results if r.get("status") == "error")
-    print(f"[comment] 完了: ok={ok} skipped={skipped} error={errors}")
+    # 投稿後検証: 「送信できた」と「実際にThreadsへ反映された」は別物。
+    # verified True=反映確認 / False=反映されず（アクション制限の疑い） / None=確認不能。
+    verified_ok = sum(1 for r in results if r.get("status") == "ok" and r.get("verified") is True)
+    unverified_fail = sum(1 for r in results if r.get("status") == "ok" and r.get("verified") is False)
+    print(f"[comment] 完了: ok={ok}（反映確認={verified_ok} 反映されず={unverified_fail}） skipped={skipped} error={errors}")
 
     # 実行後に更新済みCookieを保存（GH Secretsへの書き戻しに使う）
     # dry_run でも auto-login が成功した場合はセッションを保存する（次回 2FA 再発防止）
@@ -311,3 +315,16 @@ if not dry_run and ok == 0 and session_ok:
             )
         _send_line(line_token, msg)
         print(f"[comment] LINE通知送信: 0件アラート")
+
+# ok>0 なのに1件も反映確認できず、かつ明確に「反映されず」が出ている場合は
+# シャドウ/アクション制限の疑い。従来は偽のok=Nで無音だった失敗を必ず通知する。
+elif not dry_run and ok > 0 and verified_ok == 0 and unverified_fail >= 1 and session_ok:
+    account_label = "個人" if account == "personal" else "ベモーレ"
+    if line_token:
+        msg = (
+            f"⚠️ {account_label} コメント{ok}件送信したが、Threadsに1件も反映されていません\n"
+            f"アクション制限/シャドウ制限の疑い → 数日アカウントを休ませるのが回復の近道です\n"
+            f"https://github.com/AyaKuroki929/threads-bot/actions"
+        )
+        _send_line(line_token, msg)
+        print(f"[comment] LINE通知送信: 反映ゼロ警告")

@@ -1115,6 +1115,34 @@ def _post_comment_to_url(page, post_url, comment_text):
     page.wait_for_timeout(500)
     _click_submit(page)
     page.wait_for_timeout(2000)
+    # 投稿後検証: ダイアログが閉じても「実際に反映された」とは限らない。
+    # アクション制限中の垢は submit が黙って破棄され、ダイアログだけ閉じる（＝偽の成功）。
+    return _verify_comment_posted(page, post_url, comment_text)
+
+
+def _verify_comment_posted(page, post_url, comment_text):
+    """submit後に投稿が実際にThreadsへ反映されたか確認する。
+    戻り値: True=反映確認, False=反映されず（制限の疑い）, None=確認不能。
+    注意: 二重投稿を防ぐため、Falseでも呼び出し側は記録自体は残す（再投稿しない）。"""
+    snippet = (comment_text or "").strip()[:16]
+    if not snippet:
+        return None
+    try:
+        page.goto(post_url, wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_timeout(3500)
+        for _ in range(3):
+            try:
+                body = page.locator("body").inner_text()
+            except Exception:
+                body = ""
+            if snippet in body:
+                return True
+            page.mouse.wheel(0, 2500)
+            page.wait_for_timeout(1500)
+        return False
+    except Exception as e:
+        print(f"[verify] 反映確認エラー（判定不能）: {e}")
+        return None
 
 
 def _do_auto_comments(page, dry_run=False):
@@ -1422,11 +1450,16 @@ def _do_auto_comments(page, dry_run=False):
                 results.append({"account": account, "status": "dry_run", "url": post_url, "comment": comment_text})
                 continue
 
-            _post_comment_to_url(page, post_url, comment_text)
+            verified = _post_comment_to_url(page, post_url, comment_text)
             commented[log_key] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             _save_commented(commented)
-            print(f"[comment] @{account} コメント完了 ✅")
-            results.append({"account": account, "status": "ok", "url": post_url, "comment": comment_text})
+            if verified is True:
+                print(f"[comment] @{account} コメント完了 ✅（反映確認済み）")
+            elif verified is False:
+                print(f"[comment] @{account} ⚠️ 送信したがThreadsに反映されず（アクション制限の疑い）")
+            else:
+                print(f"[comment] @{account} コメント送信（反映確認は不能）")
+            results.append({"account": account, "status": "ok", "url": post_url, "comment": comment_text, "verified": verified})
             ok_count += 1
             consecutive_restrictions = 0
             consecutive_reply_missing = 0
