@@ -287,13 +287,27 @@ if not dry_run and ok == 0 and session_ok:
             except Exception:
                 pass
         throttle_line = "\n🚫 スロットリング休止中（6h）" if throttle_active else ""
-        msg = (
-            f"⚠️ {account_label} 自動コメント 0件{throttle_line}\n"
-            f"処理:{len(results)}件\n"
-            f"  返信無効アカウント:{disabled}件（プール除外済み）\n"
-            f"  Playwrightエラー:{throttle_errors}件\n"
-            f"  フィルタースキップ:{filtered}件\n"
-            f"https://github.com/AyaKuroki929/threads-bot/actions"
-        )
+        # ok=0 のとき post.py の A ガードによりプールは温存される（恒久削除は ok>0 時のみ）。
+        # 「返信ボタン欠落」が大量＝相手ではなく bot 自身のセッション切れ/アカウント制限の疑い。
+        # その場合は犯人を取り違えないよう、再ログイン手順を添えて明示通知する。
+        session_basename = os.path.basename(session_file)
+        if disabled >= 5:
+            msg = (
+                f"⚠️ {account_label} 自動コメント 0件 — セッション切れ/アカウント制限の疑い{throttle_line}\n"
+                f"全{disabled}件で返信ボタンが表示されません（プールは温存・削除なし）\n"
+                f"→ パスワード変更直後などは再ログインが必要かも:\n"
+                f"  python3 playwright_login.py {account}\n"
+                f"  gh secret set {session_env_key} --repo AyaKuroki929/threads-bot < {session_basename}\n"
+                f"https://github.com/AyaKuroki929/threads-bot/actions"
+            )
+        else:
+            msg = (
+                f"⚠️ {account_label} 自動コメント 0件{throttle_line}\n"
+                f"処理:{len(results)}件\n"
+                f"  返信無効アカウント:{disabled}件（プール温存）\n"
+                f"  Playwrightエラー:{throttle_errors}件\n"
+                f"  フィルタースキップ:{filtered}件\n"
+                f"https://github.com/AyaKuroki929/threads-bot/actions"
+            )
         _send_line(line_token, msg)
         print(f"[comment] LINE通知送信: 0件アラート")
