@@ -13,7 +13,9 @@ import random
 import urllib.request
 import urllib.parse
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+JST = timezone(timedelta(hours=9))
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -88,11 +90,16 @@ def get_used_posts(salon_id, slot):
 
 
 def already_posted_today(salon_id, slot):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # 「今日」はJST(Asia/Tokyo)基準で判定する。
+    # 投稿はJSTスケジュール(7/12/21時)だが朝7時=UTC前日22時で、UTC日付だと
+    # UTCの境目(0時UTC=朝9時JST)を朝投稿がまたぎ、前日分を当日扱いして誤スキップ→
+    # 遅延した予備実行が二重投稿し、朝投稿が9時台に固定される不具合があった。
+    start_jst = datetime.now(JST).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_utc = start_jst.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = supabase_get("post_logs", {
         "salon_id": f"eq.{salon_id}",
         "slot": f"eq.{slot}",
-        "posted_at": f"gte.{today}T00:00:00Z",
+        "posted_at": f"gte.{start_utc}",
         "select": "id",
         "limit": "1",
     })
