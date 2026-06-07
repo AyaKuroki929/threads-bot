@@ -130,7 +130,6 @@ def main():
         sys.exit(1)
 
     print(f"[oauth_reminder] 開始 {datetime.now(timezone.utc).isoformat()}")
-    print(f"[diag] CLIENT_LINE_TOKEN prefix={CLIENT_LINE_TOKEN[:6]!r} len={len(CLIENT_LINE_TOKEN)}")
 
     candidates = fetch_pending_users()
     print(f"[oauth_reminder] step_sent_at から{REMINDER_HOURS}時間超のリマインド未送信ユーザー: {len(candidates)}件")
