@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 5
     env:
       TZ: Asia/Tokyo
-      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
