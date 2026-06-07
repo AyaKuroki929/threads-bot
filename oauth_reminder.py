@@ -61,7 +61,7 @@ def send_client_reminder(line_uid: str, customer_id: str):
     """クライアントにリマインドLINEを送信"""
     connect_url = f"https://saas.shikisai.work/api/connect?customer_id={urllib.parse.quote(customer_id)}"
     text = (
-        "こんにちは！とうこさんサービスです😊\n\n"
+        "こんにちは！😊\n\n"
         "Threadsアカウントとの連携がまだ完了していないようです。\n"
         "設定が完了するまで自動配信が始まりません💦\n\n"
         "お手数ですが、以下の手順をお試しください👇\n\n"
