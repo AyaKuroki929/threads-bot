@@ -10,6 +10,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import datetime, timezone, timedelta
 
 SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
@@ -161,12 +162,18 @@ def main():
             print(f"[sent] {display}: リマインド送信完了（経過{hours}時間）")
             sent_list.append(f"{display}（@{threads_id}・経過{hours}h）")
         except Exception as e:
-            print(f"[ERROR] {display}: リマインド送信失敗 → {e}", file=sys.stderr)
+            detail = str(e)
+            if isinstance(e, urllib.error.HTTPError):
+                try:
+                    detail = f"{e} | {e.read().decode('utf-8', 'replace')[:400]}"
+                except Exception:
+                    pass
+            print(f"[ERROR] {display}: リマインド送信失敗 → {detail}", file=sys.stderr)
             notify_admin(
                 f"⚠️ OAuthリマインド送信失敗\n\n"
                 f"クライアント: {display}\n"
                 f"Threads ID: {threads_id}\n"
-                f"エラー: {e}\n\n"
+                f"エラー: {detail}\n\n"
                 f"手動でフォロー検討してください。"
             )
 
