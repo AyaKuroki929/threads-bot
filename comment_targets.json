@@ -1,11 +1,5 @@
 [
   {
-    "account": "taku.h5",
-    "axis": "自動発見",
-    "note": "検索キーワード: 大阪 美容サロン",
-    "verified": true
-  },
-  {
     "account": "pakapka.uma",
     "axis": "自動発見",
     "note": "検索キーワード: 大阪 美容サロン",
@@ -367,12 +361,6 @@
   },
   {
     "account": "ann_biyou",
-    "axis": "自動発見",
-    "note": "検索キーワード: 大阪 30代 美容",
-    "verified": true
-  },
-  {
-    "account": "yuuichi0425_thr",
     "axis": "自動発見",
     "note": "検索キーワード: 大阪 30代 美容",
     "verified": true
@@ -774,12 +762,6 @@
     "verified": true
   },
   {
-    "account": "rurun2525",
-    "axis": "自動発見",
-    "note": "検索キーワード: 健康 女性",
-    "verified": true
-  },
-  {
     "account": "tanuki_bala",
     "axis": "自動発見",
     "note": "検索キーワード: 健康 女性",
@@ -985,12 +967,6 @@
   },
   {
     "account": "ma.marica",
-    "axis": "自動発見",
-    "note": "検索キーワード: 女性 50代",
-    "verified": true
-  },
-  {
-    "account": "yamatomo_30",
     "axis": "自動発見",
     "note": "検索キーワード: 女性 50代",
     "verified": true
