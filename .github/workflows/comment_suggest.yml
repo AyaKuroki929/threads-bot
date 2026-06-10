@@ -1,0 +1,65 @@
+name: bemolle Comment Suggest (手動コメント支援)
+
+# 重度制限中のbemolle向け。Botは候補(URL+コメント文)をLINEで送るだけ。送信は人間が手動。
+on:
+  schedule:
+    - cron: '30 22 * * *'   # 07:30 JST 毎日
+  workflow_dispatch:
+    inputs:
+      count:
+        description: '候補件数'
+        required: false
+        default: '3'
+
+jobs:
+  suggest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      TZ: Asia/Tokyo
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+      THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
+      SUGGEST_COUNT: ${{ github.event.inputs.count || '3' }}
+      COMMENT_COOLDOWN_DAYS: '14'
+      POST_AGE_LIMIT_DAYS: '30'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright anthropic -q
+          playwright install chromium --with-deps
+
+      - name: Pull latest state
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot"
+          git pull --rebase --autostash origin main 2>&1 || true
+
+      - name: Generate & send suggestions
+        run: |
+          if [ -z "$THREADS_SESSION" ]; then
+            echo "⚠️ THREADS_SESSION 未設定 → スキップ"; exit 0
+          fi
+          python3 bemolle_suggest.py
+
+      - name: Commit state
+        run: |
+          git add commented_posts.json comment_targets.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no changes"
+          else
+            git commit -m "state: bemolle suggest $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            for i in 1 2 3 4 5; do
+              git pull --rebase --autostash -X ours origin main 2>&1 || true
+              git push && break
+              sleep $((RANDOM % 8 + 4))
+            done
+          fi
