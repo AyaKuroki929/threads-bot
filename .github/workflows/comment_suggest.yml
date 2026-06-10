@@ -3,7 +3,7 @@ name: bemolle Comment Suggest (手動コメント支援)
 # 重度制限中のbemolle向け。Botは候補(URL+コメント文)をLINEで送るだけ。送信は人間が手動。
 on:
   schedule:
-    - cron: '30 22 * * *'   # 07:30 JST 毎日
+    - cron: '0 22 * * *'   # 07:00 JST 毎日
   workflow_dispatch:
     inputs:
       count:
