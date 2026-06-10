@@ -47,8 +47,13 @@ jobs:
             echo "personal=${{ github.event.inputs.account == 'personal' || github.event.inputs.account == 'both' }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
-            # 個人はクラウド(GH Actions)で通常運用（全スロット稼働）。
-            echo "personal=true" >> $GITHUB_OUTPUT
+            # 個人: 復活直後にフル稼働させたら36分で再制限された(2026-06-10)。データセンターIPでの
+            # 自動化は再制限を招くため当面は朝1回だけの控えめ運用に戻す。安定後/ローカル移管後に見直す。
+            if [ "${{ github.event.action }}" = "comment-morning" ]; then
+              echo "personal=true" >> $GITHUB_OUTPUT
+            else
+              echo "personal=false" >> $GITHUB_OUTPUT
+            fi
             # bemolleは2026-06-10にローカルMac(住宅IP)実行へ移管。データセンターIPだと
             # アクション制限で反映ゼロになるため、クラウドでは動かさない（二重実行防止）。
             # ローカル実行: ~/threads_bot/comment_local_bemolle.sh（launchd com.threads_bot.comment_bemolle）
@@ -96,7 +101,7 @@ jobs:
           THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
           IG_USERNAME_PERSONAL: ${{ secrets.IG_USERNAME_PERSONAL }}
           IG_PASSWORD_PERSONAL: ${{ secrets.IG_PASSWORD_PERSONAL }}
-          MAX_COMMENTS_PER_RUN: "3"
+          MAX_COMMENTS_PER_RUN: "1"
           COMMENT_COOLDOWN_DAYS: "14"
           GLOBAL_RATELIMIT_HOURS: "6"
           COMMENT_WAIT_MIN_MS: "30000"
