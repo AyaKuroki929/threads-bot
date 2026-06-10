@@ -446,12 +446,19 @@ def _input_text(page, text):
     page.keyboard.press("Control+a")
     page.keyboard.press("Delete")
     page.wait_for_timeout(200)
+    # 人間らしいタイピング: 1文字ごとに速度をばらつかせ、たまに思考の間を入れる。
+    # 等間隔の高速入力は bot 検出の典型シグナルなので避ける。
     for i, line in enumerate(text.split("\n")):
         if i > 0:
             page.keyboard.press("Shift+Enter")
-        if line:
-            page.keyboard.type(line, delay=25)
-    page.wait_for_timeout(800)
+            page.wait_for_timeout(random.randint(120, 400))
+        for ch in line:
+            page.keyboard.type(ch)
+            d = random.randint(55, 160)
+            if random.random() < 0.06:           # 6%の確率で「考える間」
+                d += random.randint(250, 900)
+            page.wait_for_timeout(d)
+    page.wait_for_timeout(random.randint(600, 1400))
 
 
 def _click_submit(page):
@@ -1085,7 +1092,17 @@ def _post_comment_to_url(page, post_url, comment_text):
         page.wait_for_selector('div[data-pressable-container="true"]', timeout=8000)
     except Exception:
         pass
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(random.randint(1500, 3200))
+    # 人間らしい「投稿を読む」挙動: 少しスクロールして読む間を取ってから返信する。
+    # いきなり返信ボタンを押すのは bot 検出シグナルになるため。
+    try:
+        for _ in range(random.randint(1, 3)):
+            page.mouse.wheel(0, random.randint(200, 600))
+            page.wait_for_timeout(random.randint(700, 2200))
+        page.mouse.wheel(0, -random.randint(100, 400))  # 返信ボタンの方へ少し戻る
+        page.wait_for_timeout(random.randint(400, 1100))
+    except Exception:
+        pass
     post_id = post_url.rstrip("/").split("/")[-1]
     # 元投稿コンテナの返信ボタンを探す
     reply_btn = None
@@ -1106,15 +1123,17 @@ def _post_comment_to_url(page, post_url, comment_text):
     if reply_btn is None or reply_btn.count() == 0:
         raise RuntimeError("コメント制限アカウント（返信ボタンが見つかりません）")
     reply_btn.scroll_into_view_if_needed()
-    page.wait_for_timeout(300)
+    page.wait_for_timeout(random.randint(400, 1100))
     reply_btn.click()
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(random.randint(1500, 2800))
     if page.locator('div[role="dialog"]').count() == 0:
         raise RuntimeError("返信モーダルが開きませんでした")
+    # 入力前に一拍（モーダルを見てから書き始める人間の間）
+    page.wait_for_timeout(random.randint(500, 1500))
     _input_text(page, comment_text)
-    page.wait_for_timeout(500)
+    page.wait_for_timeout(random.randint(500, 1300))
     _click_submit(page)
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(random.randint(1800, 3000))
     # 投稿後検証: ダイアログが閉じても「実際に反映された」とは限らない。
     # アクション制限中の垢は submit が黙って破棄され、ダイアログだけ閉じる（＝偽の成功）。
     return _verify_comment_posted(page, post_url, comment_text)
@@ -1303,6 +1322,10 @@ def _do_auto_comments(page, dry_run=False):
     all_candidates = eligible.copy()
     random.shuffle(all_candidates)
     print(f"[comment] 未コメント{len(all_candidates)}件から最大{max_ok}件成功まで試行")
+    # 初動ジッター: cronの定時ぴったりに動くのはbotの典型。開始を不規則にずらす。
+    _jitter = random.randint(20, 180)
+    print(f"[comment] 人間らしさのため開始を{_jitter}秒ずらします")
+    page.wait_for_timeout(_jitter * 1000)
 
     results = []
     ok_count = 0
