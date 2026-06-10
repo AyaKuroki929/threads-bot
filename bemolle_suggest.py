@@ -83,18 +83,32 @@ def main():
             url, text, dt = post._get_target_latest_post(page, acc)
             if not url or not text:
                 continue
+            post_id = url.rstrip("/").split("/")[-1]
+            # 【二重投稿防止①】この投稿IDに既にコメント記録があれば絶対に提案しない
+            if f"/{acc}/{post_id}" in commented or any(k.endswith("/" + post_id) for k in commented):
+                print(f"[suggest] @{acc} {post_id} は既にコメント記録あり → スキップ（二重防止）")
+                continue
             if dt and dt < datetime.utcnow() - timedelta(days=post.POST_AGE_LIMIT_DAYS):
                 continue
             if any(w in text for w in post._NEGATIVE_IMPRESSION_SKIP_WORDS):
                 continue
             if any(w in text for w in post._ILLNESS_DEATH_WORDS):
                 continue
+            # 【二重投稿防止②】投稿ページに既にbemolle_dietの返信があればスキップ（手動分も検知）
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(3500)
+                if "bemolle_diet" in page.locator("body").inner_text():
+                    print(f"[suggest] @{acc} {post_id} に既にbemolle_dietの返信あり → スキップ（二重防止）")
+                    commented[f"/{acc}/{post_id}"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    continue
+            except Exception:
+                pass
             comment = post._generate_comment(text, t.get("note", ""))
             if not comment:
                 continue
             suggestions.append((acc, url, comment))
-            # 重複提案を防ぐため記録（手動送信前提で通常のクールダウン対象にする）
-            post_id = url.rstrip("/").split("/")[-1]
+            # 提案した投稿を記録（再提案・二重投稿の防止）
             commented[f"/{acc}/{post_id}"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[suggest] @{acc} 候補生成: {comment}")
         browser.close()
@@ -108,7 +122,7 @@ def main():
 
     # ヘッダーは送らない（配信数の節約）。各候補を「URL1通 + コメント文1通」で送る。
     for i, (acc, url, comment) in enumerate(suggestions, 1):
-        send_line(f"📍 {i}件目（@{acc}）投稿はこちら👇\n{url}")
+        send_line(f"📍 スレッズ投稿{i}件目（@{acc}）👇\n{url}")
         send_line(comment)  # ← これ単独。丸ごとコピーできる
     print(f"[suggest] {len(suggestions)}件をLINE送信完了")
 
