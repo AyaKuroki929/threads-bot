@@ -45,6 +45,10 @@ jobs:
             if [ $? -eq 0 ]; then
               echo "ok=true" >> $GITHUB_OUTPUT
               echo "[bemolle] GH Secretsを更新しました"
+              # instagram-stories-bemolle（Threads→ストーリー化）にも同じトークンを同期
+              printf "%s" "$NEW_TOKEN" | gh secret set THREADS_API_TOKEN_BEMOLLE --repo AyaKuroki929/instagram-stories-bemolle \
+                && echo "[bemolle] instagram-stories-bemolle にも同期しました" \
+                || echo "[bemolle] instagram-stories-bemolle 同期失敗（PAT権限を確認）" >&2
             else
               echo "ok=false" >> $GITHUB_OUTPUT
               echo "[bemolle] GH Secrets更新失敗" >&2
