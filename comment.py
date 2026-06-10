@@ -331,9 +331,11 @@ if not dry_run and ok == 0 and session_ok:
         _send_line(line_token, msg)
         print(f"[comment] LINE通知送信: 0件アラート")
 
-# ok>0 なのに1件も反映確認できず、かつ明確に「反映されず」が出ている場合は
-# シャドウ/アクション制限の疑い。従来は偽のok=Nで無音だった失敗を必ず通知する。
-elif not dry_run and ok > 0 and verified_ok == 0 and unverified_fail >= 1 and session_ok:
+# ok>0 なのに1件も反映確認できず「反映されず」が複数件 出ている場合のみ
+# シャドウ/アクション制限の疑いとして通知する。
+# 反映確認は折りたたみ等で取りこぼす（誤判定）ことがあるため、1件だけでは鳴らさない
+# （個人@yama.a.noteは実際は投稿成功なのに誤報が飛んだ。閾値を2件以上に上げて誤報を防ぐ）。
+elif not dry_run and ok > 0 and verified_ok == 0 and unverified_fail >= 2 and session_ok:
     account_label = "個人" if account == "personal" else "ベモーレ"
     if line_token:
         msg = (

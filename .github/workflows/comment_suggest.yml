@@ -2,8 +2,10 @@ name: bemolle Comment Suggest (手動コメント支援)
 
 # 重度制限中のbemolle向け。Botは候補(URL+コメント文)をLINEで送るだけ。送信は人間が手動。
 on:
-  schedule:
-    - cron: '0 22 * * *'   # 07:00 JST 毎日
+  # GitHub内蔵scheduleは遅延/スキップが多いため、他workflowと同じ cron-job.org の
+  # repository_dispatch(comment-morning) に相乗りして毎朝確実に1回だけ発火させる。
+  repository_dispatch:
+    types: [comment-morning]
   workflow_dispatch:
     inputs:
       count:

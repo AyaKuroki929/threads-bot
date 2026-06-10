@@ -924,6 +924,9 @@ def _generate_comment(post_text: str, account_note: str):
                 "【重要】スキンケア成分・美容成分の組み合わせや使い方について、推奨・否定・アドバイスを一切しない。"
                 "成分（ビタミンC・レチノール・ナイアシンアミド・AHA・BHAなど）に言及するときは、推薦でも批判でもなく、共感や感想にとどめる。"
                 "サロンオーナーとして軽率なコメントをしない。"
+                "【最重要】あなたは30代後半（38歳）。相手が50代・60代・更年期・子育て中・孫がいる・闘病中など"
+                "自分と違う属性でも、『私も50代』『私も更年期で』のように自分がその属性であるかのように偽らない。"
+                "共感は『〜なんですね』『〜って大変ですよね』の形にし、自分の年齢・世代・家族構成・経歴を相手に合わせて捏造しない。"
             )
         else:
             system_prompt = (
@@ -933,6 +936,9 @@ def _generate_comment(post_text: str, account_note: str):
                 "AIが書いたと思われるような文章は絶対に書かない。"
                 "【重要】一人称は必ず「私」。「うち」「うちの」は絶対に使わない。"
                 "【重要】投稿の内容を否定・批判・疑問視するコメントは絶対に書かない。共感・肯定・興味を示すコメントに徹する。"
+                "【最重要】あなたは30代後半（38歳）。相手が50代・60代・更年期・子育て中・孫がいる・闘病中など"
+                "自分と違う属性でも、『私も50代』『私も更年期で』のように自分がその属性であるかのように偽らない。"
+                "共感は『〜なんですね』『〜って大変ですよね』の形にし、自分の年齢・世代・家族構成・経歴を相手に合わせて捏造しない。"
             )
 
         ingredient_rule = (
@@ -1164,22 +1170,36 @@ def _verify_comment_posted(page, post_url, comment_text):
     snippet = (comment_text or "").strip()[:16]
     if not snippet:
         return None
+
+    def _scan(times, wait):
+        for _ in range(times):
+            try:
+                if snippet in page.locator("body").inner_text():
+                    return True
+            except Exception:
+                pass
+            page.mouse.wheel(0, 2500)
+            page.wait_for_timeout(wait)
+        return False
+
+    found = False
+    # ① 投稿ページで確認（待ち・スクロールを増やして取りこぼしを減らす）
     try:
         page.goto(post_url, wait_until="domcontentloaded", timeout=25000)
-        page.wait_for_timeout(3500)
-        for _ in range(3):
-            try:
-                body = page.locator("body").inner_text()
-            except Exception:
-                body = ""
-            if snippet in body:
-                return True
-            page.mouse.wheel(0, 2500)
-            page.wait_for_timeout(1500)
-        return False
+        page.wait_for_timeout(4000)
+        found = _scan(4, 1800)
     except Exception as e:
-        print(f"[verify] 反映確認エラー（判定不能）: {e}")
-        return None
+        print(f"[verify] 投稿ページ確認エラー: {e}")
+    # ② 自分のプロフィールの「返信」タブで確認（新返信が確実に出る・誤報の主因対策）
+    if not found:
+        try:
+            page.goto(f"https://www.threads.com/@{USERNAME}/replies",
+                      wait_until="domcontentloaded", timeout=25000)
+            page.wait_for_timeout(4000)
+            found = _scan(4, 1500)
+        except Exception as e:
+            print(f"[verify] 返信タブ確認エラー: {e}")
+    return True if found else False
 
 
 def _do_auto_comments(page, dry_run=False):
