@@ -727,49 +727,67 @@ def _discover_new_accounts(page, already_done_accounts, max_new=20):
 
 
 def _get_target_latest_post(page, account):
-    """@account の最新投稿のURLとテキストを取得。取得できなければ (None, '', None) を返す。"""
-    try:
-        page.goto(f"https://www.threads.com/@{account}", wait_until="domcontentloaded", timeout=20000)
-        page.wait_for_timeout(3000)
-        articles = page.locator('div[data-pressable-container="true"]')
-        if articles.count() == 0:
-            articles = page.locator('article')
-        if articles.count() == 0:
-            return None, "", None
-        first = articles.first
-        # URL取得
-        time_link = first.locator('time').first
-        if time_link.count() == 0:
-            return None, "", None
-        href = time_link.evaluate("el => el.closest('a')?.href")
-        if not href or "/post/" not in href:
-            return None, "", None
-        # 投稿日時取得
-        post_dt = None
+    """@account の最新投稿のURLとテキストを取得。取得できなければ (None, '', None) を返す。
+    ローカル(headless)は描画が遅く投稿コンテナの出現が3秒に間に合わないことがあるため、
+    time要素の出現を能動的に待ち、ダメなら1回リロードして再試行する。"""
+    for _attempt in range(2):
         try:
-            dt_str = time_link.get_attribute("datetime")
-            if dt_str:
-                from datetime import timezone
-                post_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
-        except Exception:
-            pass
-        # テキスト取得（投稿本文を抜き出す）
-        post_text = ""
-        try:
-            # span / div 内のテキストを収集（time要素を除く）
-            text_nodes = first.locator('span, div[dir="auto"]')
-            texts = []
-            for i in range(min(text_nodes.count(), 20)):
-                t = text_nodes.nth(i).inner_text().strip()
-                if t and len(t) > 5 and t not in texts:
-                    texts.append(t)
-            post_text = " ".join(texts[:6])[:400]
-        except Exception:
-            pass
-        return href, post_text, post_dt
-    except Exception as e:
-        print(f"[comment] @{account} 最新投稿取得失敗: {e}")
-        return None, "", None
+            page.goto(f"https://www.threads.com/@{account}", wait_until="domcontentloaded", timeout=20000)
+            # 投稿＋時刻リンクが描画されるまで能動的に待つ（固定3秒より堅い）
+            try:
+                page.wait_for_selector('div[data-pressable-container="true"] time', timeout=10000)
+            except Exception:
+                pass
+            page.wait_for_timeout(1500)
+            articles = page.locator('div[data-pressable-container="true"]')
+            if articles.count() == 0:
+                articles = page.locator('article')
+            if articles.count() == 0:
+                if _attempt == 0:
+                    page.wait_for_timeout(2500)
+                    continue
+                return None, "", None
+            first = articles.first
+            # URL取得
+            time_link = first.locator('time').first
+            if time_link.count() == 0:
+                if _attempt == 0:
+                    continue
+                return None, "", None
+            href = time_link.evaluate("el => el.closest('a')?.href")
+            if not href or "/post/" not in href:
+                if _attempt == 0:
+                    continue
+                return None, "", None
+            # 投稿日時取得
+            post_dt = None
+            try:
+                dt_str = time_link.get_attribute("datetime")
+                if dt_str:
+                    from datetime import timezone
+                    post_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                pass
+            # テキスト取得（投稿本文を抜き出す）
+            post_text = ""
+            try:
+                # span / div 内のテキストを収集（time要素を除く）
+                text_nodes = first.locator('span, div[dir="auto"]')
+                texts = []
+                for i in range(min(text_nodes.count(), 20)):
+                    t = text_nodes.nth(i).inner_text().strip()
+                    if t and len(t) > 5 and t not in texts:
+                        texts.append(t)
+                post_text = " ".join(texts[:6])[:400]
+            except Exception:
+                pass
+            return href, post_text, post_dt
+        except Exception as e:
+            if _attempt == 0:
+                continue
+            print(f"[comment] @{account} 最新投稿取得失敗: {e}")
+            return None, "", None
+    return None, "", None
 
 
 # この投稿トピックへのコメントはブランドイメージ保護のため一切しない
