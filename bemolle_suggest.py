@@ -49,10 +49,24 @@ def send_line(text):
     time.sleep(0.6)  # 順序を保つため少し待つ
 
 
+def _load_exclude():
+    """手動で既にコメント済み等、二度と提案しないアカウントの除外リスト（@なし小文字）。"""
+    path = os.path.join(_BASE, "comment_exclude_bemolle.json")
+    try:
+        return {str(a).lstrip("@").lower() for a in json.load(open(path, encoding="utf-8"))}
+    except Exception:
+        return set()
+
+
 def main():
     targets = json.load(open(post.COMMENT_TARGETS_FILE, encoding="utf-8"))
     commented = post._load_commented()
-    eligible = [t for t in targets if not post._already_commented_recently(commented, t.get("account", ""))]
+    exclude = _load_exclude()
+    eligible = [
+        t for t in targets
+        if not post._already_commented_recently(commented, t.get("account", ""))
+        and t.get("account", "").lstrip("@").lower() not in exclude
+    ]
     random.shuffle(eligible)
 
     suggestions = []
@@ -92,8 +106,7 @@ def main():
         print("[suggest] 候補0件")
         return
 
-    # ヘッダー → 各候補（URL1通 + コメント文1通）
-    send_line(f"☕ bemolle 今日のコメント候補 {len(suggestions)}件\n「投稿リンク」を開いて、その下の「コメント文」だけの通知を丸ごとコピーして貼り付けて送ってね🙏")
+    # ヘッダーは送らない（配信数の節約）。各候補を「URL1通 + コメント文1通」で送る。
     for i, (acc, url, comment) in enumerate(suggestions, 1):
         send_line(f"📍 {i}件目（@{acc}）投稿はこちら👇\n{url}")
         send_line(comment)  # ← これ単独。丸ごとコピーできる

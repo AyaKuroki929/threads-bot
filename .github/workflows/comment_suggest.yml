@@ -23,7 +23,7 @@ jobs:
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
       THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
       SUGGEST_COUNT: ${{ github.event.inputs.count || '3' }}
-      COMMENT_COOLDOWN_DAYS: '14'
+      COMMENT_COOLDOWN_DAYS: '90'
       POST_AGE_LIMIT_DAYS: '30'
     steps:
       - uses: actions/checkout@v4
