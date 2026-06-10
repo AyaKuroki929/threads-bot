@@ -47,15 +47,12 @@ jobs:
             echo "personal=${{ github.event.inputs.account == 'personal' || github.event.inputs.account == 'both' }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
-            # 個人は2026-06-10に復活確認（反映確認=1）→ 通常運用（全スロット稼働）に復帰。
+            # 個人はクラウド(GH Actions)で通常運用（全スロット稼働）。
             echo "personal=true" >> $GITHUB_OUTPUT
-            # bemolle はクリーンセッションにしても反映ゼロ＝アカウント個別に自動化検出され制限継続中。
-            # 回復プローブとして comment-morning の1日1回だけ継続（反映確認が出たら通常へ戻す）。
-            if [ "${{ github.event.action }}" = "comment-morning" ]; then
-              echo "bemolle=true" >> $GITHUB_OUTPUT
-            else
-              echo "bemolle=false" >> $GITHUB_OUTPUT
-            fi
+            # bemolleは2026-06-10にローカルMac(住宅IP)実行へ移管。データセンターIPだと
+            # アクション制限で反映ゼロになるため、クラウドでは動かさない（二重実行防止）。
+            # ローカル実行: ~/threads_bot/comment_local_bemolle.sh（launchd com.threads_bot.comment_bemolle）
+            echo "bemolle=false" >> $GITHUB_OUTPUT
             echo "dry=false" >> $GITHUB_OUTPUT
           fi
 
