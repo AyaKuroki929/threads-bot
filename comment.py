@@ -198,12 +198,27 @@ else:
 line_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    # COMMENT_HEADED=1 で実ブラウザ表示(headful)＋自動化マーカー抑止。重度フラグ垢の
+    # bot検出回避テスト用。COMMENT_CHROME_CHANNEL=chrome で実Google Chromeを使う。
+    _headed = os.environ.get("COMMENT_HEADED") == "1"
+    _args = ["--disable-blink-features=AutomationControlled"] if _headed else []
+    _chan = os.environ.get("COMMENT_CHROME_CHANNEL", "")
+    try:
+        browser = p.chromium.launch(headless=not _headed, args=_args,
+                                    **({"channel": _chan} if _chan else {}))
+    except Exception as _e:
+        print(f"[comment] 指定ブラウザ起動失敗({_e}) → bundled chromiumにフォールバック")
+        browser = p.chromium.launch(headless=not _headed, args=_args)
     context = browser.new_context(
         storage_state=session_file,
         locale="ja-JP",
         timezone_id="Asia/Tokyo",
     )
+    if _headed:
+        # stealth: navigator.webdriver 等の自動化マーカーを隠す
+        context.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+        )
     page = context.new_page()
 
     # セッション有効性チェック（全アカウント共通）
