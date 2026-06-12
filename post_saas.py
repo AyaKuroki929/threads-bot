@@ -329,6 +329,21 @@ def _enforce_threads_limit(texts):
     return out
 
 
+# Meta(Threads)側の一時障害（HTTP 5xx / 429 / is_transient）は数分続くことがある。
+# その場合は段階的に待ち時間を延ばして粘る（30秒→2分→5分）。待っている間に
+# Metaが復旧すれば投稿成功する。通常エラー（400等の恒久エラー）は短い待ちで済ます。
+TRANSIENT_RETRY_WAITS = [30, 120, 300]  # 一時障害時の待機秒（失敗回数ごと）
+QUICK_RETRY_WAIT = 10                    # その他エラー時の待機秒
+MAX_POST_ATTEMPTS = len(TRANSIENT_RETRY_WAITS) + 1  # 合計4回試行
+
+
+def _is_transient_error(e):
+    """Meta側の一時障害（リトライで回復しうる）かどうか。"""
+    s = str(e)
+    return any(marker in s for marker in (
+        "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "HTTP 429", "is_transient"))
+
+
 def threads_post(user_id, token, texts, topic_tag=None):
     """単発またはツリー投稿。texts: list[str]"""
     reply_to_id = None
@@ -336,7 +351,7 @@ def threads_post(user_id, token, texts, topic_tag=None):
     for i, text in enumerate(texts):
         tag = topic_tag
         last_exc = None
-        for attempt in range(1, 4):
+        for attempt in range(1, MAX_POST_ATTEMPTS + 1):
             try:
                 post_id = _api_post(user_id, token, text,
                                     reply_to_id=reply_to_id,
@@ -347,9 +362,15 @@ def threads_post(user_id, token, texts, topic_tag=None):
                 raise
             except Exception as e:
                 last_exc = e
-                print(f"[api] part {i+1}/{len(texts)} 試行{attempt}/3 失敗: {e}")
-                if attempt < 3:
-                    time.sleep(10)
+                print(f"[api] part {i+1}/{len(texts)} 試行{attempt}/{MAX_POST_ATTEMPTS} 失敗: {e}")
+                if attempt < MAX_POST_ATTEMPTS:
+                    if _is_transient_error(e):
+                        wait = TRANSIENT_RETRY_WAITS[attempt - 1]
+                        print(f"[api]   → 一時障害の疑い。{wait}秒待って再試行")
+                    else:
+                        wait = QUICK_RETRY_WAIT
+                        print(f"[api]   → {wait}秒待って再試行")
+                    time.sleep(wait)
         if last_exc:
             raise last_exc
 
