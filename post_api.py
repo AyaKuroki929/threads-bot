@@ -64,7 +64,12 @@ def _maybe_add_instagram_cta(texts: list) -> list:
                else _INSTAGRAM_CTA_PERSONAL_GENERIC
         cta = random.choice(pool)
     result = list(texts)
-    result[-1] = result[-1].rstrip() + cta
+    candidate = result[-1].rstrip() + cta
+    if len(candidate) > 500:
+        # CTAを足すと500字上限を超える → CTAは付けない（投稿失敗を防ぐ）
+        print(f"[cta] 本文{len(result[-1])}字＋CTAで500字超過のためCTA省略")
+        return texts
+    result[-1] = candidate
     print(f"[cta] Instagram誘導追加: 「{cta.strip()}」")
     return result
 
@@ -304,6 +309,12 @@ def _select_topic(texts, username):
 
 def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     """コンテナ作成 → 待機 → 公開。post_id を返す。"""
+    # 500字上限の安全キャップ（どんな生成でも長さ起因で投稿失敗しないように）
+    if len(text) > 500:
+        _cut = text[:500]
+        _b = max(_cut.rfind("。"), _cut.rfind("！"), _cut.rfind("？"), _cut.rfind("\n"))
+        text = _cut[:_b + 1] if _b >= 300 else text[:497] + "…"
+        print(f"[cap] 投稿が500字超のため{len(text)}字に短縮しました")
     # Step 1: コンテナ作成
     payload = {
         "media_type": "TEXT",

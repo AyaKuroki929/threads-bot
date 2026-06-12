@@ -94,6 +94,8 @@ jobs:
             echo "exit_code=0" >> $GITHUB_OUTPUT
             exit 0
           fi
+          # トピックAI選択に必要（無いと毎回フォールバックになる）
+          pip install anthropic -q
           set +e
           if [ "${{ steps.params.outputs.dry }}" = "true" ]; then
             python3 post_api.py ${{ steps.params.outputs.name }} --dry-run
