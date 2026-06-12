@@ -368,6 +368,21 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
         raise RuntimeError(f"公開失敗 HTTP {e.code}: {body[:200]}")
 
 
+# Meta(Threads)側の一時障害（HTTP 5xx / 429 / is_transient）は数分続くことがある。
+# その間は段階的に待ち時間を延ばして粘る（30秒→2分→5分）。待機中にMetaが復旧すれば
+# 投稿成功する。通常エラー（400等の恒久エラー）は短い待ちで済ます。
+TRANSIENT_RETRY_WAITS = [30, 120, 300]  # 一時障害時の待機秒（失敗回数ごと）
+QUICK_RETRY_WAIT = 10                    # その他エラー時の待機秒
+MAX_POST_ATTEMPTS = len(TRANSIENT_RETRY_WAITS) + 1  # 合計4回試行
+
+
+def _is_transient_error(e):
+    """Meta側の一時障害（リトライで回復しうる）かどうか。"""
+    s = str(e)
+    return any(marker in s for marker in (
+        "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "HTTP 429", "is_transient"))
+
+
 def threads_api_post(user_id, token, texts, topic_tag=None):
     """単発またはツリー投稿。texts: list[str]"""
     first_post_id = None
@@ -462,9 +477,9 @@ def main():
         print(f"[jitter] {jitter_sec}秒待機（{jitter_sec // 60}分{jitter_sec % 60}秒）")
         time.sleep(jitter_sec)
 
-    # 投稿（最大3回リトライ）
+    # 投稿（一時障害は段階的バックオフで粘る: 30秒→2分→5分・計4回）
     last_exc = None
-    for attempt in range(1, 4):
+    for attempt in range(1, MAX_POST_ATTEMPTS + 1):
         try:
             post_id = threads_api_post(actual_user_id, THREADS_ACCESS_TOKEN, texts,
                                        topic_tag=topic_tag)
@@ -475,12 +490,18 @@ def main():
             sys.exit(EXIT_TOKEN_EXPIRED)
         except Exception as e:
             last_exc = e
-            print(f"[retry] 試行{attempt}/3 失敗: {e}")
-            if attempt < 3:
-                time.sleep(60)
+            print(f"[retry] 試行{attempt}/{MAX_POST_ATTEMPTS} 失敗: {e}")
+            if attempt < MAX_POST_ATTEMPTS:
+                if _is_transient_error(e):
+                    wait = TRANSIENT_RETRY_WAITS[attempt - 1]
+                    print(f"[retry]   → 一時障害の疑い。{wait}秒待って再試行")
+                else:
+                    wait = QUICK_RETRY_WAIT
+                    print(f"[retry]   → {wait}秒待って再試行")
+                time.sleep(wait)
 
     if last_exc is not None:
-        print(f"[fatal] 3回試行して投稿できませんでした: {last_exc}")
+        print(f"[fatal] {MAX_POST_ATTEMPTS}回試行して投稿できませんでした: {last_exc}")
         sys.exit(EXIT_GENERIC_FAIL)
 
     commit_used(time_slot, idx)
