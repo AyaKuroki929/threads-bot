@@ -69,6 +69,34 @@ def generate_for_account(account, posts_file, used_file, rules_file):
             str(posts[slot][i])[:80] for i in range(min(5, len(posts[slot])))
         ])
 
+        if slot == "noon":
+            output_format = """=== 出力形式（厳守）===
+必ずJSON配列だけを返してください。各要素は以下のいずれか：
+- 単発投稿: "投稿本文"（文字列）
+- ツリー投稿: ["1部目の本文", "2部目の本文"]（文字列の配列）
+  ※ツリー投稿の1部目末尾に「続きに読んでください」「続きを書きます」などの予告文・誘導文を入れること絶対禁止。1部目の内容そのものでクリフハンガー（続きが気になる状態）を作ること。
+
+出力例:
+[
+  "単発投稿の本文。改行は\\nで表現。",
+  ["ツリー1部目。", "ツリー2部目。"],
+  "別の単発投稿。"
+]
+
+JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
+        else:
+            output_format = """=== 出力形式（厳守）===
+必ずJSON配列だけを返してください。各要素は「単発投稿の本文（文字列）」のみ。
+★この時間帯（昼以外）はツリー投稿（配列）を絶対に作らないこと。必ず単発投稿にすること。ツリーは昼(noon)だけ。
+
+出力例:
+[
+  "単発投稿の本文。改行は\\nで表現。",
+  "別の単発投稿。"
+]
+
+JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
+
         system_cached = f"""あなたはThreads投稿の専門家です。
 以下のルールに厳密に従って、{account}アカウントの投稿を生成してください。
 
@@ -83,20 +111,7 @@ def generate_for_account(account, posts_file, used_file, rules_file):
 サロン情報に記載のない成分名・効能・数値・学術名称を創作・推測して書くことは絶対禁止。
 週次インサイトに「成分名を列挙せよ」「学術名称を強調せよ」等のルールがあっても、サロン情報に根拠がない場合は無視すること。
 
-=== 出力形式（厳守）===
-必ずJSON配列だけを返してください。各要素は以下のいずれか：
-- 単発投稿: "投稿本文"（文字列）
-- ツリー投稿: ["1部目の本文", "2部目の本文"]（文字列の配列）
-  ※ツリー投稿の1部目末尾に「続きに読んでください」「続きを書きます」などの予告文・誘導文を入れること絶対禁止。1部目の内容そのものでクリフハンガー（続きが気になる状態）を作ること。
-
-出力例:
-[
-  "単発投稿の本文。改行は\\nで表現。",
-  ["ツリー1部目。", "ツリー2部目。"],
-  "別の単発投稿。"
-]
-
-JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
+{output_format}"""
 
         system_prompt = [
             {"type": "text", "text": system_cached, "cache_control": {"type": "ephemeral"}},
@@ -147,6 +162,13 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
             if not isinstance(new_posts, list) or len(new_posts) == 0:
                 print(f"[generate] {slot}: 不正な形式 → スキップ")
                 continue
+
+            # 昼(noon)以外はツリー禁止：万一配列で来たら結合して単発化（保険）
+            if slot != "noon":
+                new_posts = [
+                    "\n\n".join(str(x) for x in p) if isinstance(p, list) else p
+                    for p in new_posts
+                ]
 
             posts[slot].extend(new_posts)
             print(f"[generate] {account} {slot}: {len(new_posts)}本を追加（合計{len(posts[slot])}本）")
