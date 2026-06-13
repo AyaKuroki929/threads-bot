@@ -86,7 +86,7 @@ def _publish_thread(user_id, token, text, reply_to_id=None):
         permalink = _graph_get(str(post_id), token, {"fields": "permalink"}).get("permalink", "")
     except Exception:
         pass
-    return {"id": post_id, "permalink": permalink}
+    return {"id": post_id, "permalink": permalink, "text": text}
 
 
 def _account_payload(salon):
@@ -198,8 +198,14 @@ async function publish() {{
     const r = await fetch('/dashboard?action=publish&account=' + encodeURIComponent(ACCOUNT), {{ method: 'POST' }});
     const d = await r.json();
     if (d.error) {{ st.textContent = 'Error: ' + d.error; btn.disabled = false; return; }}
-    st.innerHTML = '✅ Published! Post: <a href="'+d.post.permalink+'" target="_blank">view</a>'
-                 + ' · Reply: <a href="'+d.reply.permalink+'" target="_blank">view</a>';
+    const esc = s => (s||'').replace(/</g,'&lt;');
+    st.innerHTML =
+      '<div style="color:#1c1e21;margin-bottom:6px;">✅ Published successfully.</div>'
+      + '<div class="post"><b>Post</b> · created with threads_content_publish<br>'
+      + esc(d.post.text) + '<br><a href="'+d.post.permalink+'" target="_blank">View on Threads</a></div>'
+      + '<div class="post reply"><b>↳ Reply</b> · created with threads_manage_replies<br>'
+      + esc(d.reply.text) + '<br><a href="'+d.reply.permalink+'" target="_blank">View on Threads</a></div>';
+    btn.disabled = false;
     loadAccount();
   }} catch (e) {{
     st.textContent = 'Error while publishing.'; btn.disabled = false;
