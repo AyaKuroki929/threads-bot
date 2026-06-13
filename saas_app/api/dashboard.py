@@ -96,7 +96,7 @@ def _account_payload(salon):
     posts = []
     try:
         data = _graph_get("me/threads", token,
-                          {"fields": "id,text,permalink,timestamp,is_reply", "limit": "8"})
+                          {"fields": "id,text,permalink,timestamp", "limit": "8"})
         posts = data.get("data", [])
     except Exception:
         pass
@@ -238,7 +238,7 @@ class handler(BaseHTTPRequestHandler):
                 return _send_json(self, 500, {"error": str(e)})
 
         # それ以外は英語ダッシュボードHTMLを返す
-        html = PAGE_HTML.replace("{account_json}", json.dumps(account))
+        html = PAGE_HTML.format(account_json=json.dumps(account))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
