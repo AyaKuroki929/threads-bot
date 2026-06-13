@@ -1,6 +1,7 @@
 {
   "routes": [
     { "src": "/connect", "dest": "/api/connect.py" },
+    { "src": "/dashboard", "dest": "/api/dashboard.py" },
     { "src": "/callback", "dest": "/api/callback.py" },
     { "src": "/api/line-webhook", "dest": "/api/line_webhook.py" },
     { "src": "/api/stripe-webhook", "dest": "/api/stripe_webhook.py" },
