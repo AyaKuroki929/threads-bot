@@ -47,13 +47,10 @@ jobs:
             echo "personal=${{ github.event.inputs.account == 'personal' || github.event.inputs.account == 'both' }}" >> $GITHUB_OUTPUT
             echo "dry=${{ github.event.inputs.dry_run }}" >> $GITHUB_OUTPUT
           else
-            # 個人: 復活直後にフル稼働させたら36分で再制限された(2026-06-10)。データセンターIPでの
-            # 自動化は再制限を招くため当面は朝1回だけの控えめ運用に戻す。安定後/ローカル移管後に見直す。
-            if [ "${{ github.event.action }}" = "comment-morning" ]; then
-              echo "personal=true" >> $GITHUB_OUTPUT
-            else
-              echo "personal=false" >> $GITHUB_OUTPUT
-            fi
+            # 個人: 控えめ運用でもセッション寿命が約1〜3日と短く(フラグ悪化)、毎日の再ログインが
+            # 非現実的なため 2026-06-14 に自動コメントを停止し手動コメント支援(comment_suggest)へ移管。
+            # 自動を続けるとフラグを深めるため動かさない。回復後に再開検討。
+            echo "personal=false" >> $GITHUB_OUTPUT
             # bemolleは2026-06-10にローカルMac(住宅IP)実行へ移管。データセンターIPだと
             # アクション制限で反映ゼロになるため、クラウドでは動かさない（二重実行防止）。
             # ローカル実行: ~/threads_bot/comment_local_bemolle.sh（launchd com.threads_bot.comment_bemolle）

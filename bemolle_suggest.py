@@ -11,14 +11,28 @@ import os, sys, json, time, random, urllib.request
 from datetime import datetime, timedelta
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
-os.environ.setdefault("THREADS_USERNAME", "bemolle_diet")
-os.environ.setdefault("SESSION_FILE", os.path.join(_BASE, "session.json"))
-os.environ.setdefault("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets.json"))
-os.environ.setdefault("COMMENTED_FILE", os.path.join(_BASE, "commented_posts.json"))
-os.environ.setdefault("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
+# 引数でアカウント切替（bemolle / personal）。両アカとも自動送信が制限/不安定なため手動支援。
+ACCOUNT = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("bemolle", "personal") else "bemolle"
+if ACCOUNT == "personal":
+    os.environ.setdefault("THREADS_USERNAME", "aya_kuroki_0929")
+    os.environ.setdefault("SESSION_FILE", os.path.join(_BASE, "session_personal.json"))
+    os.environ.setdefault("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets_personal.json"))
+    os.environ.setdefault("COMMENTED_FILE", os.path.join(_BASE, "commented_posts_personal.json"))
+    os.environ.setdefault("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords_personal.json"))
+    _SESSION_ENV = "THREADS_SESSION_PERSONAL"
+    ACCOUNT_LABEL = "個人"
+else:
+    os.environ.setdefault("THREADS_USERNAME", "bemolle_diet")
+    os.environ.setdefault("SESSION_FILE", os.path.join(_BASE, "session.json"))
+    os.environ.setdefault("COMMENT_TARGETS_FILE", os.path.join(_BASE, "comment_targets.json"))
+    os.environ.setdefault("COMMENTED_FILE", os.path.join(_BASE, "commented_posts.json"))
+    os.environ.setdefault("COMMENT_KEYWORDS_FILE", os.path.join(_BASE, "comment_search_keywords.json"))
+    _SESSION_ENV = "THREADS_SESSION"
+    ACCOUNT_LABEL = "ベモーレ"
+USERNAME = os.environ["THREADS_USERNAME"]
 
-# GH Actions: THREADS_SESSION からセッション復元
-_session_data = os.environ.get("THREADS_SESSION", "")
+# GH Actions: セッション復元（アカウント別の環境変数から）
+_session_data = os.environ.get(_SESSION_ENV, "")
 _session_file = os.environ["SESSION_FILE"]
 if _session_data:
     with open(_session_file, "w", encoding="utf-8") as f:
@@ -50,8 +64,8 @@ def send_line(text):
 
 
 def _load_exclude():
-    """手動で既にコメント済み等、二度と提案しないアカウントの除外リスト（@なし小文字）。"""
-    path = os.path.join(_BASE, "comment_exclude_bemolle.json")
+    """二度と提案しないアカウントの除外リスト（@なし小文字）。アカウント別ファイル。"""
+    path = os.path.join(_BASE, f"comment_exclude_{ACCOUNT}.json")
     try:
         return {str(a).lstrip("@").lower() for a in json.load(open(path, encoding="utf-8"))}
     except Exception:
@@ -94,12 +108,12 @@ def main():
                 continue
             if any(w in text for w in post._ILLNESS_DEATH_WORDS):
                 continue
-            # 【二重投稿防止②】投稿ページに既にbemolle_dietの返信があればスキップ（手動分も検知）
+            # 【二重投稿防止②】投稿ページに既に自分(USERNAME)の返信があればスキップ（手動分も検知）
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 page.wait_for_timeout(3500)
-                if "bemolle_diet" in page.locator("body").inner_text():
-                    print(f"[suggest] @{acc} {post_id} に既にbemolle_dietの返信あり → スキップ（二重防止）")
+                if USERNAME in page.locator("body").inner_text():
+                    print(f"[suggest] @{acc} {post_id} に既に{USERNAME}の返信あり → スキップ（二重防止）")
                     commented[f"/{acc}/{post_id}"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     continue
             except Exception:
@@ -116,15 +130,15 @@ def main():
     post._save_commented(commented)
 
     if not suggestions:
-        send_line("☕ bemolle 今日のコメント候補：今日は適切な候補が見つかりませんでした。")
-        print("[suggest] 候補0件")
+        print(f"[suggest] {ACCOUNT_LABEL} 候補0件（LINE配信節約のため通知なし）")
         return
 
     # ヘッダーは送らない（配信数の節約）。各候補を「URL1通 + コメント文1通」で送る。
+    # どのアカウントで送るか分かるよう【ベモーレ】【個人】を明記。
     for i, (acc, url, comment) in enumerate(suggestions, 1):
-        send_line(f"📍 スレッズ投稿{i}件目（@{acc}）👇\n{url}")
+        send_line(f"📍【{ACCOUNT_LABEL}】スレッズ投稿{i}件目（@{acc}）👇\n{url}")
         send_line(comment)  # ← これ単独。丸ごとコピーできる
-    print(f"[suggest] {len(suggestions)}件をLINE送信完了")
+    print(f"[suggest] {ACCOUNT_LABEL} {len(suggestions)}件をLINE送信完了")
 
 
 if __name__ == "__main__":

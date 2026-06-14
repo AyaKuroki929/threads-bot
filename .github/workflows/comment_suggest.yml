@@ -24,7 +24,8 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
       THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
-      SUGGEST_COUNT: ${{ github.event.inputs.count || '2' }}   # LINE配信節約のため1日2件（4通）
+      THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
+      SUGGEST_COUNT: ${{ github.event.inputs.count || '1' }}   # 各アカ1件ずつ=合計4通/日（LINE枠節約）
       COMMENT_COOLDOWN_DAYS: '90'
       POST_AGE_LIMIT_DAYS: '30'
     steps:
@@ -47,14 +48,21 @@ jobs:
 
       - name: Generate & send suggestions
         run: |
-          if [ -z "$THREADS_SESSION" ]; then
-            echo "⚠️ THREADS_SESSION 未設定 → スキップ"; exit 0
+          # bemolle と 個人 をそれぞれ1件ずつ（両アカとも自動送信が不可/不安定なため手動支援）
+          if [ -n "$THREADS_SESSION" ]; then
+            python3 bemolle_suggest.py bemolle || echo "bemolle suggest 失敗"
+          else
+            echo "⚠️ THREADS_SESSION 未設定 → bemolleスキップ"
           fi
-          python3 bemolle_suggest.py
+          if [ -n "$THREADS_SESSION_PERSONAL" ]; then
+            python3 bemolle_suggest.py personal || echo "personal suggest 失敗"
+          else
+            echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → 個人スキップ"
+          fi
 
       - name: Commit state
         run: |
-          git add commented_posts.json comment_targets.json 2>/dev/null || true
+          git add commented_posts.json comment_targets.json commented_posts_personal.json comment_targets_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no changes"
           else
