@@ -11,7 +11,7 @@ on:
       count:
         description: '候補件数'
         required: false
-        default: '2'
+        default: '1'
 
 jobs:
   suggest:

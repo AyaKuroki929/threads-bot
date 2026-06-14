@@ -31,12 +31,15 @@ else:
     ACCOUNT_LABEL = "ベモーレ"
 USERNAME = os.environ["THREADS_USERNAME"]
 
-# GH Actions: セッション復元（アカウント別の環境変数から）
-_session_data = os.environ.get(_SESSION_ENV, "")
-_session_file = os.environ["SESSION_FILE"]
-if _session_data:
+# 読み取り用セッションは常に bemolle の健全なセッション(THREADS_SESSION)を使う。
+# suggestは投稿を「読む」だけ（コメント送信は人間が手動）なので、個人の候補生成でも
+# 読み取りセッションは共有できる。個人セッションは書き込み制限で死にやすく読み取りにも
+# 不安定なため使わない（＝個人のためにセッションを取り直す必要がなくなる）。
+_reading_session = os.environ.get("THREADS_SESSION", "")
+_session_file = os.path.join(_BASE, "session.json")
+if _reading_session:
     with open(_session_file, "w", encoding="utf-8") as f:
-        f.write(_session_data)
+        f.write(_reading_session)
 
 import post  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
@@ -84,6 +87,8 @@ def main():
     random.shuffle(eligible)
 
     suggestions = []
+    consecutive_fail = 0
+    MAX_FAIL = 8  # セッション異常時にプール全件を空回りしてタイムアウトするのを防ぐ
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(storage_state=_session_file, locale="ja-JP", timezone_id="Asia/Tokyo")
@@ -96,7 +101,12 @@ def main():
                 continue
             url, text, dt = post._get_target_latest_post(page, acc)
             if not url or not text:
+                consecutive_fail += 1
+                if consecutive_fail >= MAX_FAIL:
+                    print(f"[suggest] {ACCOUNT_LABEL} 連続{MAX_FAIL}件 投稿取得失敗 → セッション異常の可能性。中断")
+                    break
                 continue
+            consecutive_fail = 0
             post_id = url.rstrip("/").split("/")[-1]
             # 【二重投稿防止①】この投稿IDに既にコメント記録があれば絶対に提案しない
             if f"/{acc}/{post_id}" in commented or any(k.endswith("/" + post_id) for k in commented):
