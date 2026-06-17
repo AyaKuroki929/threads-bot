@@ -29,13 +29,6 @@ GRAPH = "https://graph.threads.net"
 # 実クライアントに誤投稿しないよう、ライブ投稿はデモ用アカウントだけ許可する
 DEMO_SALON = os.environ.get("DEMO_SALON", "aya_0929_private")
 
-# 2026-06-18 単発クリーンアップ：遅延予備cronが深夜1時台に重複投稿した6件のみ削除可能にする。
-# allowlist固定なので、この6投稿以外は絶対に削除できない（誤削除・悪用防止）。使用後にこの機能は撤去する。
-DELETE_ALLOWLIST = {
-    "17912199345222561", "18065590556448064", "18124859191724869",
-    "18470296240104009", "18058059662509714", "18106208380823972",
-}
-
 
 def _supabase_get(params):
     url = f"{SUPABASE_URL}/rest/v1/salons?{urllib.parse.urlencode(params)}"
@@ -262,38 +255,6 @@ class handler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         action = qs.get("action", [""])[0]
         account = qs.get("account", [""])[0] or qs.get("customer_id", [""])[0]
-
-        # 単発クリーンアップ：allowlistの6投稿のみ削除可。所有サロンを自動特定して削除する。
-        if action == "delete":
-            post_id = qs.get("post_id", [""])[0]
-            if post_id not in DELETE_ALLOWLIST:
-                return _send_json(self, 403, {"error": "post_id not in allowlist"})
-            try:
-                salons = _supabase_get({"is_active": "eq.true",
-                                        "select": "salon_name,access_token"})
-            except Exception as e:
-                return _send_json(self, 500, {"error": f"salon lookup failed: {e}"})
-            for s in salons:
-                token = s.get("access_token")
-                if not token:
-                    continue
-                try:
-                    data = _graph_get("me/threads", token, {"fields": "id", "limit": "25"})
-                    ids = [p.get("id") for p in data.get("data", [])]
-                except Exception:
-                    continue
-                if post_id not in ids:
-                    continue
-                # 所有サロン確定 → 削除
-                try:
-                    url = f"{GRAPH}/{post_id}?access_token={urllib.parse.quote(token)}"
-                    req = urllib.request.Request(url, method="DELETE")
-                    with urllib.request.urlopen(req, timeout=20) as r:
-                        return _send_json(self, 200, {"deleted": True, "post_id": post_id,
-                                                      "salon": s.get("salon_name"), "status": r.status})
-                except urllib.error.HTTPError as e:
-                    return _send_json(self, 502, {"error": f"delete HTTP {e.code}: {e.read().decode()[:150]}"})
-            return _send_json(self, 404, {"error": "owner salon not found for this post"})
 
         if action != "publish":
             return _send_json(self, 400, {"error": "unknown action"})
