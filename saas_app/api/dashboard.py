@@ -104,6 +104,7 @@ def _account_payload(salon):
         "username": me.get("username", ""),
         "user_id": me.get("id", ""),
         "salon_name": salon.get("salon_name", ""),
+        "is_active": salon.get("is_active"),
         "posts": posts,
     }
 
