@@ -405,6 +405,18 @@ def main():
             print(f"[filter] {SALON_FILTER} が見つかりません")
             return
 
+    # 遅延した予備cron対策（2026-06-18）：スロットの想定JST時間帯から外れて発火したら投稿しない。
+    # GitHub Actionsの大幅遅延で夜枠予備cron(12:30 UTC)が深夜1:09 JSTに発火し、JST日付が翌日に
+    # 跨いだ結果 already_posted_today が前夜の投稿を「昨日分」と誤認→夜枠を重複投稿した事故の再発防止。
+    # cron-job.org(正時)・正常な予備(正時+30分)はすべて窓内。SALON_FILTER(デモ/手動)は対象外。
+    if not SALON_FILTER:
+        SLOT_JST_WINDOWS = {"morning": range(5, 11), "noon": range(11, 17), "evening": range(19, 24)}
+        jst_hour = datetime.now(JST).hour
+        win = SLOT_JST_WINDOWS.get(SLOT)
+        if win is not None and jst_hour not in win:
+            print(f"[SKIP-ALL] {SLOT} の想定JST時間帯外（現在 {jst_hour}時JST）→ 遅延した予備cronとみなし投稿しません")
+            return
+
     results = {"ok": [], "error": [], "token_expired": []}
 
     for salon in salons:
