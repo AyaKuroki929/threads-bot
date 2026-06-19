@@ -45,7 +45,7 @@ def _get_salon(identifier):
     identifier = (identifier or "").strip()
     if not identifier:
         return None
-    select = "salon_name,threads_user_id,access_token,is_active,stripe_customer_id"
+    select = "salon_name,threads_user_id,access_token,is_active"
     for col in ("salon_name", "stripe_customer_id"):
         try:
             rows = _supabase_get({col: f"eq.{identifier}", "select": select, "limit": 1})
@@ -105,7 +105,6 @@ def _account_payload(salon):
         "user_id": me.get("id", ""),
         "salon_name": salon.get("salon_name", ""),
         "is_active": salon.get("is_active"),
-        "stripe_customer_id": salon.get("stripe_customer_id", ""),
         "posts": posts,
     }
 
