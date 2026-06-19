@@ -256,6 +256,25 @@ class handler(BaseHTTPRequestHandler):
         action = qs.get("action", [""])[0]
         account = qs.get("account", [""])[0] or qs.get("customer_id", [""])[0]
 
+        # デモ用アカウントのみ停止可（is_active=false）。実クライアントは絶対に止められない。
+        if action == "deactivate":
+            salon = _get_salon(account)
+            if not salon:
+                return _send_json(self, 404, {"error": "account not found"})
+            if salon.get("salon_name") != DEMO_SALON:
+                return _send_json(self, 403, {"error": f"deactivate restricted to {DEMO_SALON}"})
+            try:
+                url = (f"{SUPABASE_URL}/rest/v1/salons"
+                       f"?salon_name=eq.{urllib.parse.quote(DEMO_SALON)}")
+                req = urllib.request.Request(
+                    url, data=json.dumps({"is_active": False}).encode(), method="PATCH",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+                             "Content-Type": "application/json", "Prefer": "return=minimal"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    return _send_json(self, 200, {"deactivated": True, "salon": DEMO_SALON, "status": r.status})
+            except urllib.error.HTTPError as e:
+                return _send_json(self, 502, {"error": f"deactivate HTTP {e.code}: {e.read().decode()[:150]}"})
+
         if action != "publish":
             return _send_json(self, 400, {"error": "unknown action"})
 
