@@ -21,7 +21,7 @@ function onFormSubmit(e) {
     '⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n' +
     '順番を守らないと連携できません。\n\n' +
     '🔴STEP 1（先にこちらから）\n' +
-    'Threadsアプリ → プロフィール右上≡ → 設定 → アカウント → ウェブサイトのアクセス許可 →「Invites」タブ →「Threads Auto Post」の【同意する】を押してください\n\n' +
+    'Threadsアプリ → プロフィール右上≡ → その他の設定 → ウェブサイトのアクセス許可 →「Invites」タブ →「Threads Auto Post」の【同意する】を押してください\n\n' +
     '🔴STEP 2（STEP1完了後に）\n' +
     '下記URLを開いて、Instagramアカウントでログインし\n' +
     '連携を完了してください。\n' +

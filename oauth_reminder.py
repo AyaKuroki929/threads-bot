@@ -67,7 +67,7 @@ def send_client_reminder(line_uid: str, customer_id: str):
         "設定が完了するまで自動配信が始まりません💦\n\n"
         "お手数ですが、以下の手順をお試しください👇\n\n"
         "🔴 STEP 1\n"
-        "Threadsアプリ → プロフィール右上≡ → 設定 → アカウント → "
+        "Threadsアプリ → プロフィール右上≡ → その他の設定 → "
         "ウェブサイトのアクセス許可 →「Invites」タブ →"
         "「Threads Auto Post」の【同意する】を押す\n\n"
         "🔴 STEP 2\n"

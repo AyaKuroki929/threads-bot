@@ -55,7 +55,7 @@ def send_step_message(line_uid: str, customer_id: str):
         "⚠️ 必ずSTEP1→STEP2の順番で行ってください。\n"
         "順番を守らないと連携できません。\n\n"
         "🔴STEP 1（先にこちらから）\n"
-        "Threadsアプリ → プロフィール右上≡ → 設定 → アカウント → "
+        "Threadsアプリ → プロフィール右上≡ → その他の設定 → "
         "ウェブサイトのアクセス許可 →「Invites」タブ →「Threads Auto Post」の【同意する】を押してください\n\n"
         "⏰ STEP1完了後、5分ほど時間を置いてからSTEP2を行ってください。\n"
         "Meta側で承認反映に少し時間がかかります。\n\n"

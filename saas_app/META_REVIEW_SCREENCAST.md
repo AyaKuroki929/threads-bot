@@ -7,7 +7,7 @@
 
 ## ★ 録画前の必須準備（これを忘れると同意画面が出ず、また落ちます）
 1. **アプリの認証を一度解除する**（＝次のOAuthで「権限許可画面」を確実に出すため）
-   - スマホのThreadsアプリ → 設定 → アカウント → **ウェブサイトのアクセス許可（Apps and websites / Website permissions）** → **「Threads Auto Post」を探して解除/削除**
+   - スマホのThreadsアプリ → プロフィール右上≡ → **その他の設定** → **ウェブサイトのアクセス許可（Apps and websites / Website permissions）** → **「Threads Auto Post」を探して解除/削除**
    - ※解除しても、録画中のOAuthで再連携されるので問題なし（既存データも壊れません）
 2. **シークレット/プライベートウィンドウ**でChromeを開く（Threadsログインを最初から見せるため）。
 3. Threads **@aya_0929_private** のID/パスワードを用意。
