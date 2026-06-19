@@ -1,6 +1,8 @@
 # とうこさん サービス仕様書
 
 > Threads自動投稿代行サービス「とうこさん」の全体仕様・運用フロー
+>
+> 🔄 2026-06-19 更新：連携をOAuth方式（クライアント主導・callback自動登録）に、投稿を1日3回（7/12/21時JST・昼ツリー）に更新。
 
 ---
 
@@ -43,61 +45,34 @@
 
 ---
 
-### STEP 3: アカウント連携（彩さん主導・約5分・Zoom不要）
+### STEP 3: アカウント連携（OAuth・クライアント主導／彩さんは2操作のみ）
 
-> ⚡ **この作業のみ彩さんが1回だけ行う。以降は完全自動。**
+> ⚡ **旧方式（手動でトークン生成＋`register_saas_user.py`実行）は廃止。現在はOAuthでクライアント自身が連携し、`/api/callback` が自動でSupabase登録＋初回投稿生成まで行う。**
 
-#### 【準備】フォーム回答後
+#### フォーム回答後（自動）
 
-1. Googleスプレッドシートでサロン名・Threadsユーザー名（@から）を確認してメモ
+1. クライアントがGoogleフォームに回答すると、GAS（`gas_form_handler.gs`）が彩さんに「📋 フォーム回答あり」をLINE通知。通知にはサロン名・Threads ID・**send-stepリンク**が入っている。
 
-2. **Meta Developer ConsoleでThreadsテスターとして追加**  
-   → 以下のURLをブラウザで開く（Metaログイン済みのブラウザで）  
-   `https://developers.facebook.com/apps/1497479218824264/roles/roles/`  
-   → 「テスターを追加」からクライアントのInstagram/ThreadsアカウントIDを入力  
+#### 彩さんの操作（2つだけ）
 
-   💬 **①Claudeに話しかけるタイミング：** 「テスターIDが分からない」「追加できない」場合
+2. **Meta Developer ConsoleでThreadsテスターとして追加**
+   `https://developers.facebook.com/apps/1497479218824264/roles/roles/`
+   → クライアントのInstagram/ThreadsユーザーIDを入力
+   （※Metaアプリ審査が承認されれば、このテスター追加は不要になる）
 
-3. クライアントに以下をLINEで連絡する：
-   > 「お手数ですが、Threadsの設定ページから承認をお願いします。
-   > https://www.threads.com/settings/account
-   > 「テスター招待」という項目が出ているはずですので、承認ボタンを押してください。」
+   💬 **Claudeに話しかけるタイミング：** 「テスターIDが分からない」「追加できない」場合
 
-4. クライアントから「承認しました」の返信を待つ
+3. 通知内の **send-stepリンクをタップ** → STEP1/STEP2の連携手順がクライアントのLINEに自動送信される（本文は `saas_app/api/send-step.py` が生成）
 
-#### 【トークン取得・Supabase登録】
+#### クライアントの操作（連携STEP1 → 連携STEP2）
 
-5. 以下のURLを開く（Metaにログイン済みのブラウザで）  
-   `https://developers.facebook.com/apps/1497479218824264/use_cases/customize/settings/?use_case_enum=THREADS_API&selected_tab=settings&product_route=threads-api`  
-   → 「ユーザートークン生成ツール」セクションを探す  
-   → 対象ユーザーの「アクセストークンを生成」をクリック → トークンをコピー
+4. **連携STEP1**：Threadsアプリ → プロフィール右上≡ → **その他の設定** → ウェブサイトのアクセス許可 →「Invites」タブ →「Threads Auto Post」の【同意する】
 
-   💬 **②Claudeに話しかけるタイミング：** 「ユーザートークン生成ツールが見つからない」「エラーが出る」場合
+5. **連携STEP2**（STEP1の5分後）：**シークレットモード**のブラウザで連携URL（`https://saas.shikisai.work/api/connect?customer_id=...`）を開く → Threads用アカウントでログイン → 同意画面で3権限を許可
 
-6. ターミナルを開いて以下を実行：
+6. → `/api/callback` が **salonをSupabaseに自動登録（`is_active=true`）＋初回投稿生成を自動トリガー** → 完了すると彩さんに「✅ 投稿生成完了」が通知され、当日から自動配信開始
 
-   ```bash
-   cd ~/threads_bot
-   export SUPABASE_URL="..." # Supabaseの設定ページから
-   export SUPABASE_SERVICE_KEY="..." # Supabase Service Roleキー
-   python3 register_saas_user.py
-   ```
-
-   - サロン名を入力（英数字・アンダースコア推奨。例：`flowerpetals`）
-   - 手順5でコピーしたトークンを貼り付け
-   - `✅ Supabase 登録完了` と出れば完了
-
-   💬 **③Claudeに話しかけるタイミング：** スクリプトがエラーになった場合
-
----
-
-### STEP 4: 初回投稿生成（彩さんが手動実行・1回のみ）
-
-1. GitHubの「SaaS - サロン別投稿生成」ワークフローを手動実行  
-   💬 **④Claudeに話しかけるタイミング：** 「手動実行のやり方が分からない」場合
-2. 約2分後、投稿JSON（15本分）が生成される  
-   💬 「投稿JSONが生成されたか確認して」とClaudeに言えば一緒に確認できる
-3. 動作確認：「SaaS - サロン自動投稿」を手動実行して実際に投稿されるか確認
+> 彩さんの手作業は「①テスター追加」＋「②send-stepリンクをタップ」の2つだけ。トークン取得もスクリプト実行も不要（OAuthが自動でトークン取得・登録・投稿生成まで行う）。
 
 ---
 
@@ -107,14 +82,16 @@
 - Googleスプレッドシート → Claude API → `posts_saas/posts_{サロン名}.json` 生成
 - 残本数が5本以下になったとき自動で15本追加生成
 
-### STEP 6: 自動投稿（自動・毎日2回）
+### STEP 6: 自動投稿（自動・毎日3回）
 
-- GitHub Actions「SaaS - サロン自動投稿」が実行
-  - AM9時（JST）：朝投稿
-  - PM8時（JST）：夜投稿
+- GitHub Actions「SaaS - サロン自動投稿」＋ cron-job.org が実行
+  - 朝7時（JST）：朝投稿（単発）
+  - 昼12時（JST）：昼投稿（ツリー2部）
+  - 夜21時（JST）：夜投稿（単発）
+  - 正時はcron-job.orgが担当、GitHubの予備cronが正時+30分。深夜など想定時間帯外に遅延発火した場合は投稿せずスキップ（時間帯ガード）
 - Threads公式API（Graph API）で投稿
 - 投稿失敗時はLINEに通知が届く
-- **トークン切れ**の場合はLINEに専用通知（→ STEP 3の手順5〜6で再登録、約3分）
+- **トークン切れ**の場合はLINEに専用通知（→ クライアントが連携STEP2のURLをもう一度開いてOAuthし直せば復旧。彩さんはsend-stepリンクを再送するだけ）
 
 ### STEP 7: トークン自動更新（自動・月1回）
 
@@ -137,7 +114,7 @@
 - Metaのセキュリティ検知でトークンが強制無効化された
 - Meta Developerアプリの設定変更でトークンが無効になった
 
-→ 上記の場合、LINEに通知が届く。STEP 3の手順5〜6（トークン再取得・スクリプト実行）で約3分で復旧できる。
+→ 上記の場合、LINEに通知が届く。クライアントが連携STEP2のURLをもう一度開いてOAuthし直せば復旧（彩さんはsend-stepリンクを再送するだけ）。トークン取得・スクリプト実行は不要。
 
 ---
 
@@ -158,7 +135,7 @@
 
 ## 5. 投稿内容
 
-- 1日2回（朝9時・夜8時）自動投稿
+- 1日3回（朝7時・昼12時・夜21時 JST）自動投稿（昼はツリー2部、朝・夜は単発）
 - 内容はGoogleフォームの回答をもとにClaudeが生成
 - ギャップ投稿構造（期待と現実のズレを見せる構成）
 - 投稿プール：約100本を自動生成、残5本以下で自動再生成
@@ -178,8 +155,9 @@ Threads（自動投稿）
 
 Supabase（salons テーブル）
   - salon_name, threads_user_id, access_token, is_active
-    ↑ register_saas_user.py（初回登録・トークン再登録）
+    ↑ /api/callback（OAuth連携時に自動登録・is_active=true・初回投稿生成もトリガー）
     ↑ refresh_threads_token.yml（月次トークン自動更新）
+    ↑ register_saas_user.py（手動登録・テスト用。通常運用はOAuthで不要）
 
 Supabase（post_logs テーブル）
   - 投稿済み記録（重複防止・使用済み管理）
@@ -194,7 +172,7 @@ Supabase（line_users テーブル）
 
 | ワークフロー | 実行タイミング | 役割 |
 |---|---|---|
-| SaaS - サロン自動投稿 (`post_saas.yml`) | 毎日AM9時・PM8時(JST) | Threads投稿（公式API） |
+| SaaS - サロン自動投稿 (`post_saas.yml`) | 毎日 朝7時・昼12時・夜21時(JST) | Threads投稿（公式API） |
 | SaaS - サロン別投稿生成 (`generate_saas_posts.yml`) | 毎週月曜AM10時(JST) | 投稿JSON生成 |
 | Threads トークン自動更新 (`refresh_threads_token.yml`) | 毎月1日AM8時(JST) | ベモーレ・個人・全SaaSトークン更新 |
 | Heartbeat (`heartbeat.yml`) | 毎日11時・16時・23時(JST) | 投稿確認＋未投稿時の自動リカバリ |
@@ -205,9 +183,9 @@ Supabase（line_users テーブル）
 
 | タイミング | 作業 | 所要時間 |
 |---|---|---|
-| 申込後 | STEP 3の手順でテスター追加→トークン取得→スクリプト実行 | **約5分** |
+| フォーム回答後 | テスター追加＋send-stepリンクをタップ（以降はクライアントがOAuthで自分で連携） | **約2分** |
 | 通常時 | なし（完全自動） | 0分 |
-| トークン切れのLINE通知が来たとき | STEP 3の手順5〜6でトークン再取得・スクリプト実行 | **約3分** |
+| トークン切れのLINE通知が来たとき | send-stepリンクを再送 → クライアントがOAuthし直す | **約2分** |
 | 解約時 | Supabaseで`is_active=false`に変更 | 1分 |
 
 ---
