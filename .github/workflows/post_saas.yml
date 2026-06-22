@@ -70,7 +70,7 @@ jobs:
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"🔑 とうこさん トークン切れ\n\nいずれかのサロンのThreads APIトークンが無効です。\n\nGitHub Actionsのログでどのサロンか確認し、トークンを再取得してSupabaseに登録してください。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
+            -d '{"messages":[{"type":"text","text":"🔑 SaaS Threads トークン切れ\n\nいずれかのサロンのThreads APIトークンが無効です。\nGitHub Actionsのログでどのサロンか確認し、トークンを再取得してSupabaseを更新してください。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
 
       - name: LINE通知（その他エラー）
         if: failure() && steps.post.outputs.exit_code != '3'
@@ -82,4 +82,33 @@ jobs:
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ とうこさん 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ SaaS Threads 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+
+      - name: 投稿ストック自動補充（ベモーレ・個人）
+        if: success()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic -q
+          python3 generate_posts.py saas_bemolle || echo "bemolle補充失敗（処理継続）"
+          python3 generate_posts.py saas_personal || echo "personal補充失敗（処理継続）"
+
+      - name: Commit posts files（補充があった場合のみ）
+        if: success()
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot"
+          git pull --rebase --autostash origin main 2>&1 || true
+          git add posts_saas/posts_bemolle_diet.json posts_saas/posts_aya_0929_private.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no generate changes"
+          else
+            git commit -m "state: posts補充 ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            for i in 1 2 3; do
+              git pull --rebase --autostash -X ours origin main 2>&1 || true
+              git push && break || sleep 5
+            done
+          fi

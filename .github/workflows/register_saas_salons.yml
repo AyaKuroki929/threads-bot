@@ -1,0 +1,90 @@
+name: Register bemolle/personal in Supabase (one-time setup)
+
+# このワークフローを一度だけ手動実行してSupabaseにサロンを登録する。
+# 登録後は不要だが、トークン更新時にも使える。
+on:
+  workflow_dispatch:
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      THREADS_TOKEN_BEMOLLE: ${{ secrets.THREADS_API_TOKEN_BEMOLLE }}
+      THREADS_TOKEN_PERSONAL: ${{ secrets.THREADS_API_TOKEN_PERSONAL }}
+
+    steps:
+      - name: Register salons in Supabase
+        run: |
+          python3 - <<'EOF'
+          import urllib.request, urllib.parse, json, os, sys
+
+          SUPABASE_URL = os.environ["SUPABASE_URL"]
+          SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+
+          def headers():
+              return {
+                  "apikey": SUPABASE_KEY,
+                  "Authorization": f"Bearer {SUPABASE_KEY}",
+                  "Content-Type": "application/json",
+              }
+
+          def get_salon(salon_name):
+              url = (f"{SUPABASE_URL}/rest/v1/salons"
+                     f"?salon_name=eq.{urllib.parse.quote(salon_name)}&select=id,salon_name")
+              req = urllib.request.Request(url, headers=headers())
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  rows = json.loads(r.read())
+              return rows[0] if rows else None
+
+          def insert_salon(row):
+              data = json.dumps(row).encode()
+              req = urllib.request.Request(
+                  f"{SUPABASE_URL}/rest/v1/salons",
+                  data=data,
+                  headers={**headers(), "Prefer": "return=minimal"},
+                  method="POST"
+              )
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return r.status
+
+          def update_salon(salon_id, row):
+              data = json.dumps(row).encode()
+              url = f"{SUPABASE_URL}/rest/v1/salons?id=eq.{salon_id}"
+              req = urllib.request.Request(
+                  url, data=data,
+                  headers={**headers(), "Prefer": "return=minimal"},
+                  method="PATCH"
+              )
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return r.status
+
+          salons = [
+              {
+                  "salon_name": "bemolle_diet",
+                  "threads_user_id": "27445535948404811",
+                  "access_token": os.environ["THREADS_TOKEN_BEMOLLE"],
+                  "is_active": True,
+              },
+              {
+                  "salon_name": "aya_0929_private",
+                  "threads_user_id": "63084943935",
+                  "access_token": os.environ["THREADS_TOKEN_PERSONAL"],
+                  "is_active": True,
+              },
+          ]
+
+          for s in salons:
+              name = s["salon_name"]
+              existing = get_salon(name)
+              if existing:
+                  update_salon(existing["id"], {k: v for k, v in s.items() if k != "salon_name"})
+                  print(f"✅ PATCH {name} (id={existing['id']})")
+              else:
+                  insert_salon(s)
+                  print(f"✅ INSERT {name}")
+
+          print("登録完了。SaaS投稿ワークフローを手動実行して動作確認してください。")
+          EOF
