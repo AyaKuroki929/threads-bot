@@ -181,14 +181,42 @@ def _keyword_topic(text):
     return "美容"
 
 
+# B2B（サロン向けSaaS等、経営者がターゲットのアカウント）。美容前提のトピックと分離する。
+_B2B_SALONS = {"urakata_san_official"}
+
+
+def _keyword_topic_b2b(text):
+    """B2Bアカウント用：サロン経営・業務効率化系のトピックを判定する。"""
+    t = text
+    if any(k in t for k in ["AI", "リール", "チラシ", "画像生成", "勉強", "学べ", "学び"]):
+        return "AI活用"
+    if any(k in t for k in ["在庫", "発注", "棚卸", "欠品"]):
+        return "在庫管理"
+    if any(k in t for k in ["締め", "日報", "月報", "効率", "時短", "自動", "事務"]):
+        return "業務効率化"
+    if any(k in t for k in ["独立", "開業", "起業", "オープン"]):
+        return "独立開業"
+    if any(k in t for k in ["数字", "売上", "利益", "経費", "コスト", "通帳"]):
+        return "サロン経営"
+    return "サロン経営"
+
+
 def _select_topic(texts, salon_name=""):
     """投稿内容に最適なトピックをClaude APIで選択して返す（SaaS版：全サロン対応）。"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     post_body = "\n".join(texts)[:600]
-    account_hint = f"美容サロン・エステ・スキンケア・ダイエット（{salon_name}）" if salon_name else "美容サロン・エステ・スキンケア・ダイエット"
+    is_b2b = salon_name in _B2B_SALONS
+    if is_b2b:
+        account_hint = f"サロン経営・業務効率化・サロン向け管理システム・数字管理・独立開業・AI活用（{salon_name}）"
+        topic_examples = "サロン経営、業務効率化、独立開業、AI活用、在庫管理"
+        fallback_fn = _keyword_topic_b2b
+    else:
+        account_hint = f"美容サロン・エステ・スキンケア・ダイエット（{salon_name}）" if salon_name else "美容サロン・エステ・スキンケア・ダイエット"
+        topic_examples = "美容、エステ、ダイエット、スキンケア"
+        fallback_fn = _keyword_topic
 
     if not api_key:
-        chosen = _keyword_topic(post_body)
+        chosen = fallback_fn(post_body)
         print(f"[topic:{salon_name}] APIキー未設定 → キーワード判定: '{chosen}'")
         return chosen
 
@@ -203,7 +231,7 @@ def _select_topic(texts, salon_name=""):
 
 【選び方の基準】
 ・Threads内でそのキーワードで検索したときに関連コンテンツが出るような一般的なカテゴリ名
-・日本語1〜3語のキーワード（例：美容、エステ、ダイエット、スキンケア）
+・日本語1〜3語のキーワード（例：{topic_examples}）
 ・投稿の主題を最もよく表すもの
 
 キーワードだけ出力してください。説明・記号・改行は不要です。"""
@@ -216,7 +244,7 @@ def _select_topic(texts, salon_name=""):
         print(f"[topic:{salon_name}] AI選択: '{topic}'")
         return topic
     except Exception as e:
-        chosen = _keyword_topic(post_body)
+        chosen = fallback_fn(post_body)
         print(f"[topic:{salon_name}] AI選択失敗 → キーワード判定 '{chosen}': {e}")
         return chosen
 
