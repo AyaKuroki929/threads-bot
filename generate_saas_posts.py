@@ -93,6 +93,22 @@ def load_school_data():
     return out
 
 
+def load_local_salons():
+    """フォーム回答シートを使わず、リポジトリ内の定義からサロンを読み込む。
+    B2B（うらかたさん等）のように、シートではなくインタビュー内容を直接登録するアカウント用。
+    各エントリは "_type" を持ち（例 "b2b"）、generate_for_salon でルート分岐される。"""
+    path = os.path.join(os.path.dirname(__file__), "saas_local_salons.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[saas] ローカルサロン読み込みスキップ（{path}）: {e}")
+        return []
+    return data if isinstance(data, list) else []
+
+
 def salon_to_rules(salon: dict) -> str:
     """スプレッドシートの1行をGENERATE_RULES形式のテキストに変換する"""
 
@@ -342,6 +358,135 @@ def salon_to_rules(salon: dict) -> str:
 - 「絶対」「100%」などの誇大表現は避ける（「ほとんど」「多くの場合」等に言い換える）
 - 政治・宗教・占いの断定は避ける
 - ハッシュタグ禁止
+"""
+    return rules
+
+
+def b2b_to_rules(salon: dict) -> str:
+    """B2B（サロンオーナー向けに商品・システムを売る）アカウントのルールに変換する。
+    読者は美容消費者ではなく『サロンオーナー／これから起業する人』。
+    美容サロン版（salon_to_rules）の前提（ホームケア・当サロン・営業時間・施術など）は一切適用しない。"""
+
+    tone_map = {
+        "丁寧・落ち着いた（ですます調）": "丁寧・落ち着いたですます調。断言は控えめに。",
+        "親しみやすい・フレンドリー": "親しみやすく温かみがある敬語。馴れ合いにはしない。",
+        "プロとして言い切る・強め": "自信を持って言い切る。ただし文末は敬語で着地。",
+        "柔らかく共感ベース": "まず共感から入る。「わかります」「私もそうでした」の温度感。",
+    }
+    emoji_map = {
+        "使わない（または最小限）": "絵文字は使わない。または最小限（1投稿に0〜2個まで）。",
+        "適度に使う": "絵文字を適度に使う（投稿あたり2〜4個程度）。",
+        "たくさん使う": "絵文字を積極的に使う。",
+    }
+
+    brand = salon.get("サロン名", "")
+    self_pronoun = salon.get("投稿で自分を何と呼びますか？", "私") or "私"
+    threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
+    homepage = salon.get("ホームページURL", "")
+    line_url = salon.get("LINE公式アカウントのURL（あれば）", "")
+    career = salon.get("業界経歴・年数", "")
+    target = salon.get("メインターゲット（年代・性別・どんな悩みを持つ人）", "")
+    new_concern = salon.get("新規のお客様が最初に来る一番多い理由・悩みは何ですか？", "")
+    menu = salon.get("提供メニューと価格帯（箇条書きでOK）", "")
+    price_ok = salon.get("価格を投稿に記載してもOKですか？", "")
+    best = salon.get("一番の売りメニュー・最も結果が出やすい施術", "")
+    diff = salon.get("他サロンとの違い・このサロンならではの施術やこだわり", "")
+    results = salon.get("お客様の具体的な変化・実績（数字があれば）", "")
+    testimonials = salon.get("印象的なお客様の声・体験談（名前不要・1〜3件）", "")
+    testimonials_ok = salon.get("お客様の声・体験談を投稿に使ってもOKですか？", "")
+    timeline = salon.get("結果が出るまでの一般的な目安", "")
+    owner_fail = salon.get("過去の失敗・コンプレックス（「実はこんなだった」という意外な過去）", "")
+    turning = salon.get("転換点・気づき（何をきっかけに変わったか）", "")
+    own_result = salon.get("自分自身で出た成果・結果（数字・具体エピソード）", "")
+    why = salon.get("なぜこのサロンを作ったか", "")
+    mistakes = salon.get("お客様がよくやりがちな間違い・勘違い（3つ程度）", "")
+    misunderstanding = salon.get("サービスについてお客様に誤解されやすいこと", "")
+    allowed = salon.get("投稿に含めてよい成分名・施術名・商品名（ここに書いたもの以外は使いません）", "")
+    style = salon.get("特に力を入れてほしい投稿スタイル（当てはまるものをすべて記入）", "")
+    goal = salon.get("投稿の最終ゴールとして最も重視すること（1つ）", "")
+    competitor = salon.get("お客様がよく比較検討する他サービスや選択肢（ジム・通販・他サロン等）", "")
+    stance = salon.get("お客様への向き合い方・こだわり", "")
+    ng = salon.get("サロンとして「言いたくないこと」「NGワード」", "")
+    ng_style = salon.get("自分の発信スタイルのNGライン（やりたくない表現・雰囲気・言葉づかい）", "")
+    catch = salon.get("サロンを一言で表すキャッチコピー（あれば）", "")
+    habits = salon.get("オーナーの口癖・よく使う言葉・フレーズ", "")
+    concept = salon.get("サロン独自のキーワード・コンセプトワード", "")
+    tone = tone_map.get(salon.get("投稿のトーン", ""), "柔らかく共感ベース。")
+    emoji = emoji_map.get(salon.get("絵文字を使いますか？", ""), "絵文字は使わない。または最小限。")
+    notes = salon.get("その他・自由記入（伝えておきたいこと）", "")
+
+    rules = f"""# {brand} Threads投稿生成ルール（B2B：サロンオーナー向け）
+
+## 大前提（最優先）
+- このアカウントの読者は**美容消費者ではなく、サロンのオーナー／これから開業する人**です。一般のお客様向け美容投稿は書きません。
+- {brand}は美容サロンではなく、**サロンオーナーに提供するサービス／システム**です。施術・ホームケア・営業時間・予約の話は書きません。
+- 発信者は「現役サロンオーナー」の立場。自分のことは「{self_pronoun}」と呼ぶ。**本名・自店名は出さない**。
+
+## 発信者プロフィール
+- ブランド名：{brand}
+- 立場・経歴：{career}
+- Threads：@{threads_id}
+- ホームページ：{homepage}
+
+## 何を届けるか（商品）
+- 一番の売り：{best}
+- 内容・料金：{menu}
+- 価格の記載：{price_ok}
+- 他との違い・こだわり：{diff}
+- よく比較される選択肢：{competitor}
+
+## 誰に届けるか（ターゲット）
+- メインターゲット：{target}
+- 見込み客が抱える悩み・きっかけ：{new_concern}
+
+## 実績・お客様の声（数字は下記のもののみ使用可）
+- 具体的な変化・実績：{results}
+- お客様の声：{testimonials}（投稿利用：{testimonials_ok}・名前は出さない）
+- 効果が出るまでの目安：{timeline}
+
+## オーナーのストーリー（W型・最も伸びる素材）
+- 過去の失敗・コンプレックス：{owner_fail}
+- 転換点・気づき：{turning}
+- 自分で出た成果：{own_result}
+- なぜ作ったか：{why}
+
+## 見込み客の勘違い・誤解（保存型・あるある投稿の素材）
+- よくある勘違い：{mistakes}
+- 誤解されやすいこと：{misunderstanding}
+
+## トーン・文体
+- トーン：{tone}
+- 絵文字：{emoji}
+- 口癖・よく使うフレーズ：{habits}
+- コンセプトワード：{concept}
+- キャッチコピー：{catch}
+- 向き合い方：{stance}
+- 力を入れる投稿スタイル：{style}
+
+## 投稿の構造（ギャップ技法・常時適用）
+- 1行目で「え？」と思わせるズレを作る（「〇〇なのに△△」「実は〇〇だった」）
+- オーナーの失敗→転換点→成果のW型ストーリーを複数本
+- 「よくある勘違い」を使った保存型まとめ（〇選・チェックリスト）を定期的に
+- お客様の声を冒頭フックに使う投稿を複数本
+
+## NG・禁止（絶対遵守）
+- ブランド名「{brand}」は**必ずこの表記のまま**使う（ひらがな指定があれば漢字化しない・呼び捨てにしない）
+- 投稿本文にURL・リンクを直接貼らない。誘導は「プロフィールのLINEから」と書く（参考LINE：{line_url}）
+- 他社サービス・他の方法・Excel等を露骨に批判・否定しない。「選択肢のひとつ」として触れ、人や選択を否定しない
+- 数字・実績は上記「実績」に書かれたもののみ使用。創作・盛りは禁止
+- 「絶対」「100%」など誇大表現は避ける（景品表示法。「多くの場合」「〜という声が多い」に言い換える）
+- 投稿に含めてよい固有名詞：{allowed}（これ以外の商品・機能名を創作しない）
+- NGワード・避けたい雰囲気：{ng}／{ng_style}
+- 上から目線・マウント・過度な煽り・キラキラ営業トーンは禁止
+- ハッシュタグ禁止。AI臭（「〜が大切です」「いかがでしょうか」「ポイントは3つ」等）禁止
+- タメ口禁止・文末は敬語で着地
+
+## ゴール
+- {goal}
+- 毎投稿をCTAにしない。価値提供・共感が主で、LINE誘導は文脈をつけて時々入れる。新規アカウントなので売り込み感を出さない。
+
+## その他メモ
+{notes if notes else "なし"}
 """
     return rules
 
@@ -616,14 +761,21 @@ def generate_for_salon(salon: dict):
     else:
         posts = {"morning": [], "noon": [], "evening": []}
 
-    rules = school_to_rules(salon) if salon.get("_type") == "school" else salon_to_rules(salon)
+    stype = salon.get("_type")
+    if stype == "b2b":
+        rules = b2b_to_rules(salon)
+    elif stype == "school":
+        rules = school_to_rules(salon)
+    else:
+        rules = salon_to_rules(salon)
 
-    # 週次リサーチから更新される共通インサイトを追加
-    saas_rules_path = os.path.join(os.path.dirname(__file__), "GENERATE_RULES_saas.md")
-    if os.path.exists(saas_rules_path):
-        with open(saas_rules_path, encoding="utf-8") as f:
-            weekly_insights = f.read()
-        rules += f"\n\n{weekly_insights}"
+    # 週次リサーチから更新される共通インサイト（美容寄り）を追加。B2Bは対象外なのでスキップ。
+    if stype != "b2b":
+        saas_rules_path = os.path.join(os.path.dirname(__file__), "GENERATE_RULES_saas.md")
+        if os.path.exists(saas_rules_path):
+            with open(saas_rules_path, encoding="utf-8") as f:
+                weekly_insights = f.read()
+            rules += f"\n\n{weekly_insights}"
 
     try:
         client = anthropic.Anthropic()
@@ -782,6 +934,10 @@ def main():
     except Exception as e:
         print(f"[saas] スプレッドシート読み込みエラー: {e}")
         print("[saas] google_service_account.json が設定されているか確認してください")
+        # シートが読めなくても、ローカル定義（B2B等）だけは処理を続行する
+        salons = []
+    salons += load_local_salons()
+    if not salons:
         sys.exit(1)
 
     print(f"[saas] {len(salons)}件のサロンを検出")
