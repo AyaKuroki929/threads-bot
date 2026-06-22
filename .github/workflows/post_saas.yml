@@ -87,6 +87,20 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ SaaS Threads 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
 
+      - name: Healthcheck ping（投稿成功の証明）
+        if: success()
+        env:
+          HC_MORNING: ${{ secrets.HC_PING_URL_MORNING }}
+          HC_NOON: ${{ secrets.HC_PING_URL_NOON }}
+          HC_EVENING: ${{ secrets.HC_PING_URL_EVENING }}
+        run: |
+          case "${{ steps.slot.outputs.slot }}" in
+            morning) URL="$HC_MORNING" ;;
+            noon)    URL="$HC_NOON" ;;
+            evening) URL="$HC_EVENING" ;;
+          esac
+          [ -n "$URL" ] && curl -sS --retry 3 "$URL" || true
+
       - name: 投稿ストック自動補充（ベモーレ・個人）
         if: success()
         continue-on-error: true
