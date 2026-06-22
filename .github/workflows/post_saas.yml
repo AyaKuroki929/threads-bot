@@ -47,6 +47,9 @@ jobs:
             echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Install dependencies
+        run: pip install anthropic -q
+
       - name: Threads投稿（公式API）
         id: post
         env:
