@@ -47,6 +47,8 @@ jobs:
           git pull --rebase --autostash origin main 2>&1 || true
 
       - name: Generate & send suggestions
+        # コメント提案は朝のみ（昼・夜はいいねだけ）
+        if: github.event.action == 'comment-morning' || github.event_name == 'workflow_dispatch'
         run: |
           # bemolle と 個人 をそれぞれ1件ずつ（両アカとも自動送信が不可/不安定なため手動支援）
           if [ -n "$THREADS_SESSION" ]; then

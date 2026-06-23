@@ -102,6 +102,7 @@ def main():
             url, text, dt = post._get_target_latest_post(page, acc)
             if not url or not text:
                 consecutive_fail += 1
+                print(f"[suggest] @{acc} 投稿取得失敗 (連続{consecutive_fail}件)")
                 if consecutive_fail >= MAX_FAIL:
                     print(f"[suggest] {ACCOUNT_LABEL} 連続{MAX_FAIL}件 投稿取得失敗 → セッション異常の可能性。中断")
                     break
@@ -113,10 +114,13 @@ def main():
                 print(f"[suggest] @{acc} {post_id} は既にコメント記録あり → スキップ（二重防止）")
                 continue
             if dt and dt < datetime.utcnow() - timedelta(days=post.POST_AGE_LIMIT_DAYS):
+                print(f"[suggest] @{acc} 投稿が古すぎ ({dt}) → スキップ")
                 continue
             if any(w in text for w in post._NEGATIVE_IMPRESSION_SKIP_WORDS):
+                print(f"[suggest] @{acc} NGワード → スキップ")
                 continue
             if any(w in text for w in post._ILLNESS_DEATH_WORDS):
+                print(f"[suggest] @{acc} 疾病ワード → スキップ")
                 continue
             # 【二重投稿防止②】投稿ページに既に自分(USERNAME)の返信があればスキップ（手動分も検知）
             try:
