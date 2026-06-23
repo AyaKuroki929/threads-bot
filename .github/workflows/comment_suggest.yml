@@ -60,9 +60,19 @@ jobs:
             echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → 個人スキップ"
           fi
 
+      - name: 自動いいね（ベモーレ・個人）
+        continue-on-error: true
+        run: |
+          if [ -n "$THREADS_SESSION" ]; then
+            python3 like_auto.py bemolle || echo "bemolle like 失敗"
+          fi
+          if [ -n "$THREADS_SESSION_PERSONAL" ]; then
+            python3 like_auto.py personal || echo "personal like 失敗"
+          fi
+
       - name: Commit state
         run: |
-          git add commented_posts.json comment_targets.json commented_posts_personal.json comment_targets_personal.json 2>/dev/null || true
+          git add commented_posts.json comment_targets.json commented_posts_personal.json comment_targets_personal.json liked_posts.json liked_posts_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no changes"
           else
