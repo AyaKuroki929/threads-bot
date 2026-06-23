@@ -5,7 +5,7 @@ on:
   # GitHub内蔵scheduleは遅延/スキップが多いため、他workflowと同じ cron-job.org の
   # repository_dispatch(comment-morning) に相乗りして毎朝確実に1回だけ発火させる。
   repository_dispatch:
-    types: [comment-morning]
+    types: [comment-morning, comment-noon, comment-evening]
   workflow_dispatch:
     inputs:
       count:
