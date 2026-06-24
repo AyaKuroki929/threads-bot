@@ -121,10 +121,12 @@ def main():
             if new_accounts:
                 targets.extend(new_accounts)
                 _save_targets(targets)
-                # 新アカウントをそのまま eligible に追加（クールダウン外なので全件対象）
                 eligible.extend(new_accounts)
                 random.shuffle(eligible)
                 print(f"[suggest] {len(new_accounts)}件追加 → eligible {len(eligible)}件")
+            # 発掘後もまだ少ない場合は LINE でアラート
+            if len(eligible) < 10:
+                send_line(f"⚠️ [{ACCOUNT_LABEL}] コメント候補アカウントが残り{len(eligible)}件です。\n新規キーワードの追加を検討してください。")
 
         for t in eligible:
             if len(suggestions) >= N:
