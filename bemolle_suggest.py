@@ -110,6 +110,22 @@ def main():
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(storage_state=_session_file, locale="ja-JP", timezone_id="Asia/Tokyo")
         page = ctx.new_page()
+
+        # eligible が少ない場合はループ前に新規発掘して即使用
+        if len(eligible) < REPLENISH_THRESHOLD:
+            print(f"[suggest] {ACCOUNT_LABEL} eligible {len(eligible)}件 < {REPLENISH_THRESHOLD} → 先に新規発掘")
+            post.USERNAME = USERNAME
+            post.COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", "")
+            already_known = {t["account"] for t in targets}
+            new_accounts = post._discover_new_accounts(page, already_known, max_new=DISCOVER_COUNT)
+            if new_accounts:
+                targets.extend(new_accounts)
+                _save_targets(targets)
+                # 新アカウントをそのまま eligible に追加（クールダウン外なので全件対象）
+                eligible.extend(new_accounts)
+                random.shuffle(eligible)
+                print(f"[suggest] {len(new_accounts)}件追加 → eligible {len(eligible)}件")
+
         for t in eligible:
             if len(suggestions) >= N:
                 break
@@ -156,18 +172,6 @@ def main():
             # 提案した投稿を記録（再提案・二重投稿の防止）
             commented[f"/{acc}/{post_id}"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[suggest] @{acc} 候補生成: {comment}")
-        # ターゲット補充（eligible が少ない場合に新規アカウントを発掘）
-        if len(eligible) < REPLENISH_THRESHOLD:
-            print(f"[suggest] {ACCOUNT_LABEL} eligible残{len(eligible)}件 → 新規発掘開始")
-            post.USERNAME = USERNAME
-            post.COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", "")
-            already_known = {t["account"] for t in targets}
-            new_accounts = post._discover_new_accounts(page, already_known, max_new=DISCOVER_COUNT)
-            if new_accounts:
-                targets.extend(new_accounts)
-                _save_targets(targets)
-                print(f"[suggest] {len(new_accounts)}件追加 → 合計{len(targets)}件")
-
         browser.close()
 
     post._save_commented(commented)
