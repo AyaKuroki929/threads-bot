@@ -75,8 +75,23 @@ def _load_exclude():
         return set()
 
 
+REPLENISH_THRESHOLD = 30  # eligible がこの件数以下で新規アカウント自動発掘
+DISCOVER_COUNT = 20       # 1回の発掘で追加する最大件数
+
+
+def _load_targets():
+    try:
+        return json.load(open(post.COMMENT_TARGETS_FILE, encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _save_targets(data):
+    json.dump(data, open(post.COMMENT_TARGETS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+
 def main():
-    targets = json.load(open(post.COMMENT_TARGETS_FILE, encoding="utf-8"))
+    targets = _load_targets()
     commented = post._load_commented()
     exclude = _load_exclude()
     eligible = [
@@ -85,6 +100,8 @@ def main():
         and t.get("account", "").lstrip("@").lower() not in exclude
     ]
     random.shuffle(eligible)
+
+    print(f"[suggest] {ACCOUNT_LABEL} eligible: {len(eligible)}/{len(targets)}")
 
     suggestions = []
     consecutive_fail = 0
@@ -139,6 +156,18 @@ def main():
             # 提案した投稿を記録（再提案・二重投稿の防止）
             commented[f"/{acc}/{post_id}"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[suggest] @{acc} 候補生成: {comment}")
+        # ターゲット補充（eligible が少ない場合に新規アカウントを発掘）
+        if len(eligible) < REPLENISH_THRESHOLD:
+            print(f"[suggest] {ACCOUNT_LABEL} eligible残{len(eligible)}件 → 新規発掘開始")
+            post.USERNAME = USERNAME
+            post.COMMENT_KEYWORDS_FILE = os.environ.get("COMMENT_KEYWORDS_FILE", "")
+            already_known = {t["account"] for t in targets}
+            new_accounts = post._discover_new_accounts(page, already_known, max_new=DISCOVER_COUNT)
+            if new_accounts:
+                targets.extend(new_accounts)
+                _save_targets(targets)
+                print(f"[suggest] {len(new_accounts)}件追加 → 合計{len(targets)}件")
+
         browser.close()
 
     post._save_commented(commented)
