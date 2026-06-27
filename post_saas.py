@@ -420,6 +420,33 @@ def log_post(salon_id, slot, text):
     })
 
 
+# bemolle/個人はheartbeatが last_run.json / last_run_personal.json を見て投稿確認するため、
+# post_saasで投稿したら同ファイルも更新する（古い監視の誤判定→二重投稿を防止）。
+# 安全網は維持：post_saasが失敗すれば更新されず、heartbeatが従来どおりリカバリする。
+_LAST_RUN_FILES = {
+    "bemolle_diet": "last_run.json",
+    "aya_kuroki_0929": "last_run_personal.json",
+}
+
+
+def _sync_last_run(salon_name, slot):
+    fn = _LAST_RUN_FILES.get(salon_name)
+    if not fn:
+        return
+    path = os.path.join(os.path.dirname(__file__), fn)
+    try:
+        data = {}
+        if os.path.exists(path):
+            with open(path) as f:
+                data = json.load(f)
+        data[slot] = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"[heartbeat-sync] {fn} の {slot} を更新（{salon_name}・heartbeat誤リカバリ防止）")
+    except Exception as e:
+        print(f"[heartbeat-sync] {fn} 更新失敗（続行）: {e}")
+
+
 def main():
     salons = get_active_salons()
     if not salons:
@@ -484,6 +511,7 @@ def main():
             post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
 
             log_post(salon_id, SLOT, texts[0])
+            _sync_last_run(salon_name, SLOT)
             print(f"[OK] {salon_name}: post_id={post_id}")
             results["ok"].append(salon_name)
         except TokenExpiredError as e:
