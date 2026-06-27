@@ -1,0 +1,51 @@
+name: Register personal to SaaS (one-off)
+
+# 個人アカウント aya_kuroki_0929 を post_saas(Supabase salons) に登録する一度きりのワークフロー。
+# GHシークレットにある個人の公式APIトークンと Supabase 認証を使う（ローカルからは書けないため）。
+on:
+  workflow_dispatch:
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Register aya_kuroki_0929 into salons
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          THREADS_API_TOKEN_PERSONAL: ${{ secrets.THREADS_API_TOKEN_PERSONAL }}
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.error
+          U = os.environ["SUPABASE_URL"].rstrip("/")
+          K = os.environ["SUPABASE_SERVICE_KEY"]
+          TOK = os.environ["THREADS_API_TOKEN_PERSONAL"]
+          if not (U and K and TOK):
+              raise SystemExit("❌ SUPABASE_URL / SUPABASE_SERVICE_KEY / THREADS_API_TOKEN_PERSONAL のいずれかが未設定")
+          H = {"apikey": K, "Authorization": f"Bearer {K}", "Content-Type": "application/json"}
+          payload = {
+              "salon_name": "aya_kuroki_0929",
+              "threads_user_id": "63084943935",
+              "access_token": TOK,
+              "is_active": True,
+          }
+          # 既存チェック
+          req = urllib.request.Request(
+              f"{U}/rest/v1/salons?salon_name=eq.aya_kuroki_0929&select=id", headers=H)
+          existing = json.loads(urllib.request.urlopen(req, timeout=15).read())
+          if existing:
+              sid = existing[0]["id"]
+              req = urllib.request.Request(
+                  f"{U}/rest/v1/salons?id=eq.{sid}",
+                  data=json.dumps(payload).encode(),
+                  headers={**H, "Prefer": "return=minimal"}, method="PATCH")
+              urllib.request.urlopen(req, timeout=15)
+              print(f"✅ aya_kuroki_0929 を更新（既存 id={sid}・is_active=true・token更新）")
+          else:
+              req = urllib.request.Request(
+                  f"{U}/rest/v1/salons",
+                  data=json.dumps(payload).encode(),
+                  headers={**H, "Prefer": "return=minimal"}, method="POST")
+              urllib.request.urlopen(req, timeout=15)
+              print("✅ aya_kuroki_0929 を salons に新規登録（is_active=true）")
+          PY
