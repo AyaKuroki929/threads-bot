@@ -28,6 +28,51 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 GRAPH = "https://graph.threads.net"
 # 実クライアントに誤投稿しないよう、ライブ投稿はデモ用アカウントだけ許可する
 DEMO_SALON = os.environ.get("DEMO_SALON", "aya_0929_private")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+TOUKOSAN_PRODUCT_ID = "prod_UWa5BZv291uQts"  # とうこさん¥2,750商品
+
+
+def _stripe_get(path):
+    req = urllib.request.Request(
+        f"https://api.stripe.com/v1/{path}",
+        headers={"Authorization": f"Bearer {STRIPE_SECRET_KEY}"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())
+
+
+def _subscription_status(customer_id):
+    """customer_id のStripeサブスク状況を返す（active/解約/支払い失敗の判定用）。"""
+    if not STRIPE_SECRET_KEY:
+        return {"error": "STRIPE_SECRET_KEY 未設定"}
+    customer_id = (customer_id or "").strip()
+    try:
+        cust = _stripe_get(f"customers/{urllib.parse.quote(customer_id)}")
+    except urllib.error.HTTPError as e:
+        return {"error": f"customer取得失敗 HTTP {e.code}: {e.read().decode()[:150]}"}
+    try:
+        subs = _stripe_get("subscriptions?" + urllib.parse.urlencode(
+            {"customer": customer_id, "status": "all", "limit": 10}))
+    except urllib.error.HTTPError as e:
+        return {"error": f"subscriptions取得失敗 HTTP {e.code}"}
+    out = []
+    for s in subs.get("data", []):
+        item = (s.get("items", {}).get("data") or [{}])[0]
+        price = item.get("price") or {}
+        out.append({
+            "subscription_id": s.get("id"),
+            "status": s.get("status"),  # active/trialing/canceled/past_due/unpaid/incomplete...
+            "is_toukosan": price.get("product") == TOUKOSAN_PRODUCT_ID,
+            "amount": price.get("unit_amount") or 0,
+            "cancel_at_period_end": s.get("cancel_at_period_end"),
+        })
+    active = any(s["status"] in ("active", "trialing") for s in out)
+    return {
+        "customer_id": customer_id,
+        "email": cust.get("email"),
+        "name": cust.get("name"),
+        "active": active,
+        "subscriptions": out,
+    }
 
 
 def _supabase_get(params):
@@ -232,6 +277,12 @@ class handler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         action = qs.get("action", [""])[0]
         account = qs.get("account", [""])[0] or qs.get("customer_id", [""])[0]
+
+        if action == "substatus":
+            cid = qs.get("customer_id", [""])[0] or account
+            if not cid:
+                return _send_json(self, 400, {"error": "customer_id required"})
+            return _send_json(self, 200, _subscription_status(cid))
 
         if action == "account":
             salon = _get_salon(account)
