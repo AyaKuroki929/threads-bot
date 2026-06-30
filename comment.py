@@ -44,6 +44,10 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 
 def _send_line(token, msg):
+    # ⛔ 2026-06-30 一時停止：自動コメントのLINE通知（個人・ベモーレ両方）を全停止
+    # 戻すには下の `return` 行を削除すればOK
+    print(f"[comment] LINE通知 停止中（skip）: {msg[:60]}...")
+    return
     import urllib.request as _req
     body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
     req = _req.Request(
@@ -172,8 +176,10 @@ if _config_warn:
     for _w in _config_warn:
         print(_w)
     _config_warn_msg = _warn_header + "\n" + "\n".join(_critical_warn) if _critical_warn else None
+    # ⛔ 2026-06-30 一時停止：config警告のLINE通知（個人・ベモーレ両方）も停止
+    # 戻すには下のif 0: を if _line_token_early and _config_warn_msg: に戻せばOK
     _line_token_early = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if _line_token_early and _config_warn_msg:
+    if 0:  # _line_token_early and _config_warn_msg:
         import urllib.request as _ureq
         _body = json.dumps({"messages": [{"type": "text", "text": _config_warn_msg}]}).encode()
         _req = _ureq.Request(
