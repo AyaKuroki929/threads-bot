@@ -123,6 +123,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         query = parse_qs(urlparse(self.path).query)
         customer_id = query.get("customer_id", [None])[0]
+        force = query.get("force", ["0"])[0] == "1"  # ?force=1 で送信済みでも強制再送
 
         if not customer_id:
             self.send_response(400)
@@ -133,7 +134,7 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             user = get_line_user(customer_id)
-            if user.get("step_sent_at"):
+            if user.get("step_sent_at") and not force:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
