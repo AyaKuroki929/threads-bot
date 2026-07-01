@@ -50,6 +50,10 @@ LINE_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 def send_line(text):
     """1メッセージを単独でLINE送信（丸ごとコピーできるように1通=1テキスト）。"""
+    # ⛔ 2026-07-02 一時停止：suggestのLINE通知（個人・ベモーレ両方）を全停止
+    # 戻すには下の `return` 行を削除すればOK
+    print(f"[suggest] LINE通知 停止中（skip）: {text[:80]}...")
+    return
     if not LINE_TOKEN:
         print("[suggest] LINEトークン無し（表示のみ）:\n" + text)
         return
