@@ -6,9 +6,29 @@
 残り50件以下になったらキーワード検索で新規アカウントを自動補充。
 """
 import os, sys, json, time, random
+import urllib.request
 from datetime import datetime, timedelta
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _line_alert(text: str):
+    """いいね機能の重要トラブル時のみ管理者LINEに通知（Claude通知Bot経由）。
+    コメント/suggest系の通知は停止中でも、この関数は動作する。"""
+    token = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        print(f"[like_alert] LINEトークン無し: {text}")
+        return
+    try:
+        body = json.dumps({"messages": [{"type": "text", "text": text}]}).encode()
+        req = urllib.request.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"[like_alert] LINE送信失敗: {e}")
 
 ACCOUNT = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("bemolle", "personal") else "bemolle"
 
@@ -153,6 +173,13 @@ def main():
                 consecutive_fail += 1
                 if consecutive_fail >= MAX_FAIL:
                     print(f"[like] {LABEL} 連続{MAX_FAIL}件失敗 → セッション異常の可能性。中断")
+                    _line_alert(
+                        f"🚨 【{LABEL}】自動いいねが停止しました\n\n"
+                        f"連続{MAX_FAIL}件で「いいねボタンが見つからない」→ 中断\n"
+                        f"セッション(Cookie)期限切れの可能性が高いです。\n\n"
+                        f"対処：playwright_login.py で {LABEL} を再ログイン\n"
+                        f"→ GitHub Secret {SESSION_ENV} を更新"
+                    )
                     break
 
         # ターゲット補充（残りが REPLENISH_THRESHOLD 以下）
