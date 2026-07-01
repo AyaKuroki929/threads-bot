@@ -284,6 +284,26 @@ class handler(BaseHTTPRequestHandler):
                 return _send_json(self, 400, {"error": "customer_id required"})
             return _send_json(self, 200, _subscription_status(cid))
 
+        # line_users に line_user_id×customer_id を紐付け（send-stepのマッピング抜け修復用）
+        if action == "map_line":
+            cid = qs.get("customer_id", [""])[0]
+            luid = qs.get("line_user_id", [""])[0]
+            if not (cid and luid):
+                return _send_json(self, 400, {"error": "customer_id and line_user_id required"})
+            try:
+                payload = {"line_user_id": luid, "stripe_customer_id": cid, "step_sent_at": None}
+                req = urllib.request.Request(
+                    f"{SUPABASE_URL}/rest/v1/line_users",
+                    data=json.dumps(payload).encode(), method="POST",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+                             "Content-Type": "application/json",
+                             "Prefer": "resolution=merge-duplicates,return=minimal"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    return _send_json(self, 200, {"mapped": True, "customer_id": cid,
+                                                  "line_user_id": luid[:8] + "…", "status": r.status})
+            except urllib.error.HTTPError as e:
+                return _send_json(self, 502, {"error": f"map HTTP {e.code}: {e.read().decode()[:150]}"})
+
         if action == "account":
             salon = _get_salon(account)
             if not salon:
