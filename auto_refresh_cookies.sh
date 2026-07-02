@@ -1,7 +1,7 @@
 #!/bin/bash
 # Threads Cookie 自動更新スクリプト（2アカウント対応）
-# - Profile 3 → bemolle_diet → THREADS_SESSION
-# - Profile 1 → aya_kuroki_0929 → THREADS_SESSION_PERSONAL
+# - Profile 4 → bemolle_diet → THREADS_SESSION
+# - Profile 3 → aya_kuroki_0929 → THREADS_SESSION_PERSONAL
 
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -128,8 +128,8 @@ print(uid)
     return 0
 }
 
-# bemolle_diet: Profile 1, min 5 cookies, UID=73523451930
-refresh_account "bemolle_diet" "1" "THREADS_SESSION" "session.json" "5" "73523451930"
+# bemolle_diet: Profile 4, min 5 cookies, UID=73523451930
+refresh_account "bemolle_diet" "4" "THREADS_SESSION" "session.json" "5" "73523451930"
 
 # aya_kuroki_0929: Profile 3, min 10 cookies, UID=63084943935
 refresh_account "aya_kuroki_0929" "3" "THREADS_SESSION_PERSONAL" "session_personal.json" "10" "63084943935"

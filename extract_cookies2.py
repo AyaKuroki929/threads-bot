@@ -18,7 +18,7 @@ except ImportError:
     from Crypto.Protocol.KDF import PBKDF2
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--profile', default='1', help='Chrome profile number (1=personal, 3=bemolle_diet)')
+parser.add_argument('--profile', default='3', help='Chrome profile number (3=aya_kuroki_0929/個人, 4=bemolle_diet)')
 args = parser.parse_args()
 
 CHROME_COOKIES_PATH = os.path.expanduser(
