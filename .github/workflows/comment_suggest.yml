@@ -1,33 +1,28 @@
-name: bemolle Comment Suggest (手動コメント支援)
+name: Threads Auto Like (ベモーレ・個人)
 
-# 重度制限中のbemolle向け。Botは候補(URL+コメント文)をLINEで送るだけ。送信は人間が手動。
+# 2026-07-02: コメント提案機能を廃止し、いいね自動化のみに機能を絞った。
+# 旧名: bemolle Comment Suggest（コメント候補をLINE送信）
+# ワークフローファイル名 (comment_suggest.yml) は cron-job.org の発火URLに使われているため変更しない。
 on:
-  # GitHub内蔵scheduleは遅延/スキップが多いため、他workflowと同じ cron-job.org の
-  # repository_dispatch(comment-morning) に相乗りして毎朝確実に1回だけ発火させる。
+  # GitHub内蔵scheduleは遅延/スキップが多いため、cron-job.org の
+  # repository_dispatch(comment-morning/noon/evening) で毎日3回発火。
   repository_dispatch:
     types: [comment-morning, comment-noon, comment-evening]
   workflow_dispatch:
-    inputs:
-      count:
-        description: '候補件数'
-        required: false
-        default: '1'
 
 jobs:
   suggest:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
       TZ: Asia/Tokyo
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+      ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
       THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
       THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
-      SUGGEST_COUNT: ${{ github.event.inputs.count || '1' }}   # 各アカ1件ずつ=合計4通/日（LINE枠節約）
-      COMMENT_COOLDOWN_DAYS: '90'
-      POST_AGE_LIMIT_DAYS: '30'
     steps:
       - uses: actions/checkout@v4
 
@@ -46,22 +41,6 @@ jobs:
           git config user.name "threads-bot"
           git pull --rebase --autostash origin main 2>&1 || true
 
-      - name: Generate & send suggestions
-        # コメント提案は朝のみ（昼・夜はいいねだけ）
-        if: github.event.action == 'comment-morning' || github.event_name == 'workflow_dispatch'
-        run: |
-          # bemolle と 個人 をそれぞれ1件ずつ（両アカとも自動送信が不可/不安定なため手動支援）
-          if [ -n "$THREADS_SESSION" ]; then
-            python3 bemolle_suggest.py bemolle || echo "bemolle suggest 失敗"
-          else
-            echo "⚠️ THREADS_SESSION 未設定 → bemolleスキップ"
-          fi
-          if [ -n "$THREADS_SESSION_PERSONAL" ]; then
-            python3 bemolle_suggest.py personal || echo "personal suggest 失敗"
-          else
-            echo "⚠️ THREADS_SESSION_PERSONAL 未設定 → 個人スキップ"
-          fi
-
       - name: 自動いいね（ベモーレ・個人）
         continue-on-error: true
         run: |
@@ -74,11 +53,11 @@ jobs:
 
       - name: Commit state
         run: |
-          git add commented_posts.json comment_targets.json commented_posts_personal.json comment_targets_personal.json liked_posts.json liked_posts_personal.json 2>/dev/null || true
+          git add liked_posts.json liked_posts_personal.json comment_targets.json comment_targets_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no changes"
           else
-            git commit -m "state: bemolle suggest $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            git commit -m "state: auto like $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             for i in 1 2 3 4 5; do
               git pull --rebase --autostash -X ours origin main 2>&1 || true
               git push && break
