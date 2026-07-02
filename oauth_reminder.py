@@ -141,8 +141,12 @@ def main():
         customer_id = user.get("stripe_customer_id", "")
         line_uid    = user.get("line_user_id", "")
         step_sent   = user.get("step_sent_at", "")
-        threads_id  = user.get("expected_threads_id") or "（未登録）"
-        display     = user.get("display_name") or threads_id or customer_id
+        threads_id  = (user.get("expected_threads_id") or "").strip()
+        name        = (user.get("display_name") or "").strip()
+        # 通知に出す識別子：名前 / @Threads ID / customer_id のうち有るものを並べる（何かは必ず出す）
+        _bits = [b for b in [name, (f"@{threads_id}" if threads_id else ""), customer_id] if b]
+        who         = " / ".join(_bits) if _bits else "（ID不明）"
+        display     = name or threads_id or customer_id or "（ID不明）"
 
         if not line_uid or not customer_id:
             print(f"[skip] line_user_id/customer_id 不足: {user}")
@@ -160,7 +164,7 @@ def main():
             send_client_reminder(line_uid, customer_id)
             mark_reminded(line_uid)
             print(f"[sent] {display}: リマインド送信完了（経過{hours}時間）")
-            sent_list.append(f"{display}（@{threads_id}・経過{hours}h）")
+            sent_list.append(f"{who}・経過{hours}h")
         except Exception as e:
             detail = str(e)
             if isinstance(e, urllib.error.HTTPError):
@@ -171,8 +175,7 @@ def main():
             print(f"[ERROR] {display}: リマインド送信失敗 → {detail}", file=sys.stderr)
             notify_admin(
                 f"⚠️ OAuthリマインド送信失敗\n\n"
-                f"クライアント: {display}\n"
-                f"Threads ID: {threads_id}\n"
+                f"クライアント: {who}\n"
                 f"エラー: {detail}\n\n"
                 f"手動でフォロー検討してください。"
             )
