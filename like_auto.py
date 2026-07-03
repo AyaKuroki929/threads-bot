@@ -102,12 +102,30 @@ def _check_pause() -> bool:
     return False
 
 
-def _set_pause(reason: str):
+def _set_pause(reason: str, hours: int = PAUSE_HOURS):
     _save_json(PAUSE_FILE, {
-        "until": (datetime.utcnow() + timedelta(hours=PAUSE_HOURS)).isoformat(),
+        "until": (datetime.utcnow() + timedelta(hours=hours)).isoformat(),
         "reason": reason,
         "set_at": datetime.utcnow().isoformat(),
     })
+
+
+def _escalated_pause_hours() -> int:
+    """破棄検知が繰り返された回数に応じて休止時間を自動延長（72h→144h→288h…最大14日）。
+    反映確認が取れたら _reset_discard_count() でリセットされる。"""
+    state = _load_json(ALERT_FILE, {})
+    count = int(state.get("discard_count", 0)) + 1
+    state["discard_count"] = count
+    _save_json(ALERT_FILE, state)
+    return min(PAUSE_HOURS * (2 ** (count - 1)), 14 * 24)
+
+
+def _reset_discard_count():
+    state = _load_json(ALERT_FILE, {})
+    if state.get("discard_count"):
+        state["discard_count"] = 0
+        _save_json(ALERT_FILE, state)
+        print(f"[verify] {LABEL} 反映確認が取れたため破棄カウントをリセット")
 
 
 def _alert_throttled(kind: str, text: str):
@@ -123,6 +141,26 @@ def _alert_throttled(kind: str, text: str):
     _line_alert(text)
     state[kind] = datetime.utcnow().isoformat()
     _save_json(ALERT_FILE, state)
+
+
+# ── ログイン状態確認 ──────────────────────────────────────────
+def _is_logged_in(page):
+    """threads.comトップでログイン状態を確認する。
+    True=ログイン中 / False=未ログイン / None=判定不能。
+    セッション切れだと『クリックは成功に見えるが未ログインで無効』という
+    偽いいねが発生し、反映検証でも「破棄」と誤診してしまうため、
+    行動する前に必ず確認する（cookie_refresh と同じ Create ボタン判定）。"""
+    try:
+        page.goto("https://www.threads.com/", wait_until="domcontentloaded", timeout=20000)
+        page.wait_for_timeout(2500)
+        if page.locator('[aria-label*="Create"], [aria-label*="作成"], [aria-label*="新規スレッド"]').count() > 0:
+            return True
+        if page.locator('a[href*="/login"]').count() > 0:
+            return False
+        return None
+    except Exception as e:
+        print(f"[login] {LABEL} 確認失敗（判定不能）: {e}", file=sys.stderr)
+        return None
 
 
 # ── 反映検証（canary）──────────────────────────────────────────
@@ -242,24 +280,56 @@ def main():
         )
         page = ctx.new_page()
 
+        # ── ログイン確認：セッション切れでの「偽いいね」と誤診を防ぐ ──
+        login = _is_logged_in(page)
+        if login is False:
+            print(f"[login] {LABEL} 未ログイン → いいね・検証をスキップ（偽いいね防止）")
+            _alert_throttled(
+                "session_dead",
+                f"🚨 【{LABEL}】Threadsセッションが未ログイン状態です\n\n"
+                f"いいね・反映検証を実行せずスキップしました\n"
+                f"（未ログインだとクリックが無効なのに成功記録される偽いいねになるため）。\n\n"
+                f"対処：playwright_login.py で {LABEL} を再ログイン\n"
+                f"→ GitHub Secret {SESSION_ENV} を更新\n"
+                f"（ローカルMacの cookie_refresh が毎日12時に自動更新するので、\n"
+                f"　Chromeの該当プロファイルでThreadsにログインし直せば自動復帰します）"
+            )
+            browser.close()
+            return
+        if login is None:
+            print(f"[login] {LABEL} ログイン判定不能 → 今回はスキップ（次回再試行）")
+            _alert_throttled(
+                "login_unknown",
+                f"⚠️ 【{LABEL}】Threadsのログイン判定ができませんでした\n"
+                f"（画面構造の変化の可能性）。自動いいねを今回スキップ。\n"
+                f"連日続く場合はコードの確認が必要です。"
+            )
+            browser.close()
+            return
+        print(f"[login] {LABEL} ログイン確認OK")
+
         # ── 反映検証：前回いいねが実際にサーバー側に残っているか（偽OK検知） ──
         checked, reflected = _verify_previous_likes(page)
         if checked:
             print(f"[verify] {LABEL} 前回いいねの反映確認: {reflected}/{checked}")
+        if reflected > 0:
+            _reset_discard_count()  # 反映が確認できた＝破棄は起きていない
         if checked >= 2 and reflected == 0:
-            # 2件以上検証して全滅＝クリックは通るがサーバー側で破棄されている疑い
-            # （2026-06のコメント制限と同じ症状）。続行はフラグを深めるだけなので自動休止。
-            print(f"[verify] {LABEL} 全滅 → サイレント破棄の疑い。{PAUSE_HOURS}時間の自動休止")
-            _set_pause("いいね未反映（サイレント破棄の疑い）")
+            # ログイン確認済みで2件以上全滅＝クリックは通るがサーバー側で破棄されている
+            # （2026-06のコメント制限と同じアクション制限の症状）。
+            # 続行はフラグを深めるだけなので自動休止（繰り返すたびに休止を自動延長）。
+            hours = _escalated_pause_hours()
+            print(f"[verify] {LABEL} 全滅 → サイレント破棄の疑い。{hours}時間の自動休止")
+            _set_pause("いいね未反映（サイレント破棄の疑い）", hours)
             _alert_throttled(
                 "silent_discard",
                 f"🚨 【{LABEL}】いいねがサーバー側で反映されていません\n\n"
-                f"前回いいねした{checked}件を確認 → 全て未反映。\n"
-                f"クリックは成功するのにMeta側で破棄されている疑い\n"
+                f"ログイン状態は正常なのに、前回いいねした{checked}件が全て未反映。\n"
+                f"Meta側でアクションが破棄されています\n"
                 f"（6月のコメント制限と同じアクション制限の症状）。\n\n"
-                f"自動いいねを{PAUSE_HOURS}時間休止します。\n"
+                f"自動いいねを{hours}時間休止します。\n"
                 f"期間終了後に自動で再テストします（操作不要）。\n"
-                f"再発を繰り返す場合は休養期間を延ばす必要があります。"
+                f"検知のたびに休止期間は自動で延長されます（最大14日）。"
             )
             browser.close()
             _save_liked(liked)
