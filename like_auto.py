@@ -6,29 +6,18 @@
 残り50件以下になったらキーワード検索で新規アカウントを自動補充。
 """
 import os, sys, json, time, random
-import urllib.request
 from datetime import datetime, timedelta
+
+from botlib import line_broadcast, load_json as _botlib_load, save_json as _botlib_save
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _line_alert(text: str):
     """いいね機能の重要トラブル時のみ管理者LINEに通知（Claude通知Bot経由）。
-    コメント/suggest系の通知は停止中でも、この関数は動作する。"""
-    token = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    if not token:
-        print(f"[like_alert] LINEトークン無し: {text}")
-        return
-    try:
-        body = json.dumps({"messages": [{"type": "text", "text": text}]}).encode()
-        req = urllib.request.Request(
-            "https://api.line.me/v2/bot/message/broadcast",
-            data=body,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        print(f"[like_alert] LINE送信失敗: {e}")
+    コメント/suggest系の通知は停止中でも、この関数は動作する。
+    実装は botlib.line_broadcast（ADMIN_NOTIFY_LINE_TOKEN優先で解決）。"""
+    line_broadcast(text)
 
 ACCOUNT = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("bemolle", "personal") else "bemolle"
 
@@ -65,14 +54,11 @@ ALERT_FILE  = os.path.join(_BASE, f"like_alert_state{_SUFFIX}.json")
 
 
 def _load_liked():
-    try:
-        return json.load(open(LIKED_FILE, encoding="utf-8"))
-    except Exception:
-        return {}
+    return _botlib_load(LIKED_FILE, {})
 
 
 def _save_liked(data):
-    json.dump(data, open(LIKED_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    _botlib_save(LIKED_FILE, data)
 
 
 def _already_liked(liked, account):
@@ -86,25 +72,16 @@ def _already_liked(liked, account):
 
 
 def _load_targets():
-    try:
-        return json.load(open(TARGETS_FILE, encoding="utf-8"))
-    except Exception:
-        return []
+    return _botlib_load(TARGETS_FILE, [])
 
 
 def _save_targets(data):
-    json.dump(data, open(TARGETS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    _botlib_save(TARGETS_FILE, data)
 
 
-def _load_json(path, default):
-    try:
-        return json.load(open(path, encoding="utf-8"))
-    except Exception:
-        return default
-
-
-def _save_json(path, data):
-    json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+# 汎用JSON読み書きは botlib に集約（既存呼び出し名は維持）
+_load_json = _botlib_load
+_save_json = _botlib_save
 
 
 # ── 自動休止（制限検知時にcronが叩き続けてフラグを深めないため） ──

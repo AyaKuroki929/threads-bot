@@ -13,6 +13,8 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
 
+from botlib import line_broadcast, line_push
+
 SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY        = os.environ.get("SUPABASE_SERVICE_KEY", "")
 CLIENT_LINE_TOKEN   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")   # とうこさんLINE（クライアント宛て）
@@ -75,14 +77,7 @@ def send_client_reminder(line_uid: str, customer_id: str):
         "↑ こちらをタップ → Instagramでログイン → 連携完了！\n\n"
         "ご不明な点があればお気軽にこのLINEへご返信ください🙏"
     )
-    req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/push",
-        data=json.dumps({"to": line_uid, "messages": [{"type": "text", "text": text}]}).encode(),
-        headers={"Authorization": f"Bearer {CLIENT_LINE_TOKEN}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return r.status
+    return line_push(line_uid, text, token=CLIENT_LINE_TOKEN)
 
 
 def mark_reminded(line_uid: str):
@@ -100,19 +95,10 @@ def mark_reminded(line_uid: str):
 
 
 def notify_admin(text: str):
-    """管理者LINE（Claude通知Bot）に通知"""
+    """管理者LINE（Claude通知Bot）に通知（実装は botlib.line_broadcast・失敗は握って継続）"""
     if not ADMIN_LINE_TOKEN:
         return
-    try:
-        req = urllib.request.Request(
-            "https://api.line.me/v2/bot/message/broadcast",
-            data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
-            headers={"Authorization": f"Bearer {ADMIN_LINE_TOKEN}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        print(f"[admin notify failed] {e}", file=sys.stderr)
+    line_broadcast(text, token=ADMIN_LINE_TOKEN)
 
 
 def _hours_since(iso: str) -> int:

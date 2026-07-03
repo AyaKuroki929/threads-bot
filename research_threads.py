@@ -12,6 +12,8 @@ from datetime import datetime
 from anthropic import Anthropic
 from playwright.sync_api import sync_playwright
 
+from botlib import line_broadcast
+
 SESSION_FILE  = os.environ.get("SESSION_FILE", "session_personal.json")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -339,20 +341,7 @@ def send_line(message):
     if not LINE_TOKEN:
         return
     import urllib.request
-    body = json.dumps({"messages": [{"type": "text", "text": message}]}).encode()
-    req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/broadcast",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {LINE_TOKEN}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req) as r:
-            pass
-    except Exception as e:
-        print(f"[LINE] 通知失敗: {e}")
+    line_broadcast(message, token=LINE_TOKEN)  # 実装は botlib（失敗は握って継続）
 
 
 # ──────────────────────────────────────────────
