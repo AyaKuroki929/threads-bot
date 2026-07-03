@@ -54,6 +54,14 @@ LIKE_COOLDOWN_DAYS = 30   # 同アカに再いいねしない日数
 REPLENISH_THRESHOLD = 50  # ターゲット残りがこの件数以下で補充発動
 DISCOVER_COUNT      = 15  # 1回の補充で追加する最大件数
 MAX_FAIL            = 8   # 連続失敗でセッション異常と判断し中断
+PAUSE_HOURS         = 72  # サイレント破棄検知時の自動休止時間（制限中に叩き続けてフラグを深めない）
+ALERT_THROTTLE_HOURS = 24 # 同種LINE警告の再送間隔（LINE枠節約・1日3回の連続警告を防ぐ）
+
+# 反映検証（canary）・休止・警告抑制の状態ファイル（アカウント別・workflowがcommitして永続化）
+_SUFFIX = "_personal" if ACCOUNT == "personal" else ""
+VERIFY_FILE = os.path.join(_BASE, f"like_verify_queue{_SUFFIX}.json")
+PAUSE_FILE  = os.path.join(_BASE, f"like_pause{_SUFFIX}.json")
+ALERT_FILE  = os.path.join(_BASE, f"like_alert_state{_SUFFIX}.json")
 
 
 def _load_liked():
@@ -88,8 +96,96 @@ def _save_targets(data):
     json.dump(data, open(TARGETS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
+def _load_json(path, default):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def _save_json(path, data):
+    json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+
+# ── 自動休止（制限検知時にcronが叩き続けてフラグを深めないため） ──
+def _check_pause() -> bool:
+    """休止中ならTrue。期限が過ぎていたら休止を解除して再開。"""
+    if not os.path.exists(PAUSE_FILE):
+        return False
+    try:
+        d = _load_json(PAUSE_FILE, {})
+        until = datetime.fromisoformat(d.get("until", "1970-01-01T00:00:00"))
+        if datetime.utcnow() < until:
+            print(f"[like] {LABEL} 自動休止中（理由: {d.get('reason','')}・{until.isoformat()}UTCまで）→ スキップ")
+            return True
+    except Exception:
+        pass  # 壊れた休止ファイルは解除扱い
+    os.remove(PAUSE_FILE)
+    print(f"[like] {LABEL} 休止期間終了 → 再開（今回の実行で反映検証から再テスト）")
+    return False
+
+
+def _set_pause(reason: str):
+    _save_json(PAUSE_FILE, {
+        "until": (datetime.utcnow() + timedelta(hours=PAUSE_HOURS)).isoformat(),
+        "reason": reason,
+        "set_at": datetime.utcnow().isoformat(),
+    })
+
+
+def _alert_throttled(kind: str, text: str):
+    """同種の警告を ALERT_THROTTLE_HOURS に1回だけLINE送信（毎cron連発を防ぐ）。"""
+    state = _load_json(ALERT_FILE, {})
+    try:
+        last = datetime.fromisoformat(state.get(kind, "1970-01-01T00:00:00"))
+        if datetime.utcnow() - last < timedelta(hours=ALERT_THROTTLE_HOURS):
+            print(f"[like_alert] {kind} は{ALERT_THROTTLE_HOURS}h以内に通知済み → 抑制")
+            return
+    except Exception:
+        pass
+    _line_alert(text)
+    state[kind] = datetime.utcnow().isoformat()
+    _save_json(ALERT_FILE, state)
+
+
+# ── 反映検証（canary）──────────────────────────────────────────
+def _verify_previous_likes(page) -> tuple[int, int]:
+    """前回いいねした投稿を再訪問し、いいね状態が残っているか確認する。
+    クリック成功＝成功ではない：Metaのアクション制限は「操作は通るがサーバー側で
+    サイレント破棄」する（2026-06のbemolleコメント制限で実証済み・偽OK問題）。
+    returns: (判定できた件数, 反映が確認できた件数)"""
+    queue = _load_json(VERIFY_FILE, [])
+    if not queue:
+        return 0, 0
+    checked = reflected = 0
+    for item in queue[:4]:
+        url = item.get("post_url") or ""
+        if not url:
+            continue
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(random.randint(2000, 3500))
+            btns = page.locator('[aria-label*="Like"], [aria-label*="いいね"], [aria-label*="like"], [aria-label*="取り消"]')
+            if btns.count() == 0:
+                print(f"[verify] @{item.get('account','')} ボタン見つからず（投稿削除等・判定不能）")
+                continue
+            label = (btns.first.get_attribute("aria-label") or "")
+            if "unlike" in label.lower() or "取り消" in label:
+                reflected += 1
+            else:
+                print(f"[verify] ⚠️ いいね未反映: @{item.get('account','')} {url}")
+            checked += 1
+        except Exception as e:
+            print(f"[verify] @{item.get('account','')} 確認失敗（判定不能）: {e}")
+    _save_json(VERIFY_FILE, [])  # 検証済みキューはクリア
+    return checked, reflected
+
+
 def _try_like(page, acc):
-    """プロフィールページの最初の投稿をいいねする。成功でTrue。"""
+    """プロフィールページの最初の投稿をいいねする。
+    returns: (result, post_url)
+      result: True=いいね実行 / None=既いいね済み / False=失敗
+      post_url: いいねした投稿のURL（反映検証用。取得できなければ空文字）"""
     try:
         page.goto(f"https://www.threads.com/@{acc}", wait_until="domcontentloaded", timeout=20000)
         page.wait_for_timeout(random.randint(2500, 4000))
@@ -101,28 +197,43 @@ def _try_like(page, acc):
         )
         if like_btns.count() == 0:
             print(f"[like] @{acc} いいねボタンが見つからない → スキップ")
-            return False
+            return False, ""
 
         btn = like_btns.first
         label = (btn.get_attribute("aria-label") or "").lower()
 
-        # 既にいいね済みの場合はスキップ（aria-label に "unlike" が含まれる）
-        if "unlike" in label:
+        # 既にいいね済みの場合はスキップ（aria-label に "unlike"/取り消す が含まれる）
+        if "unlike" in label or "取り消" in label:
             print(f"[like] @{acc} 既にいいね済み → スキップ（記録して次へ）")
-            return None  # None = 既いいね（カウントせず記録だけ）
+            return None, ""  # None = 既いいね（カウントせず記録だけ）
+
+        # いいね対象＝最初の投稿のURLを反映検証用に控える
+        post_url = ""
+        try:
+            href = page.locator('a[href*="/post/"]').first.get_attribute("href") or ""
+            if href.startswith("/"):
+                post_url = "https://www.threads.com" + href
+            elif href:
+                post_url = href
+        except Exception:
+            pass
 
         btn.scroll_into_view_if_needed()
         btn.click()
         page.wait_for_timeout(random.randint(3000, 8000))  # Bot検知回避ランダム待機
         print(f"[like] @{acc} ❤️ いいね完了")
-        return True
+        return True, post_url
 
     except Exception as e:
         print(f"[like] @{acc} エラー: {e}")
-        return False
+        return False, ""
 
 
 def main():
+    # 自動休止中なら何もしない（制限中に叩き続けてフラグを深めない）
+    if _check_pause():
+        return
+
     # セッションファイル書き出し（GH Actions環境変数から）
     session_val = os.environ.get(SESSION_ENV, "")
     if session_val:
@@ -141,6 +252,7 @@ def main():
 
     liked_count    = 0
     consecutive_fail = 0
+    verify_queue_new = []  # 今回いいねした投稿（次回実行の冒頭で反映検証する）
 
     from playwright.sync_api import sync_playwright
 
@@ -153,6 +265,29 @@ def main():
         )
         page = ctx.new_page()
 
+        # ── 反映検証：前回いいねが実際にサーバー側に残っているか（偽OK検知） ──
+        checked, reflected = _verify_previous_likes(page)
+        if checked:
+            print(f"[verify] {LABEL} 前回いいねの反映確認: {reflected}/{checked}")
+        if checked >= 2 and reflected == 0:
+            # 2件以上検証して全滅＝クリックは通るがサーバー側で破棄されている疑い
+            # （2026-06のコメント制限と同じ症状）。続行はフラグを深めるだけなので自動休止。
+            print(f"[verify] {LABEL} 全滅 → サイレント破棄の疑い。{PAUSE_HOURS}時間の自動休止")
+            _set_pause("いいね未反映（サイレント破棄の疑い）")
+            _alert_throttled(
+                "silent_discard",
+                f"🚨 【{LABEL}】いいねがサーバー側で反映されていません\n\n"
+                f"前回いいねした{checked}件を確認 → 全て未反映。\n"
+                f"クリックは成功するのにMeta側で破棄されている疑い\n"
+                f"（6月のコメント制限と同じアクション制限の症状）。\n\n"
+                f"自動いいねを{PAUSE_HOURS}時間休止します。\n"
+                f"期間終了後に自動で再テストします（操作不要）。\n"
+                f"再発を繰り返す場合は休養期間を延ばす必要があります。"
+            )
+            browser.close()
+            _save_liked(liked)
+            return
+
         for t in eligible:
             if liked_count >= LIKES_PER_RUN:
                 break
@@ -160,11 +295,16 @@ def main():
             if not acc:
                 continue
 
-            result = _try_like(page, acc)
+            result, post_url = _try_like(page, acc)
             if result is True:
                 liked[acc] = datetime.utcnow().isoformat()
                 liked_count += 1
                 consecutive_fail = 0
+                if post_url:
+                    verify_queue_new.append({
+                        "account": acc, "post_url": post_url,
+                        "ts": datetime.utcnow().isoformat(),
+                    })
             elif result is None:
                 # 既いいね済み → 記録して次へ
                 liked[acc] = datetime.utcnow().isoformat()
@@ -173,12 +313,14 @@ def main():
                 consecutive_fail += 1
                 if consecutive_fail >= MAX_FAIL:
                     print(f"[like] {LABEL} 連続{MAX_FAIL}件失敗 → セッション異常の可能性。中断")
-                    _line_alert(
+                    _alert_throttled(
+                        "session_dead",
                         f"🚨 【{LABEL}】自動いいねが停止しました\n\n"
                         f"連続{MAX_FAIL}件で「いいねボタンが見つからない」→ 中断\n"
                         f"セッション(Cookie)期限切れの可能性が高いです。\n\n"
                         f"対処：playwright_login.py で {LABEL} を再ログイン\n"
-                        f"→ GitHub Secret {SESSION_ENV} を更新"
+                        f"→ GitHub Secret {SESSION_ENV} を更新\n"
+                        f"（更新すれば次の定時実行から自動復帰します）"
                     )
                     break
 
@@ -199,7 +341,8 @@ def main():
         browser.close()
 
     _save_liked(liked)
-    print(f"[like] {LABEL} 完了: {liked_count}件いいね")
+    _save_json(VERIFY_FILE, verify_queue_new)  # 次回実行の冒頭で反映検証
+    print(f"[like] {LABEL} 完了: {liked_count}件いいね（次回反映検証: {len(verify_queue_new)}件）")
 
 
 if __name__ == "__main__":

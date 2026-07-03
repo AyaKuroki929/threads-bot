@@ -53,7 +53,15 @@ jobs:
 
       - name: Commit state
         run: |
-          git add liked_posts.json liked_posts_personal.json comment_targets.json comment_targets_personal.json 2>/dev/null || true
+          # like_verify_queue*=反映検証キュー / like_pause*=自動休止マーカー / like_alert_state*=LINE警告の重複抑制
+          # 存在しないファイルが混ざると git add 全体が失敗するため1ファイルずつ（-A で削除も反映）
+          for f in liked_posts.json liked_posts_personal.json \
+                   comment_targets.json comment_targets_personal.json \
+                   like_verify_queue.json like_verify_queue_personal.json \
+                   like_pause.json like_pause_personal.json \
+                   like_alert_state.json like_alert_state_personal.json; do
+            git add -A -- "$f" 2>/dev/null || true
+          done
           if git diff --staged --quiet; then
             echo "no changes"
           else
