@@ -4,9 +4,14 @@
 LINE通知・JSON状態ファイルなど、各スクリプトに重複していた処理を集約する。
 標準ライブラリのみに依存（pip追加インストール不要＝どのワークフローからも使える）。
 
-移行済み: like_auto.py / oauth_reminder.py / research_threads.py
-未移行（クライアント本番のため別途慎重に）: generate_posts.py / post_api.py /
-  post_saas.py / generate_saas_posts.py / preview_gen.py / saas_app/（Vercel関数は対象外）
+移行済み: like_auto.py / oauth_reminder.py / research_threads.py /
+  post_saas.py（_notify_line）/ post_api.py（状態JSON3関数）
+移行しない（意図的）:
+- generate_posts.py / generate_saas_posts.py … 投稿プールのJSON読み込みは
+  「壊れていたら落とす」設計が正（黙って空データで続行するとプールを壊すため）。
+  load_json のデフォルト返却とは意味が異なるので置き換えない
+- preview_gen.py … LINE/状態JSONを持たない
+- saas_app/（Vercel関数）… デプロイ単位が別のため対象外
 """
 from __future__ import annotations
 

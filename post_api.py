@@ -8,7 +8,7 @@ Required env vars (GitHub Secrets → workflow env):
 
 Optional env vars:
   POSTS_FILE, USED_FILE, LAST_RUN_FILE, PRIORITY_FILE
-  LINE_CHANNEL_ACCESS_TOKEN, THREADS_TOPIC
+  THREADS_TOPIC
   SKIP_TIME_GUARD=1  時間帯チェックをスキップ（手動補完用）
   SKIP_JITTER=1      遅延なし（テスト用）
 """
@@ -23,13 +23,14 @@ import urllib.error
 import subprocess
 from datetime import datetime
 
+from botlib import load_json, save_json
+
 _BASE = os.path.dirname(__file__)
 
 POSTS_FILE    = os.environ.get("POSTS_FILE",    os.path.join(_BASE, "posts.json"))
 USED_FILE     = os.environ.get("USED_FILE",     os.path.join(_BASE, "used_posts.json"))
 LAST_RUN_FILE = os.environ.get("LAST_RUN_FILE", os.path.join(_BASE, "last_run.json"))
 PRIORITY_FILE = os.environ.get("PRIORITY_FILE", os.path.join(_BASE, "priority_posts.json"))
-LINE_TOKEN    = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 USERNAME      = os.environ.get("THREADS_USERNAME", "")
 
 _INSTAGRAM_CTA_PROB = 0.25
@@ -123,27 +124,16 @@ def is_valid_time_for_slot(time_slot):
 
 
 def record_success(time_slot):
-    data = {}
-    if os.path.exists(LAST_RUN_FILE):
-        try:
-            with open(LAST_RUN_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
+    data = load_json(LAST_RUN_FILE, {})
     data[time_slot] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LAST_RUN_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    save_json(LAST_RUN_FILE, data)
 
 
 # ── 投稿選択 ────────────────────────────────────────────────
 
 def _get_priority_indices(time_slot):
-    if not os.path.exists(PRIORITY_FILE):
-        return set()
-    try:
-        with open(PRIORITY_FILE, encoding="utf-8") as f:
-            pri = json.load(f)
-    except Exception:
+    pri = load_json(PRIORITY_FILE, None)
+    if pri is None:
         return set()
     indices = set()
     for entry in pri.get(time_slot, []):
@@ -157,12 +147,8 @@ def _get_priority_indices(time_slot):
 
 
 def _consume_priority(time_slot):
-    if not os.path.exists(PRIORITY_FILE):
-        return None, None
-    try:
-        with open(PRIORITY_FILE, encoding="utf-8") as f:
-            pri = json.load(f)
-    except Exception:
+    pri = load_json(PRIORITY_FILE, None)
+    if pri is None:
         return None, None
     entries = pri.get(time_slot, [])
     if not entries:
@@ -187,8 +173,7 @@ def _consume_priority(time_slot):
         if idx < len(all_posts):
             entries.pop(i)
             pri[time_slot] = entries
-            with open(PRIORITY_FILE, "w", encoding="utf-8") as f:
-                json.dump(pri, f, ensure_ascii=False, indent=2)
+            save_json(PRIORITY_FILE, pri)
             return idx, all_posts[idx]
     return None, None
 
@@ -229,18 +214,11 @@ def select_post(time_slot):
 
 
 def commit_used(time_slot, idx):
-    used = {}
-    if os.path.exists(USED_FILE):
-        try:
-            with open(USED_FILE, encoding="utf-8") as f:
-                used = json.load(f)
-        except Exception:
-            used = {}
+    used = load_json(USED_FILE, {})
     used.setdefault(time_slot, [])
     if idx not in used[time_slot]:
         used[time_slot].append(idx)
-    with open(USED_FILE, "w", encoding="utf-8") as f:
-        json.dump(used, f, ensure_ascii=False, indent=2)
+    save_json(USED_FILE, used)
 
 
 # ── Git ────────────────────────────────────────────────────

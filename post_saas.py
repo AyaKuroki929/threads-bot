@@ -15,6 +15,8 @@ import urllib.parse
 import urllib.error
 from datetime import datetime, timezone, timedelta
 
+from botlib import line_broadcast
+
 JST = timezone(timedelta(hours=9))
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -65,19 +67,10 @@ LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
 
 
 def _notify_line(message: str):
+    """管理者LINE通知（実装は botlib.line_broadcast・失敗は握って継続）"""
     if not LINE_TOKEN:
         return
-    try:
-        body = json.dumps({"messages": [{"type": "text", "text": message}]}).encode()
-        req = urllib.request.Request(
-            "https://api.line.me/v2/bot/message/broadcast",
-            data=body,
-            headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        print(f"[LINE通知失敗] {e}")
+    line_broadcast(message, token=LINE_TOKEN)
 
 
 def get_used_posts(salon_id, slot):
