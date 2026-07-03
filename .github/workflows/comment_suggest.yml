@@ -13,7 +13,7 @@ on:
 jobs:
   suggest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30  # 人間らしいペーシング（開始ジッター最大5分＋いいね間隔8〜40秒×2アカ）のため拡大
     permissions:
       contents: write
     env:

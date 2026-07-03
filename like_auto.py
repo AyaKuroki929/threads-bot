@@ -38,7 +38,16 @@ else:
     USERNAME      = "bemolle_diet"
     LABEL         = "ベモーレ"
 
+# ── 人間らしいペーシング（2026-07-03 予防強化）─────────────────
+# 規則的なボット挙動（毎日同時刻・毎回同件数・数秒間隔の連続処理）は
+# フラグの引き金になり得るため、量・間隔・タイミングを毎回ゆらす。
+# ※注意: これは「新規フラグの予防」。既に付いたフラグは休養でしか解けない
+#  （2026-06に住宅IP・stealth等を全て試して実証済み → RESTRICTION.md）
+LIKES_MIN_PER_RUN  = 2    # 1回あたりのいいね件数の下限（毎回この範囲でランダム）
 LIKES_PER_RUN      = 5    # 1回あたりのいいね上限
+SKIP_RUN_PROB      = 0.10 # この確率で今回の実行を丸ごとサボる（人間は毎日3回×365日やらない）
+START_JITTER_SEC   = (0, 300)   # 実行開始前のランダム待機（毎日きっかり同時刻を避ける）
+LIKE_GAP_SEC       = (8, 40)    # いいね後〜次のアカウントへ移る間隔（従来3〜8秒→大幅拡大）
 LIKE_COOLDOWN_DAYS = 30   # 同アカに再いいねしない日数
 REPLENISH_THRESHOLD = 50  # ターゲット残りがこの件数以下で補充発動
 DISCOVER_COUNT      = 15  # 1回の補充で追加する最大件数
@@ -235,7 +244,8 @@ def _try_like(page, acc):
 
         btn.scroll_into_view_if_needed()
         btn.click()
-        page.wait_for_timeout(random.randint(3000, 8000))  # Bot検知回避ランダム待機
+        # 人間らしさ④: いいね後の滞在をたっぷりゆらす（従来3〜8秒→8〜40秒）
+        page.wait_for_timeout(random.randint(LIKE_GAP_SEC[0] * 1000, LIKE_GAP_SEC[1] * 1000))
         print(f"[like] @{acc} ❤️ いいね完了")
         return True, post_url
 
@@ -248,6 +258,16 @@ def main():
     # 自動休止中なら何もしない（制限中に叩き続けてフラグを深めない）
     if _check_pause():
         return
+
+    # 人間らしさ①: たまに丸ごとサボる（毎日3回×365日は人間の挙動ではない）
+    if random.random() < SKIP_RUN_PROB:
+        print(f"[like] {LABEL} 今回はランダムスキップ（人間らしさ・{int(SKIP_RUN_PROB*100)}%の確率）")
+        return
+
+    # 人間らしさ②: 開始時刻をゆらす（cronの毎日きっかり同時刻を避ける）
+    jitter = random.randint(*START_JITTER_SEC)
+    print(f"[like] {LABEL} 開始ジッター {jitter}秒待機")
+    time.sleep(jitter)
 
     # セッションファイル書き出し（GH Actions環境変数から）
     session_val = os.environ.get(SESSION_ENV, "")
@@ -265,6 +285,8 @@ def main():
     eligible = [t for t in targets if not _already_liked(liked, t.get("account", ""))]
     random.shuffle(eligible)
 
+    likes_target = random.randint(LIKES_MIN_PER_RUN, LIKES_PER_RUN)  # 人間らしさ③: 毎回件数を変える
+    print(f"[like] {LABEL} 今回の目標: {likes_target}件")
     liked_count    = 0
     consecutive_fail = 0
     verify_queue_new = []  # 今回いいねした投稿（次回実行の冒頭で反映検証する）
@@ -336,7 +358,7 @@ def main():
             return
 
         for t in eligible:
-            if liked_count >= LIKES_PER_RUN:
+            if liked_count >= likes_target:
                 break
             acc = t.get("account", "")
             if not acc:
