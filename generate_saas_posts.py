@@ -958,12 +958,18 @@ def main():
 
     print(f"[saas] {len(salons)}件のサロンを検出")
 
+    # 投稿在庫を手動キュレーションしているアカウント（自動生成すると方針が上書きされるため除外）
+    MANUAL_STOCK_IDS = {"aya_kuroki_0929"}
+
     for salon in salons:
         salon_name = salon.get("サロン名", "")
         threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
         if not salon_name:
             continue
         if target_salon and threads_id != target_salon and salon_name != target_salon:
+            continue
+        if threads_id in MANUAL_STOCK_IDS:
+            print(f"[saas] {salon_name} (@{threads_id}) は在庫手動管理のため自動生成をスキップ")
             continue
         print(f"\n[saas] === {salon_name} (@{threads_id}) の処理開始 ===")
         generate_for_salon(salon)
