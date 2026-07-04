@@ -778,15 +778,23 @@ def generate_for_salon(salon: dict):
         posts = {"morning": [], "noon": [], "evening": []}
 
     stype = salon.get("_type")
-    if stype == "b2b":
+    # rules_custom/<safe_name>.md があれば、フォーム由来のルールより優先する
+    # （手動キュレーションしたペルソナ・実話リスト縛りのアカウント用。週次インサイトも混ぜない）
+    custom_rules_path = os.path.join(os.path.dirname(__file__), "rules_custom", f"{safe_name}.md")
+    is_custom = os.path.exists(custom_rules_path)
+    if is_custom:
+        with open(custom_rules_path, encoding="utf-8") as f:
+            rules = f.read()
+        print(f"[saas] {file_key}: カスタムルール rules_custom/{safe_name}.md を使用")
+    elif stype == "b2b":
         rules = b2b_to_rules(salon)
     elif stype == "school":
         rules = school_to_rules(salon)
     else:
         rules = salon_to_rules(salon)
 
-    # 週次リサーチから更新される共通インサイト（美容寄り）を追加。B2Bは対象外なのでスキップ。
-    if stype != "b2b":
+    # 週次リサーチから更新される共通インサイト（美容寄り）を追加。B2B・カスタムは対象外なのでスキップ。
+    if stype != "b2b" and not is_custom:
         saas_rules_path = os.path.join(os.path.dirname(__file__), "GENERATE_RULES_saas.md")
         if os.path.exists(saas_rules_path):
             with open(saas_rules_path, encoding="utf-8") as f:
@@ -958,8 +966,7 @@ def main():
 
     print(f"[saas] {len(salons)}件のサロンを検出")
 
-    # 投稿在庫を手動キュレーションしているアカウント（自動生成すると方針が上書きされるため除外）
-    MANUAL_STOCK_IDS = {"aya_kuroki_0929"}
+    processed_ids = set()  # シートとローカル定義に同じアカウントがいても二重生成しない
 
     for salon in salons:
         salon_name = salon.get("サロン名", "")
@@ -968,9 +975,11 @@ def main():
             continue
         if target_salon and threads_id != target_salon and salon_name != target_salon:
             continue
-        if threads_id in MANUAL_STOCK_IDS:
-            print(f"[saas] {salon_name} (@{threads_id}) は在庫手動管理のため自動生成をスキップ")
+        if threads_id and threads_id in processed_ids:
+            print(f"[saas] {salon_name} (@{threads_id}) は処理済みのためスキップ（重複定義）")
             continue
+        if threads_id:
+            processed_ids.add(threads_id)
         print(f"\n[saas] === {salon_name} (@{threads_id}) の処理開始 ===")
         generate_for_salon(salon)
 
