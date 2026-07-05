@@ -32,6 +32,21 @@ def get_line_user(customer_id: str) -> dict:
     return rows[0]
 
 
+def _seconds_since(iso: str):
+    """step_sent_at からの経過秒。パース不可/未設定なら None。"""
+    if not iso:
+        return None
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - t).total_seconds()
+    except Exception:
+        return None
+
+
+# 直近この秒数以内に送信済みなら、force が付いていても再送しない（プリフェッチ/ダブルタップ対策）
+DEBOUNCE_SECONDS = 120
+
+
 def mark_step_sent(line_uid: str):
     url = (f"{SUPABASE_URL}/rest/v1/line_users"
            f"?line_user_id=eq.{urllib.parse.quote(line_uid)}")
@@ -100,6 +115,19 @@ h1{color:#e65100;}p{color:#555;}</style>
 再送する場合は Supabase で step_sent_at を NULL に更新してください。</p>
 </body></html>"""
 
+RECENTLY_SENT_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>送信済み（重複防止）</title>
+<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f9f9f9;}
+h1{color:#1565c0;}p{color:#555;}</style>
+</head>
+<body>
+<h1>✅ たった今、送信しました</h1>
+<p>数秒前にこのクライアントへSTEP1/2を送信済みです。<br>
+重複送信を防ぐため、この操作はスキップしました（クライアントに追加のLINEは届きません）。<br>
+再送が必要な場合は2分ほど置いてから、もう一度お試しください。</p>
+</body></html>"""
+
 SUCCESS_HTML = """<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="UTF-8"><title>送信完了</title>
@@ -134,6 +162,17 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             user = get_line_user(customer_id)
+
+            # 二重送信防止：直近120秒以内に送信済みなら force でもスキップ
+            # （URLタップ時のブラウザのプリフェッチ/ダブルタップで2通届くのを防ぐ）
+            secs = _seconds_since(user.get("step_sent_at"))
+            if secs is not None and secs < DEBOUNCE_SECONDS:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(RECENTLY_SENT_HTML.encode())
+                return
+
             if user.get("step_sent_at") and not force:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
