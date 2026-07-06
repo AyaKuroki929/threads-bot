@@ -5,10 +5,12 @@
 いいね済みは liked_posts.json に記録して重複防止。
 残り50件以下になったらキーワード検索で新規アカウントを自動補充。
 """
-import os, sys, json, time, random, re
+import os, sys, json, time, random
 from datetime import datetime, timedelta
 
 from botlib import line_broadcast, load_json as _botlib_load, save_json as _botlib_save
+from threads_dom import (LIKE_TOGGLE_SEL, goto_ready,
+                         is_logged_in as _dom_is_logged_in, is_red_heart)
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -154,51 +156,18 @@ def _alert_throttled(kind: str, text: str):
 
 # ── ログイン状態確認 ──────────────────────────────────────────
 def _is_logged_in(page):
-    """threads.comトップでログイン状態を確認する。
+    """threads.comトップでログイン状態を確認する（共通ヘルパーに委譲）。
     True=ログイン中 / False=未ログイン / None=判定不能。
-    セッション切れだと『クリックは成功に見えるが未ログインで無効』という
-    偽いいねが発生し、反映検証でも「破棄」と誤診してしまうため、
-    行動する前に必ず確認する（cookie_refresh と同じ Create ボタン判定）。"""
-    create_sel = '[aria-label*="Create"], [aria-label*="作成"], [aria-label*="新規スレッド"]'
-    login_sel = 'a[href*="/login"]'
-    try:
-        try:
-            page.goto("https://www.threads.com/", wait_until="networkidle", timeout=25000)
-        except Exception:
-            page.goto("https://www.threads.com/", wait_until="domcontentloaded", timeout=20000)
-        # SPA対策：ログイン中(作成)か未ログイン(loginリンク)のどちらかが描画されるまで
-        # 最大12秒待ってから判定する。早読みで「判定不能」になり誤スキップするのを防ぐ。
-        try:
-            page.wait_for_selector(f"{create_sel}, {login_sel}", timeout=12000)
-        except Exception:
-            pass
-        page.wait_for_timeout(1500)
-        if page.locator(create_sel).count() > 0:
-            return True
-        if page.locator(login_sel).count() > 0:
-            return False
-        return None
-    except Exception as e:
-        print(f"[login] {LABEL} 確認失敗（判定不能）: {e}", file=sys.stderr)
-        return None
+    セッション切れだと『クリックは成功に見えるが未ログインで無効』という偽いいねが
+    発生し反映検証でも誤診するため、行動前に必ず確認する。判定不能は描画遅れのことが
+    多いので共通ヘルパー側で1回リトライしてから返す（誤『判定不能』警告の抑制）。"""
+    result = _dom_is_logged_in(page, retries=1)
+    if result is None:
+        print(f"[login] {LABEL} 判定不能（リトライ後も作成/loginを検出できず）", file=sys.stderr)
+    return result
 
 
 # ── 反映検証（canary）──────────────────────────────────────────
-def _is_red_heart(color: str) -> bool:
-    """いいね済みハートの赤系色か。rgb(0-255) / display-p3(0-1) 両対応の緩い判定。
-    未いいねは黒〜グレー。いいね済みは赤（例 display-p3 1 0.18 0.25 / rgb(255,48,64)）。"""
-    if not color:
-        return False
-    cleaned = color.replace("display-p3", "").replace("p3", "")
-    nums = re.findall(r"[\d.]+", cleaned)
-    if len(nums) < 3:
-        return False
-    r, g, b = float(nums[0]), float(nums[1]), float(nums[2])
-    if r <= 1 and g <= 1 and b <= 1:      # 0-1スケール(display-p3等)
-        return r > 0.6 and g < 0.5 and b < 0.5
-    return r > 150 and g < 120 and b < 120  # 0-255スケール(rgb)
-
-
 def _verify_previous_likes(page) -> tuple[int, int]:
     """前回いいねした投稿を再訪問し、いいね状態が残っているか確認する。
     クリック成功＝成功ではない：Metaのアクション制限は「操作は通るがサーバー側で
@@ -215,8 +184,6 @@ def _verify_previous_likes(page) -> tuple[int, int]:
     queue = _load_json(VERIFY_FILE, [])
     if not queue:
         return 0, 0
-    LIKE_SEL = ('svg[aria-label*="いいね"], svg[aria-label*="取り消"], '
-                'svg[aria-label*="Like"], svg[aria-label*="Unlike"], svg[aria-label*="like"]')
     checked = reflected = 0
     for item in queue[:4]:
         url = item.get("post_url") or ""
@@ -224,12 +191,9 @@ def _verify_previous_likes(page) -> tuple[int, int]:
             continue
         acc = item.get("account", "")
         try:
-            try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
-            except Exception:
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            goto_ready(page, url, timeout=30000)
             page.wait_for_timeout(random.randint(2500, 4000))
-            toggle = page.locator(LIKE_SEL).first
+            toggle = page.locator(LIKE_TOGGLE_SEL).first
             try:
                 toggle.wait_for(state="visible", timeout=8000)
             except Exception:
@@ -240,7 +204,7 @@ def _verify_previous_likes(page) -> tuple[int, int]:
                 color = toggle.evaluate("el => getComputedStyle(el).color") or ""
             except Exception:
                 color = ""
-            liked = ("取り消" in label) or ("unlike" in label.lower()) or _is_red_heart(color)
+            liked = ("取り消" in label) or ("unlike" in label.lower()) or is_red_heart(color)
             if liked:
                 reflected += 1
             else:
@@ -258,7 +222,7 @@ def _try_like(page, acc):
       result: True=いいね実行 / None=既いいね済み / False=失敗
       post_url: いいねした投稿のURL（反映検証用。取得できなければ空文字）"""
     try:
-        page.goto(f"https://www.threads.com/@{acc}", wait_until="domcontentloaded", timeout=20000)
+        goto_ready(page, f"https://www.threads.com/@{acc}", timeout=20000)  # SPA描画待ち
         page.wait_for_timeout(random.randint(2500, 4000))
 
         # 最初の投稿カードのいいねボタンを探す
