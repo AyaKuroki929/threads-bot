@@ -47,11 +47,18 @@ def _search_top_posts(page, keyword, max_scroll=3):
     posts = []
     try:
         encoded = keyword.replace(" ", "%20")
-        page.goto(
-            f"https://www.threads.com/search?q={encoded}&serp_type=default",
-            wait_until="domcontentloaded",
-            timeout=15000,
-        )
+        try:
+            page.goto(
+                f"https://www.threads.com/search?q={encoded}&serp_type=default",
+                wait_until="networkidle",  # SPA: 検索結果APIの完了まで待つ
+                timeout=25000,
+            )
+        except Exception:
+            page.goto(
+                f"https://www.threads.com/search?q={encoded}&serp_type=default",
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
         page.wait_for_timeout(3000)
 
         # 「トップ」タブをクリック
@@ -100,11 +107,18 @@ def _fetch_account_posts(page, username, max_posts=10):
     posts = []
     timestamps = []
     try:
-        page.goto(
-            f"https://www.threads.com/@{username}",
-            wait_until="domcontentloaded",
-            timeout=15000,
-        )
+        try:
+            page.goto(
+                f"https://www.threads.com/@{username}",
+                wait_until="networkidle",  # SPA: プロフィール投稿の描画完了を待つ
+                timeout=25000,
+            )
+        except Exception:
+            page.goto(
+                f"https://www.threads.com/@{username}",
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
         page.wait_for_timeout(3000)
         containers = page.locator('div[data-pressable-container="true"]')
         for i in range(min(containers.count(), max_posts)):
@@ -151,15 +165,34 @@ def collect_posts(session_data):
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+        # 稼働中のlike_auto.pyと同じ「フルセッション」を適用する。
+        # 旧実装は add_cookies(cookies)のみで localStorage(origins)を落としており、
+        # Threadsの認証が不十分→ログイン壁→収集ゼロ件になっていた（2026-07）。
         ctx = browser.new_context(
+            storage_state=session_data,
+            locale="ja-JP",
+            timezone_id="Asia/Tokyo",
             user_agent=(
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
-            )
+            ),
         )
-        ctx.add_cookies(session_data["cookies"])
         page = ctx.new_page()
+
+        # ── ログイン確認：未ログインで収集すると「データなし」を無言で量産するため ──
+        try:
+            page.goto("https://www.threads.com/", wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(2500)
+            logged_in = page.locator(
+                '[aria-label*="作成"], [aria-label*="Create"], [aria-label*="新規スレッド"]'
+            ).count() > 0
+        except Exception:
+            logged_in = False
+        if not logged_in:
+            print("[research] 未ログイン検知 → 収集中止（セッション切れの可能性）")
+            browser.close()
+            return None  # main側でセッション切れとして明確に通知する
 
         for acct_type, keywords in RESEARCH_TOPICS.items():
             seen_users = set()
@@ -357,7 +390,33 @@ def main():
 
     print("[research] 投稿収集中...")
     all_posts = collect_posts(session_data)
+
+    # ── 収集失敗のガード：空データをClaudeに渡すと謝罪文が生成され、
+    #    「完了（データなし）」という紛らわしい通知になるため、ここで明確に通知して中止する ──
+    if all_posts is None:
+        print("[research] セッション切れ → ルール更新スキップ")
+        send_line(
+            "🚨 週次リサーチをスキップしました\n\n"
+            "Threadsが未ログイン状態でした（個人アカウントのセッション切れ）。\n"
+            "投稿サンプルを収集できないためルール更新は行っていません。\n\n"
+            "対処：個人アカウントのThreadsに再ログイン\n"
+            "→ GitHub Secret THREADS_SESSION_PERSONAL を更新\n"
+            "（ローカルMacの cookie_refresh が毎日更新するので、\n"
+            "　該当プロファイルでThreadsにログインし直せば自動復帰します）"
+        )
+        return
+
+    total = len(all_posts["bemolle"]) + len(all_posts["personal"])
     print(f"[research] 収集完了: bemolle={len(all_posts['bemolle'])}件 personal={len(all_posts['personal'])}件")
+    if total == 0:
+        print("[research] 収集ゼロ件 → ルール更新スキップ")
+        send_line(
+            "⚠️ 週次リサーチ：投稿を1件も収集できませんでした\n\n"
+            "ログインは正常でしたが、検索・プロフィールから投稿を取得できませんでした\n"
+            "（Threadsの画面構造の変化の可能性）。ルール更新はスキップしています。\n"
+            "連続する場合はスクレイパの確認が必要です。"
+        )
+        return
 
     print("[research] Claude 分析中...")
     rules_json = analyze_and_generate_rules(all_posts)
