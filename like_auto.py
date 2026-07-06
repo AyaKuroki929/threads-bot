@@ -5,7 +5,7 @@
 いいね済みは liked_posts.json に記録して重複防止。
 残り50件以下になったらキーワード検索で新規アカウントを自動補充。
 """
-import os, sys, json, time, random
+import os, sys, json, time, random, re
 from datetime import datetime, timedelta
 
 from botlib import line_broadcast, load_json as _botlib_load, save_json as _botlib_save
@@ -173,34 +173,70 @@ def _is_logged_in(page):
 
 
 # ── 反映検証（canary）──────────────────────────────────────────
+def _is_red_heart(color: str) -> bool:
+    """いいね済みハートの赤系色か。rgb(0-255) / display-p3(0-1) 両対応の緩い判定。
+    未いいねは黒〜グレー。いいね済みは赤（例 display-p3 1 0.18 0.25 / rgb(255,48,64)）。"""
+    if not color:
+        return False
+    cleaned = color.replace("display-p3", "").replace("p3", "")
+    nums = re.findall(r"[\d.]+", cleaned)
+    if len(nums) < 3:
+        return False
+    r, g, b = float(nums[0]), float(nums[1]), float(nums[2])
+    if r <= 1 and g <= 1 and b <= 1:      # 0-1スケール(display-p3等)
+        return r > 0.6 and g < 0.5 and b < 0.5
+    return r > 150 and g < 120 and b < 120  # 0-255スケール(rgb)
+
+
 def _verify_previous_likes(page) -> tuple[int, int]:
     """前回いいねした投稿を再訪問し、いいね状態が残っているか確認する。
     クリック成功＝成功ではない：Metaのアクション制限は「操作は通るがサーバー側で
     サイレント破棄」する（2026-06のbemolleコメント制限で実証済み・偽OK問題）。
+
+    ただしThreadsはSPAで、閲覧者自身の「いいね済み」状態は後からAPIで反映されるため、
+    domcontentloaded直後に読むと未描画の「いいね！」ラベルのまま『未反映』と誤読する
+    （2026-07に両アカウントで誤報を実証）。対策：
+      ① networkidleまで待つ（自分のいいね状態のAPIが返るのを待つ）
+      ② いいねトグルの出現を明示的に待つ
+      ③ aria-label(取り消/unlike)＋ハートの赤色の二重で判定
+      ④ トグルが読めない/未描画なら『判定不能』としてカウントしない（早読みで休止しないfail-safe）
     returns: (判定できた件数, 反映が確認できた件数)"""
     queue = _load_json(VERIFY_FILE, [])
     if not queue:
         return 0, 0
+    LIKE_SEL = ('svg[aria-label*="いいね"], svg[aria-label*="取り消"], '
+                'svg[aria-label*="Like"], svg[aria-label*="Unlike"], svg[aria-label*="like"]')
     checked = reflected = 0
     for item in queue[:4]:
         url = item.get("post_url") or ""
         if not url:
             continue
+        acc = item.get("account", "")
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            page.wait_for_timeout(random.randint(2000, 3500))
-            btns = page.locator('[aria-label*="Like"], [aria-label*="いいね"], [aria-label*="like"], [aria-label*="取り消"]')
-            if btns.count() == 0:
-                print(f"[verify] @{item.get('account','')} ボタン見つからず（投稿削除等・判定不能）")
+            try:
+                page.goto(url, wait_until="networkidle", timeout=30000)
+            except Exception:
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(random.randint(2500, 4000))
+            toggle = page.locator(LIKE_SEL).first
+            try:
+                toggle.wait_for(state="visible", timeout=8000)
+            except Exception:
+                print(f"[verify] @{acc} いいねトグル未描画（判定不能・カウントせず）")
                 continue
-            label = (btns.first.get_attribute("aria-label") or "")
-            if "unlike" in label.lower() or "取り消" in label:
+            label = (toggle.get_attribute("aria-label") or "")
+            try:
+                color = toggle.evaluate("el => getComputedStyle(el).color") or ""
+            except Exception:
+                color = ""
+            liked = ("取り消" in label) or ("unlike" in label.lower()) or _is_red_heart(color)
+            if liked:
                 reflected += 1
             else:
-                print(f"[verify] ⚠️ いいね未反映: @{item.get('account','')} {url}")
+                print(f"[verify] ⚠️ いいね未反映: @{acc} label={label!r} color={color!r} {url}")
             checked += 1
         except Exception as e:
-            print(f"[verify] @{item.get('account','')} 確認失敗（判定不能）: {e}")
+            print(f"[verify] @{acc} 確認失敗（判定不能）: {e}")
     _save_json(VERIFY_FILE, [])  # 検証済みキューはクリア
     return checked, reflected
 
