@@ -159,12 +159,23 @@ def _is_logged_in(page):
     セッション切れだと『クリックは成功に見えるが未ログインで無効』という
     偽いいねが発生し、反映検証でも「破棄」と誤診してしまうため、
     行動する前に必ず確認する（cookie_refresh と同じ Create ボタン判定）。"""
+    create_sel = '[aria-label*="Create"], [aria-label*="作成"], [aria-label*="新規スレッド"]'
+    login_sel = 'a[href*="/login"]'
     try:
-        page.goto("https://www.threads.com/", wait_until="domcontentloaded", timeout=20000)
-        page.wait_for_timeout(2500)
-        if page.locator('[aria-label*="Create"], [aria-label*="作成"], [aria-label*="新規スレッド"]').count() > 0:
+        try:
+            page.goto("https://www.threads.com/", wait_until="networkidle", timeout=25000)
+        except Exception:
+            page.goto("https://www.threads.com/", wait_until="domcontentloaded", timeout=20000)
+        # SPA対策：ログイン中(作成)か未ログイン(loginリンク)のどちらかが描画されるまで
+        # 最大12秒待ってから判定する。早読みで「判定不能」になり誤スキップするのを防ぐ。
+        try:
+            page.wait_for_selector(f"{create_sel}, {login_sel}", timeout=12000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)
+        if page.locator(create_sel).count() > 0:
             return True
-        if page.locator('a[href*="/login"]').count() > 0:
+        if page.locator(login_sel).count() > 0:
             return False
         return None
     except Exception as e:
