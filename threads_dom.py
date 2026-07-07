@@ -79,6 +79,23 @@ def is_logged_in(page, retries=1):
             pass
         if attempt < retries:
             page.wait_for_timeout(random.randint(2500, 4000))  # 描画遅れならリトライで回復
+    # 判定不能: ヘッドレスが実際に何を見ているかをログに残す（原因特定用の診断）。
+    # 2026-07 GH Actionsで判定がOK/不能を行き来する事象があり、推測でなく実物を見る。
+    try:
+        title = page.title()
+        url = page.url
+        body = (page.locator("body").inner_text(timeout=3000) or "")[:300].replace("\n", " / ")
+        counts = {
+            "loggedin_sel": page.locator(LOGGEDIN_SEL).count(),
+            "login_link": page.locator(LOGIN_LINK_SEL).count(),
+            "reauth": page.locator(REAUTH_SEL).count(),
+            "any_button": page.locator('[role="button"]').count(),
+            "svg": page.locator("svg").count(),
+        }
+        print(f"[login-diag] url={url} title={title!r} counts={counts}")
+        print(f"[login-diag] body先頭: {body!r}")
+    except Exception as e:
+        print(f"[login-diag] 診断自体に失敗: {e}")
     return None
 
 
