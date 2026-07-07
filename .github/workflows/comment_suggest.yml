@@ -10,6 +10,10 @@ on:
     types: [comment-morning, comment-noon, comment-evening]
   workflow_dispatch:
 
+concurrency:
+  group: comment-suggest
+  cancel-in-progress: false
+
 jobs:
   suggest:
     runs-on: ubuntu-latest
@@ -66,9 +70,12 @@ jobs:
             echo "no changes"
           else
             git commit -m "state: auto like $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            # rebase中は ours/theirs が反転する: いいね状態の巻き戻り(再いいね)を防ぐのは -X theirs
+            ok=""
             for i in 1 2 3 4 5; do
-              git pull --rebase --autostash -X ours origin main 2>&1 || true
-              git push && break
+              git pull --rebase --autostash -X theirs origin main 2>&1 || true
+              if git push; then ok=1; break; fi
               sleep $((RANDOM % 8 + 4))
             done
+            [ -z "$ok" ] && echo "::warning::state push failed (liked_posts等が未保存・重複いいねの可能性)"
           fi

@@ -43,11 +43,13 @@ import post  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 
-def _send_line(token, msg):
-    # ⛔ 2026-06-30 一時停止：自動コメントのLINE通知（個人・ベモーレ両方）を全停止
-    # 戻すには下の `return` 行を削除すればOK
-    print(f"[comment] LINE通知 停止中（skip）: {msg[:60]}...")
-    return
+def _send_line(token, msg, critical=False):
+    # ⛔ 2026-06-30 完了/結果系のLINE通知（個人・ベモーレ両方）は停止中。
+    # ✅ 2026-07-07 異常系（critical=True: セッション切れ・アクション制限疑い・反映ゼロ）
+    #    だけは復活。全停止だと6月事件の対策通知まで消音し、制限の再発に気づけないため。
+    if not critical:
+        print(f"[comment] LINE通知 停止中（skip）: {msg[:60]}...")
+        return
     import urllib.request as _req
     body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
     req = _req.Request(
@@ -113,7 +115,7 @@ def _auto_login(page, username, password, line_token=""):
             print("[comment] ログインフォームが見つかりません")
             account_label = "ベモーレアカウント" if username and "bemolle" in username else "個人アカウント"
             if line_token:
-                _send_line(line_token, f"⚠️ {account_label} セッション切れ\nログインフォームが見つかりません。手動でpython3 playwright_login.py を実行してください。")
+                _send_line(line_token, f"⚠️ {account_label} セッション切れ\nログインフォームが見つかりません。手動でpython3 playwright_login.py を実行してください。", critical=True)
             return False
 
         user_input.fill(username)
@@ -126,7 +128,7 @@ def _auto_login(page, username, password, line_token=""):
         if twofa:
             print("[comment] 2FA が必要です → 自動化できません")
             if line_token:
-                _send_line(line_token, "⚠️ セッション切れ＋2FA必要\npython3 playwright_login.py を実行してください。")
+                _send_line(line_token, "⚠️ セッション切れ＋2FA必要\npython3 playwright_login.py を実行してください。", critical=True)
             return False
 
         # ログイン後のURL確認（threads.com に戻れば成功）
@@ -237,7 +239,7 @@ with sync_playwright() as p:
             account_label = "個人アカウント" if account == "personal" else "ベモーレアカウント"
             print(f"[comment] {creds_env} 未設定 → 自動ログイン不可")
             if line_token:
-                _send_line(line_token, f"⚠️ {account_label} セッション切れ\npython3 playwright_login.py を実行してください。")
+                _send_line(line_token, f"⚠️ {account_label} セッション切れ\npython3 playwright_login.py を実行してください。", critical=True)
 
     # ② 実行前プールヘルスチェック（eligible が少ないうちに警告）
     if session_ok and not dry_run:
@@ -334,7 +336,7 @@ if not dry_run and ok == 0 and session_ok:
                 f"  フィルタースキップ:{filtered}件\n"
                 f"https://github.com/AyaKuroki929/threads-bot/actions"
             )
-        _send_line(line_token, msg)
+        _send_line(line_token, msg, critical=True)  # 異常系＝消音しない
         print(f"[comment] LINE通知送信: 0件アラート")
 
 # ok>0 なのに1件も反映確認できず「反映されず」が複数件 出ている場合のみ
@@ -349,5 +351,5 @@ elif not dry_run and ok > 0 and verified_ok == 0 and unverified_fail >= 2 and se
             f"アクション制限/シャドウ制限の疑い → 数日アカウントを休ませるのが回復の近道です\n"
             f"https://github.com/AyaKuroki929/threads-bot/actions"
         )
-        _send_line(line_token, msg)
+        _send_line(line_token, msg, critical=True)  # 異常系＝消音しない
         print(f"[comment] LINE通知送信: 反映ゼロ警告")

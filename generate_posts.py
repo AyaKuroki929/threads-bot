@@ -54,6 +54,7 @@ def generate_for_account(account, posts_file, used_file, rules_file):
     client = anthropic.Anthropic(api_key=api_key)
 
     generated_any = False
+    needed_any = False  # 補充が必要なスロットが1つでもあったか（全滅exit判定用）
 
     all_slots = [s for s in ["morning", "morning2", "noon", "evening2", "evening"] if s in posts]
     for slot in all_slots:
@@ -61,6 +62,7 @@ def generate_for_account(account, posts_file, used_file, rules_file):
         if remaining > THRESHOLD:
             print(f"[generate] {account} {slot}: 残{remaining}本 → 生成不要")
             continue
+        needed_any = True
 
         print(f"[generate] {account} {slot}: 残{remaining}本 ≤ {THRESHOLD} → {GENERATE_COUNT}本生成開始")
 
@@ -181,6 +183,21 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
                     for p in new_posts
                 ]
 
+            # 最終バリデーション: 空/短すぎ/薬機法NG語/プロンプト漏れ/ハングルを
+            # プールに入れる前に落とす（プロンプト任せにしない最後の防波堤）
+            from botlib import validate_post_content
+            valid_posts = []
+            for p in new_posts:
+                reason = validate_post_content(p)
+                if reason:
+                    print(f"[generate] {slot}: 検証NGで除外 → {reason}: {str(p)[:60]}")
+                else:
+                    valid_posts.append(p)
+            new_posts = valid_posts
+            if not new_posts:
+                print(f"[generate] {slot}: 全件検証NG → このスロットは追加なし")
+                continue
+
             posts[slot].extend(new_posts)
             print(f"[generate] {account} {slot}: {len(new_posts)}本を追加（合計{len(posts[slot])}本）")
             generated_any = True
@@ -193,6 +210,12 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
         with open(posts_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=2)
         print(f"[generate] {posts_file} を更新しました")
+
+    # 補充が必要だったのに1本も生成できなかった＝このままではプールが枯渇して
+    # 投稿が止まる。exit 0 で静かに終わらず、異常終了してワークフローの通知に乗せる。
+    if needed_any and not generated_any:
+        print(f"[generate] {account}: 補充が必要なスロットに1本も生成できませんでした → 異常終了", file=sys.stderr)
+        sys.exit(1)
 
     return generated_any
 

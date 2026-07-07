@@ -370,7 +370,9 @@ def threads_api_post(user_id, token, texts, topic_tag=None):
                             topic_tag=topic_tag)
         if i == 0:
             first_post_id = post_id
-            reply_to_id = post_id
+        # 次partは「直前のpartへの返信」にする（毎回更新しないと3部目以降が
+        # 1部目への兄弟返信になり、ツリーがチェーンにならない）
+        reply_to_id = post_id
         print(f"[api] part {i+1}/{len(texts)} 投稿完了: post_id={post_id}")
         if i < len(texts) - 1:
             time.sleep(3)

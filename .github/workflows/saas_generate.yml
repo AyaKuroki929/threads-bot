@@ -2,13 +2,17 @@ name: SaaS - サロン別投稿生成
 
 on:
   schedule:
-    - cron: '0 1 * * 1'  # 毎週月曜 AM10時(JST)
+    - cron: '0 2 * * 1'  # 毎週月曜 AM11時(JST)※researchと同時刻だとpush競合＆更新前ルールで生成するため1時間後ろへ
   workflow_dispatch:
     inputs:
       salon_name:
         description: '特定サロンのみ生成する場合はサロン名を入力（空欄で全サロン）'
         required: false
         default: ''
+
+concurrency:
+  group: saas-generate
+  cancel-in-progress: false
 
 jobs:
   generate:

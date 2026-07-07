@@ -25,17 +25,67 @@ LINE_API = "https://api.line.me/v2/bot/message"
 
 # ── JSON状態ファイル ──────────────────────────────────────────
 def load_json(path: str, default):
-    """JSONファイルを読む。無い・壊れている場合は default を返す。"""
+    """JSONファイルを読む。無い場合は default。壊れている場合も default だが、
+    「ファイルなし」と区別できるよう stderr に警告を出す（静かな状態巻き戻りの検知用）。"""
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return default
+    except Exception as e:
+        print(f"[botlib] JSON破損を検出（defaultで継続）: {path}: {e}", file=sys.stderr)
         return default
 
 
 def save_json(path: str, data) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    """一時ファイル→os.replace のアトミック書き込み。
+    直書きだと書き込み途中の kill でファイルが壊れ、次回読み込みが黙って
+    初期状態に巻き戻る（used_posts喪失→過去ネタの重複投稿の温床）。"""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+# ── 生成コンテンツの最終バリデーション ─────────────────────────
+# Claude生成の投稿がプールに入る直前の防波堤。プロンプト側で禁止していても
+# 生成グリッチ・指示逸脱は起きるため、コード側で機械的に落とす。
+NG_CONTENT_PATTERNS = (
+    # 薬機法・景表法系の断定/保証（エステ・ダイエット商材で特にリスク）
+    r"治[るりしせ]|治療|完治",
+    r"(シミ|しみ|シワ|しわ|セルライト)が消え",
+    r"絶対(に)?(痩せ|効果|結果|変わ)",
+    r"必ず(痩せ|効果|結果)",
+    r"100\s*[%％]痩せ|１００\s*[%％]",
+    r"効果を保証|保証します",
+    # 生成失敗・プロンプト漏れの痕跡
+    r"申し訳ありません|作成できません|できかねます|As an AI|I cannot",
+    # ハングル等のグリッチ（音節・字母・互換字母）
+    r"[ᄀ-ᇿ㄰-㆏ꥠ-꥿가-퟿]",
+)
+
+
+def validate_post_content(post, *, min_len: int = 20, max_len: int = 500,
+                          tree_parts: tuple = (2, 3)) -> str:
+    """投稿1本（str または ツリー=list[str]）を検証し、問題なければ "" を、
+    問題があれば理由を返す。呼び出し側は理由が返ったらプールに入れない。"""
+    import re as _re
+    parts = post if isinstance(post, list) else [post]
+    if isinstance(post, list) and not (tree_parts[0] <= len(parts) <= tree_parts[1]):
+        return f"ツリーのpart数が不正({len(parts)})"
+    for p in parts:
+        if not isinstance(p, str):
+            return f"文字列でない要素({type(p).__name__})"
+        s = p.strip()
+        if len(s) < min_len:
+            return f"短すぎる({len(s)}字)"
+        if len(s) > max_len:
+            return f"長すぎる({len(s)}字)"
+        for pat in NG_CONTENT_PATTERNS:
+            m = _re.search(pat, s)
+            if m:
+                return f"NG表現「{m.group(0)}」"
+    return ""
 
 
 # ── LINE通知 ──────────────────────────────────────────────────

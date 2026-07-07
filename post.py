@@ -1643,19 +1643,30 @@ def _get_latest_post_url(page, after_reply=False, previous_url=None):
     プロフィールキャッシュによる旧URL誤取得を防ぐ。
     返信投稿後（after_reply=True）は今いるチェーン詳細ページから自分の最新投稿URLを拾う。"""
     if after_reply:
-        page.wait_for_timeout(3500)
-        locator = page.locator(f'a[href*="/@{USERNAME}/post/"]')
-        count = locator.count()
-        if count == 0:
+        # 返信が実際にチェーンへ増えたかを previous_url との比較で検証する。
+        # 比較しないと、返信がサイレント破棄されても直前のURLが返って
+        # 「投稿完了」の偽OKになる（2026-06のコメント制限と同型の穴）。
+        def _post_id(u):
+            return (u or "").split("/post/")[-1].split("?")[0].strip("/")
+        prev_id = _post_id(previous_url)
+        last = None
+        for _attempt in range(3):  # 反映遅延を考慮して最大3回読む
+            page.wait_for_timeout(3500)
+            locator = page.locator(f'a[href*="/@{USERNAME}/post/"]')
+            count = locator.count()
+            seen = []
+            for i in range(count):
+                href = locator.nth(i).get_attribute("href")
+                if href and "/post/" in href and href not in seen:
+                    seen.append(href)
+            if seen:
+                last = seen[-1]
+                if not prev_id or _post_id(last) != prev_id:
+                    return last
+        if last is None:
             raise RuntimeError("チェーン詳細に自分の投稿リンクが見つかりません")
-        seen = []
-        for i in range(count):
-            href = locator.nth(i).get_attribute("href")
-            if href and "/post/" in href and href not in seen:
-                seen.append(href)
-        if not seen:
-            raise RuntimeError("チェーン詳細から有効なpost URLを取得できません")
-        return seen[-1]
+        raise RuntimeError(
+            "返信がチェーンに反映されていません（サイレント破棄の疑い・偽OK防止のため中断）")
 
     # /intent/post 経由で投稿した場合、投稿後にそのポストページへリダイレクトされることがある
     if f"/@{USERNAME}/post/" in page.url:
@@ -1818,7 +1829,8 @@ def post_to_threads(texts, debug=False, dry_run=False, topic=""):
                     _input_text(page, text)
                     _click_submit(page)
                     page.wait_for_timeout(3000)
-                    current_url = _get_latest_post_url(page, after_reply=True)
+                    # previous_url を渡してURLが本当に増えたか検証（偽OK防止）
+                    current_url = _get_latest_post_url(page, after_reply=True, previous_url=current_url)
                     print(f"[debug] {i}部目URL: {current_url}")
             else:
                 # 単発投稿: プロフィールへ移動してタイムスタンプ確認
@@ -1832,10 +1844,15 @@ def post_to_threads(texts, debug=False, dry_run=False, topic=""):
                     post_verified = None
 
             # 自動コメント（AUTO_COMMENT=1 の場合のみ）
+            # 投稿はここまでで成功済み。コメントフェーズの例外が上に伝播すると
+            # mainのリトライで投稿ごと再実行され二重投稿になるため、必ずここで握る。
             comment_results = []
             if AUTO_COMMENT:
                 print("[comment] 自動コメント開始...")
-                comment_results = _do_auto_comments(page, dry_run=dry_run)
+                try:
+                    comment_results = _do_auto_comments(page, dry_run=dry_run)
+                except Exception as e:
+                    print(f"[comment] コメントフェーズで例外（投稿は成功済みのため続行）: {e}")
 
             # 投稿成功後：Playwright が取得した最新 Cookie をファイルに保存
             # GitHub Actions がこれを読んで Secret を上書きすることで Mac 不要の自動更新が実現する

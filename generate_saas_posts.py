@@ -939,6 +939,21 @@ JSON配列以外の文字は一切出力しないでください。"""
             print(f"[saas] {salon_name} {slot}: 長すぎる投稿 {dropped}本を除外（基準: 単発350字/ツリー各部400字）")
         new_posts = kept
 
+        # 内容の最終バリデーション（空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。
+        # クライアントのアカウントで公開されるため、コード側の防波堤は必須。
+        from botlib import validate_post_content
+        checked = []
+        for p in new_posts:
+            reason = validate_post_content(p)
+            if reason:
+                print(f"[saas] {salon_name} {slot}: 検証NGで除外 → {reason}: {str(p)[:60]}")
+            else:
+                checked.append(p)
+        new_posts = checked
+        if not new_posts:
+            print(f"[saas] {salon_name} {slot}: 全件検証NG → 追加なし")
+            continue
+
         posts[slot].extend(new_posts)
         print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
         generated_any = True

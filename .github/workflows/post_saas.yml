@@ -19,6 +19,10 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: post-saas
+  cancel-in-progress: false
+
 jobs:
   post:
     runs-on: ubuntu-latest
@@ -115,6 +119,8 @@ jobs:
 
       - name: Commit posts files（補充があった場合のみ）
         if: success()
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
@@ -124,8 +130,19 @@ jobs:
             echo "no generate changes"
           else
             git commit -m "state: posts補充 ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            # rebase中は ours/theirs が反転する: ローカルのstateを守るのは -X theirs
+            ok=""
             for i in 1 2 3; do
-              git pull --rebase --autostash -X ours origin main 2>&1 || true
-              git push && break || sleep 5
+              git pull --rebase --autostash -X theirs origin main 2>&1 || true
+              if git push; then ok=1; break; fi
+              sleep 5
             done
+            if [ -z "$ok" ]; then
+              # push失敗=last_runが古いまま→heartbeatが「未投稿」と誤判定し再投稿する重大事象
+              curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+                -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 状態push 3回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}'
+              exit 1
+            fi
           fi

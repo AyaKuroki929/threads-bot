@@ -181,15 +181,10 @@ def collect_posts(session_data):
         page = ctx.new_page()
 
         # ── ログイン確認：未ログインで収集すると「データなし」を無言で量産するため ──
-        try:
-            page.goto("https://www.threads.com/", wait_until="domcontentloaded", timeout=20000)
-            page.wait_for_timeout(2500)
-            logged_in = page.locator(
-                '[aria-label*="作成"], [aria-label*="Create"], [aria-label*="新規スレッド"]'
-            ).count() > 0
-        except Exception:
-            logged_in = False
-        if not logged_in:
+        # threads_dom.is_logged_in はSPA描画を待ち、判定不能時は1回リトライする
+        from threads_dom import is_logged_in as _dom_is_logged_in
+        logged_in = _dom_is_logged_in(page, retries=1)
+        if logged_in is not True:
             print("[research] 未ログイン検知 → 収集中止（セッション切れの可能性）")
             browser.close()
             return None  # main側でセッション切れとして明確に通知する

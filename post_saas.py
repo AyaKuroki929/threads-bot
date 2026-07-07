@@ -127,6 +127,10 @@ def pick_post(salon_name, slot, used_texts):
 
     unused = [p for p in candidates if _key(p) not in used_texts]
     if not unused:
+        # プール使い切り→過去投稿の再利用（同一文の再投稿はMetaのスパム判定リスク）。
+        # 黙って再利用せず管理者に知らせて補充を促す。
+        print(f"[pool] {salon_name} {slot}: 未使用プール枯渇 → 過去投稿を再利用（要補充）")
+        _notify_line(f"⚠️ {salon_name} の {slot} 投稿プールが枯渇し、過去投稿を再利用しています。\n生成ワークフロー(saas_generate)の状態を確認してください。")
         unused = candidates
 
     chosen = random.choice(unused)
@@ -397,7 +401,9 @@ def threads_post(user_id, token, texts, topic_tag=None):
 
         if i == 0:
             first_post_id = post_id
-            reply_to_id = post_id
+        # 次partは「直前のpartへの返信」にする（毎回更新しないと3部目以降が
+        # 1部目への兄弟返信になり、ツリーがチェーンにならない）
+        reply_to_id = post_id
         print(f"[api] part {i+1}/{len(texts)} 投稿完了: post_id={post_id}")
         if i < len(texts) - 1:
             time.sleep(3)
@@ -441,7 +447,12 @@ def _sync_last_run(salon_name, slot):
 
 
 def main():
-    salons = get_active_salons()
+    try:
+        salons = get_active_salons()
+    except Exception as e:
+        # Supabase障害等。全サロン未投稿になるのに無通知だと気づけない
+        _notify_line(f"🚨 SaaS投稿: サロン一覧の取得に失敗し全サロン未投稿です。\n{type(e).__name__}: {str(e)[:150]}")
+        raise
     if not salons:
         print("アクティブなサロンがありません")
         return
@@ -503,7 +514,16 @@ def main():
 
             post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
 
-            log_post(salon_id, SLOT, texts[0])
+            # 投稿はここで成功済み。log_post(Supabase記録)が失敗すると
+            # 30分後の予備cronが「未投稿」と誤判定して同内容を再投稿するため、
+            # 失敗を投稿失敗と混ぜず、明確に通知して人が判断できるようにする。
+            try:
+                log_post(salon_id, SLOT, texts[0])
+            except Exception as e:
+                print(f"[log_post] 記録失敗（投稿自体は成功済み）: {e}")
+                _notify_line(
+                    f"⚠️ {salon_name} の {SLOT} 投稿は成功しましたが、投稿記録(post_logs)の保存に失敗しました。\n"
+                    f"30分後の予備実行が同じ内容を再投稿する恐れがあります。\n{type(e).__name__}: {str(e)[:150]}")
             _sync_last_run(salon_name, SLOT)
             print(f"[OK] {salon_name}: post_id={post_id}")
             results["ok"].append(salon_name)

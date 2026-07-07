@@ -57,17 +57,29 @@ refresh_account() {
     # バックアップ
     cp "$session_file" "${session_file}.bak.$(date +%s)" 2>/dev/null || true
 
-    # Cookie抽出（常に session.json に書き出す）
+    # Cookie抽出（extract_cookies2.py は常に session.json に書き出す）
+    # 個人アカ処理の前に bemolle の session.json を退避しておく。放置すると
+    # 実行後の session.json が常に個人Cookieになり、ローカル手動実行
+    # (post_local_bemolle.sh 等 SESSION_FILE=session.json) が個人アカから
+    # 発信される取り違え事故の温床になるため、処理後に必ず復元する。
+    if [ "$session_file" != "session.json" ]; then
+        cp session.json session.json.bemolle_keep 2>/dev/null || true
+    fi
     if ! /usr/bin/python3 extract_cookies2.py --profile "$profile" >> "$LOG_FILE" 2>&1; then
         fail_with_issue \
             "Cookie自動更新失敗[$account] - 抽出エラー" \
             "extract_cookies2.py --profile $profile が失敗。Chrome Profile $profile または Keychain アクセスを確認してください。"
+        [ -f session.json.bemolle_keep ] && mv session.json.bemolle_keep session.json
         return 1
     fi
 
-    # bemolle以外はsession_personal.jsonにコピー
+    # bemolle以外は session_personal.json にコピーし、session.json を bemolle に復元
     if [ "$session_file" != "session.json" ]; then
         cp session.json "$session_file"
+        if [ -f session.json.bemolle_keep ]; then
+            mv session.json.bemolle_keep session.json
+            log "session.json を bemolle 用に復元（取り違え防止）"
+        fi
     fi
 
     # ユーザーIDチェック（アカウント取り違え防止）

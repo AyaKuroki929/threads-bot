@@ -6,6 +6,10 @@ on:
     - cron: '0 1 * * 1'
   workflow_dispatch:
 
+concurrency:
+  group: research
+  cancel-in-progress: false
+
 jobs:
   research:
     runs-on: ubuntu-latest
@@ -57,8 +61,19 @@ jobs:
             echo "EOF" >> $GITHUB_OUTPUT
             echo "changed=true" >> $GITHUB_OUTPUT
             git commit -m "research: $(TZ=Asia/Tokyo date '+%Y-%m-%d') 週次インサイト自動更新"
-            git pull --rebase origin main 2>/dev/null || true
-            git push
+            ok=""
+            for i in 1 2 3; do
+              git pull --rebase origin main 2>/dev/null || true
+              if git push; then ok=1; break; fi
+              sleep $((i*5))
+            done
+            if [ -z "$ok" ]; then
+              curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+                -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"messages":[{"type":"text","text":"⚠️ 週次リサーチ: ルール更新のpushに失敗しました（他ワークフローとの競合の可能性）。今週分は反映されていません。"}]}'
+              exit 1
+            fi
             echo "ルール更新をプッシュしました"
           fi
 
