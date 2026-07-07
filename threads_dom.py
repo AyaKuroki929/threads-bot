@@ -26,6 +26,13 @@ LOGGEDIN_SEL = (
 )
 # 未ログインのサイン（loginリンク）
 LOGIN_LINK_SEL = 'a[href*="/login"]'
+# 再認証モーダル（パスワード変更後等に出る「Instagramで続行」画面）。
+# この状態は作成ボタンもloginリンクも出ないため、検知しないと永遠に「判定不能」になる。
+REAUTH_SEL = ('button:has-text("Continue with Instagram"), '
+              'a:has-text("Continue with Instagram"), '
+              'div[role="button"]:has-text("Continue with Instagram"), '
+              'div[role="button"]:has-text("Instagramで続行"), '
+              'button:has-text("Instagramで続行")')
 # いいねボタン/トグル（未いいね「いいね！」/ いいね済み「いいね！を取り消す」。svgにaria-labelが載る）
 LIKE_TOGGLE_SEL = ('svg[aria-label*="いいね"], svg[aria-label*="取り消"], '
                    'svg[aria-label*="Like"], svg[aria-label*="Unlike"], svg[aria-label*="like"]')
@@ -61,6 +68,13 @@ def is_logged_in(page, retries=1):
                 return True
             if page.locator(LOGIN_LINK_SEL).count() > 0:
                 return False
+            # 再認証モーダル＝実質セッション無効（要再ログイン）。判定不能ではなくFalse。
+            try:
+                if page.locator(REAUTH_SEL).count() > 0:
+                    print("[login] 再認証モーダル（Continue with Instagram）を検出 → セッション無効")
+                    return False
+            except Exception:
+                pass
         except Exception:
             pass
         if attempt < retries:

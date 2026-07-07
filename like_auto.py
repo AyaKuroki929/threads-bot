@@ -243,18 +243,21 @@ def _try_like(page, acc):
     try:
         goto_ready(page, f"https://www.threads.com/@{acc}", timeout=20000)  # SPA描画待ち
         page.wait_for_timeout(random.randint(2500, 4000))
+        # ヘッドレスで稀に出るオーバーレイ/ダイアログを閉じる（クリック阻害の除去）
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+        except Exception:
+            pass
 
-        # 最初の投稿カードのいいねボタンを探す
-        # Threads の like ボタンは aria-label に "Like" または "いいね" を含む
-        like_btns = page.locator(
-            '[aria-label*="Like"], [aria-label*="いいね"], [aria-label*="like"]'
-        )
-        if like_btns.count() == 0:
+        # 最初の投稿カードのいいねsvgを探す（aria-labelは「いいね！」/取り消す）
+        like_svgs = page.locator(LIKE_TOGGLE_SEL)
+        if like_svgs.count() == 0:
             print(f"[like] @{acc} いいねボタンが見つからない → スキップ")
             return False, ""
 
-        btn = like_btns.first
-        label = (btn.get_attribute("aria-label") or "").lower()
+        svg = like_svgs.first
+        label = (svg.get_attribute("aria-label") or "").lower()
 
         # 既にいいね済みの場合はスキップ（aria-label に "unlike"/取り消す が含まれる）
         if "unlike" in label or "取り消" in label:
@@ -272,8 +275,36 @@ def _try_like(page, acc):
         except Exception:
             pass
 
-        btn.scroll_into_view_if_needed()
-        btn.click()
+        # クリックは svg ではなく role=button のラッパーに対して行う（実DOM確認済み）。
+        # 2026-07 にヘッドレスで svg 直クリックが全件30秒タイムアウトする事象が発生。
+        # 通常クリック→force→JSクリック の3段フォールバックで確実に押す。
+        target = svg
+        try:
+            wrapper = svg.locator('xpath=ancestor-or-self::*[@role="button"][1]')
+            if wrapper.count() > 0:
+                target = wrapper.first
+        except Exception:
+            pass
+        target.scroll_into_view_if_needed()
+        page.wait_for_timeout(random.randint(300, 800))
+        clicked = False
+        try:
+            target.click(timeout=10000)
+            clicked = True
+        except Exception as e1:
+            print(f"[like] @{acc} 通常クリック失敗 → force再試行: {str(e1)[:80]}")
+            try:
+                target.click(timeout=8000, force=True)
+                clicked = True
+            except Exception as e2:
+                print(f"[like] @{acc} forceも失敗 → JSクリック: {str(e2)[:80]}")
+                try:
+                    target.evaluate("el => el.click()")
+                    clicked = True
+                except Exception as e3:
+                    print(f"[like] @{acc} JSクリックも失敗: {str(e3)[:80]}")
+        if not clicked:
+            return False, ""
         # 人間らしさ④: いいね後の滞在をたっぷりゆらす（従来3〜8秒→8〜40秒）
         page.wait_for_timeout(random.randint(LIKE_GAP_SEC[0] * 1000, LIKE_GAP_SEC[1] * 1000))
         print(f"[like] @{acc} ❤️ いいね完了")
@@ -418,15 +449,17 @@ def main():
             else:
                 consecutive_fail += 1
                 if consecutive_fail >= MAX_FAIL:
-                    print(f"[like] {LABEL} 連続{MAX_FAIL}件失敗 → セッション異常の可能性。中断")
+                    # この時点でログイン確認は通っている＝Cookie切れと断定するのは誤り。
+                    # 実際2026-07-07はThreadsのDOM変更によるクリック失敗だった。
+                    print(f"[like] {LABEL} 連続{MAX_FAIL}件失敗 → 中断（DOM変更/一時障害の可能性）")
                     _alert_throttled(
-                        "session_dead",
+                        "like_all_fail",
                         f"🚨 【{LABEL}】自動いいねが停止しました\n\n"
-                        f"連続{MAX_FAIL}件で「いいねボタンが見つからない」→ 中断\n"
-                        f"セッション(Cookie)期限切れの可能性が高いです。\n\n"
-                        f"対処：playwright_login.py で {LABEL} を再ログイン\n"
-                        f"→ GitHub Secret {SESSION_ENV} を更新\n"
-                        f"（更新すれば次の定時実行から自動復帰します）"
+                        f"連続{MAX_FAIL}件でいいねに失敗 → 中断。\n"
+                        f"ログイン自体は正常なため、Threadsの画面構造の変化か\n"
+                        f"一時的な障害の可能性が高いです（Cookie切れではありません）。\n\n"
+                        f"次の定時実行で自動再試行します。\n"
+                        f"連日続く場合はコード（threads_dom.py のセレクタ）の確認が必要です。"
                     )
                     break
 
