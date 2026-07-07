@@ -139,6 +139,25 @@ def _reset_discard_count():
         print(f"[verify] {LABEL} 反映確認が取れたため破棄カウントをリセット")
 
 
+# 「判定不能(None)」が何回連続したか。1回の描画ブレでは警告せず、連続時のみ通知する。
+LOGIN_UNKNOWN_ALERT_AT = 4  # これ以上連続で判定不能になったら初めて通知（=実問題の疑い）
+
+
+def _bump_login_unknown() -> int:
+    state = _load_json(ALERT_FILE, {})
+    n = int(state.get("login_unknown_streak", 0)) + 1
+    state["login_unknown_streak"] = n
+    _save_json(ALERT_FILE, state)
+    return n
+
+
+def _reset_login_unknown():
+    state = _load_json(ALERT_FILE, {})
+    if state.get("login_unknown_streak"):
+        state["login_unknown_streak"] = 0
+        _save_json(ALERT_FILE, state)
+
+
 def _alert_throttled(kind: str, text: str):
     """同種の警告を ALERT_THROTTLE_HOURS に1回だけLINE送信（毎cron連発を防ぐ）。"""
     state = _load_json(ALERT_FILE, {})
@@ -161,9 +180,9 @@ def _is_logged_in(page):
     セッション切れだと『クリックは成功に見えるが未ログインで無効』という偽いいねが
     発生し反映検証でも誤診するため、行動前に必ず確認する。判定不能は描画遅れのことが
     多いので共通ヘルパー側で1回リトライしてから返す（誤『判定不能』警告の抑制）。"""
-    result = _dom_is_logged_in(page, retries=1)
+    result = _dom_is_logged_in(page, retries=2)  # ヘッドレスの描画遅れ対策で多めにリトライ
     if result is None:
-        print(f"[login] {LABEL} 判定不能（リトライ後も作成/loginを検出できず）", file=sys.stderr)
+        print(f"[login] {LABEL} 判定不能（リトライ後もログインサイン/loginを検出できず）", file=sys.stderr)
     return result
 
 
@@ -316,6 +335,7 @@ def main():
         # ── ログイン確認：セッション切れでの「偽いいね」と誤診を防ぐ ──
         login = _is_logged_in(page)
         if login is False:
+            _reset_login_unknown()  # 明確な未ログイン判定＝判定不能の連続とは別物
             print(f"[login] {LABEL} 未ログイン → いいね・検証をスキップ（偽いいね防止）")
             _alert_throttled(
                 "session_dead",
@@ -330,15 +350,21 @@ def main():
             browser.close()
             return
         if login is None:
-            print(f"[login] {LABEL} ログイン判定不能 → 今回はスキップ（次回再試行）")
-            _alert_throttled(
-                "login_unknown",
-                f"⚠️ 【{LABEL}】Threadsのログイン判定ができませんでした\n"
-                f"（画面構造の変化の可能性）。自動いいねを今回スキップ。\n"
-                f"連日続く場合はコードの確認が必要です。"
-            )
+            # 判定不能はSPAの描画ブレで起きやすい。1回では鳴らさず、今回はスキップ
+            # のみ（偽いいね防止）。連続した時だけ「本当にDOMが変わった/セッション
+            # 異常」の疑いとして通知する。本物の破棄は反映検証canaryが別途捕まえる。
+            streak = _bump_login_unknown()
+            print(f"[login] {LABEL} ログイン判定不能 → 今回スキップ（連続{streak}回目）")
+            if streak >= LOGIN_UNKNOWN_ALERT_AT:
+                _alert_throttled(
+                    "login_unknown",
+                    f"⚠️ 【{LABEL}】Threadsのログイン判定が{streak}回連続でできていません\n"
+                    f"（画面構造の変化・セッション異常の可能性）。自動いいねをスキップ中。\n"
+                    f"セッションを確認するか、コードの確認が必要です。"
+                )
             browser.close()
             return
+        _reset_login_unknown()  # ログイン確認OK＝判定不能の連続をリセット
         print(f"[login] {LABEL} ログイン確認OK")
 
         # ── 反映検証：前回いいねが実際にサーバー側に残っているか（偽OK検知） ──

@@ -15,6 +15,15 @@ import random
 # ── セレクタ一元管理（Metaの仕様変更時はここだけ直す）─────────────
 # ログイン中のサイン（作成ボタン。ja/en両対応）
 CREATE_SEL = '[aria-label*="Create"], [aria-label*="作成"], [aria-label*="新規スレッド"]'
+# ログイン中にだけ出るナビ要素の総合セット。「作成」が未描画でも、これらのどれかが
+# 出ていればログイン中と判定できる（実DOMで確認済みのaria-label群）。
+LOGGEDIN_SEL = (
+    CREATE_SEL
+    + ', [aria-label*="お知らせ"], [aria-label*="プロフィール"], [aria-label*="保存済み"]'
+    + ', [aria-label*="インサイト"], [aria-label*="メッセージ"]'
+    + ', [aria-label*="Notifications"], [aria-label*="Profile"], [aria-label*="Saved"]'
+    + ', [aria-label*="Insights"], [aria-label*="Direct"]'
+)
 # 未ログインのサイン（loginリンク）
 LOGIN_LINK_SEL = 'a[href*="/login"]'
 # いいねボタン/トグル（未いいね「いいね！」/ いいね済み「いいね！を取り消す」。svgにaria-labelが載る）
@@ -41,13 +50,14 @@ def is_logged_in(page, retries=1):
     for attempt in range(retries + 1):
         try:
             goto_ready(page, "https://www.threads.com/")
-            # ログイン中(作成) か 未ログイン(loginリンク) のどちらかが出るまで待つ
+            # ログイン中のサイン（作成/お知らせ/プロフィール等）か 未ログイン(loginリンク)
+            # のどちらかが描画されるまで待つ。「作成」1つに頼らず総合セットで見る。
             try:
-                page.wait_for_selector(f"{CREATE_SEL}, {LOGIN_LINK_SEL}", timeout=12000)
+                page.wait_for_selector(f"{LOGGEDIN_SEL}, {LOGIN_LINK_SEL}", timeout=12000)
             except Exception:
                 pass
             page.wait_for_timeout(1500)
-            if page.locator(CREATE_SEL).count() > 0:
+            if page.locator(LOGGEDIN_SEL).count() > 0:
                 return True
             if page.locator(LOGIN_LINK_SEL).count() > 0:
                 return False

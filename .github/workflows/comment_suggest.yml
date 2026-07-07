@@ -77,5 +77,5 @@ jobs:
               if git push; then ok=1; break; fi
               sleep $((RANDOM % 8 + 4))
             done
-            [ -z "$ok" ] && echo "::warning::state push failed (liked_posts等が未保存・重複いいねの可能性)"
+            if [ -z "$ok" ]; then echo "::warning::state push failed (liked_posts等が未保存・重複いいねの可能性)"; fi
           fi
