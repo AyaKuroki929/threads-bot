@@ -40,22 +40,33 @@ else:
     USERNAME      = "bemolle_diet"
     LABEL         = "ベモーレ"
 
-# ── 人間らしいペーシング（2026-07-03 予防強化）─────────────────
+# ── 人間らしいペーシング（2026-07-03 予防強化 / 2026-07-07 大幅強化）──
 # 規則的なボット挙動（毎日同時刻・毎回同件数・数秒間隔の連続処理）は
 # フラグの引き金になり得るため、量・間隔・タイミングを毎回ゆらす。
 # ※注意: これは「新規フラグの予防」。既に付いたフラグは休養でしか解けない
 #  （2026-06に住宅IP・stealth等を全て試して実証済み → RESTRICTION.md）
-LIKES_MIN_PER_RUN  = 2    # 1回あたりのいいね件数の下限（毎回この範囲でランダム）
-LIKES_PER_RUN      = 5    # 1回あたりのいいね上限
-SKIP_RUN_PROB      = 0.10 # この確率で今回の実行を丸ごとサボる（人間は毎日3回×365日やらない）
+if ACCOUNT == "personal":
+    # 個人は2026-06のコメント制限・2026-07-07のいいね破棄と制限が付きやすい。
+    # ベモーレより大幅に控えめなペースで運用する。
+    LIKES_MIN_PER_RUN  = 1
+    LIKES_PER_RUN      = 3
+    SKIP_RUN_PROB      = 0.25   # 4回に1回はサボる
+    LIKE_GAP_SEC       = (25, 120)
+else:
+    LIKES_MIN_PER_RUN  = 2
+    LIKES_PER_RUN      = 5
+    SKIP_RUN_PROB      = 0.15
+    LIKE_GAP_SEC       = (15, 75)
 START_JITTER_SEC   = (0, 300)   # 実行開始前のランダム待機（毎日きっかり同時刻を避ける）
-LIKE_GAP_SEC       = (8, 40)    # いいね後〜次のアカウントへ移る間隔（従来3〜8秒→大幅拡大）
 LIKE_COOLDOWN_DAYS = 30   # 同アカに再いいねしない日数
 REPLENISH_THRESHOLD = 50  # ターゲット残りがこの件数以下で補充発動
 DISCOVER_COUNT      = 15  # 1回の補充で追加する最大件数
 MAX_FAIL            = 8   # 連続失敗でセッション異常と判断し中断
 PAUSE_HOURS         = 72  # サイレント破棄検知時の自動休止時間（制限中に叩き続けてフラグを深めない）
 ALERT_THROTTLE_HOURS = 24 # 同種LINE警告の再送間隔（LINE枠節約・1日3回の連続警告を防ぐ）
+MIN_SESSION_GAP_HOURS = 3   # 前回セッションからこの時間以内は実行しない（手動連打・多重発火の構造的防止）
+WARMUP_RUNS         = 5   # 休止明けはこの回数だけ1件ずつ・高サボり率でそっと再開する
+WINDOW_SHOP_PROB    = 0.12  # この確率で「プロフィールを見るだけでいいねしない」（人間の閲覧挙動）
 
 # 反映検証（canary）・休止・警告抑制の状態ファイル（アカウント別・workflowがcommitして永続化）
 _SUFFIX = "_personal" if ACCOUNT == "personal" else ""
@@ -109,7 +120,12 @@ def _check_pause() -> bool:
     except Exception:
         pass  # 壊れた休止ファイルは解除扱い
     os.remove(PAUSE_FILE)
-    print(f"[like] {LABEL} 休止期間終了 → 再開（今回の実行で反映検証から再テスト）")
+    # 休止明けはフルスピードで戻らず、WARMUP_RUNS回は1件ずつそっと再開する
+    # （制限明け直後に元のペースへ急復帰するのは人間らしくない＝再フラグの温床）
+    state = _load_json(ALERT_FILE, {})
+    state["warmup_runs_left"] = WARMUP_RUNS
+    _save_json(ALERT_FILE, state)
+    print(f"[like] {LABEL} 休止期間終了 → ウォームアップ再開（{WARMUP_RUNS}回は1件ずつ）")
     return False
 
 
@@ -250,6 +266,22 @@ def _try_like(page, acc):
         except Exception:
             pass
 
+        # 人間らしさ⑤: プロフィールを「読む」動き（少しスクロールして戻る・滞在）
+        try:
+            page.mouse.wheel(0, random.randint(250, 900))
+            page.wait_for_timeout(random.randint(1200, 3500))
+            if random.random() < 0.5:
+                page.mouse.wheel(0, -random.randint(150, 500))
+                page.wait_for_timeout(random.randint(600, 1500))
+        except Exception:
+            pass
+
+        # 人間らしさ⑥: たまに「見るだけで帰る」（全訪問で必ず押すのはボットの署名）
+        if random.random() < WINDOW_SHOP_PROB:
+            print(f"[like] @{acc} 今回は見るだけ（window shopping）→ いいねせず次へ")
+            page.wait_for_timeout(random.randint(1000, 2500))
+            return None, ""  # 記録だけして次へ（再訪問はクールダウン後）
+
         # 最初の投稿カードのいいねsvgを探す（aria-labelは「いいね！」/取り消す）
         like_svgs = page.locator(LIKE_TOGGLE_SEL)
         if like_svgs.count() == 0:
@@ -340,6 +372,21 @@ def main():
         print(f"[like] {LABEL} セッションファイルなし → スキップ")
         return
 
+    # ── セッション間隔ガード：前回から近すぎる実行はしない ──
+    # 手動テストの連打・schedule/dispatchの多重発火で短時間に何度も動くのは
+    # 最もボットらしい挙動（2026-07-07に実例）。構造的に不可能にする。
+    state = _load_json(ALERT_FILE, {})
+    try:
+        last_ts = datetime.fromisoformat(state.get("last_session_ts", "1970-01-01T00:00:00"))
+        gap_h = (datetime.utcnow() - last_ts).total_seconds() / 3600
+        if gap_h < MIN_SESSION_GAP_HOURS and not os.environ.get("LIKE_FORCE"):
+            print(f"[like] {LABEL} 前回セッションから{gap_h:.1f}時間 → {MIN_SESSION_GAP_HOURS}時間未満のためスキップ（連打防止）")
+            return
+    except Exception:
+        pass
+    state["last_session_ts"] = datetime.utcnow().isoformat()
+    _save_json(ALERT_FILE, state)
+
     targets = _load_targets()
     liked   = _load_liked()
 
@@ -347,6 +394,17 @@ def main():
     random.shuffle(eligible)
 
     likes_target = random.randint(LIKES_MIN_PER_RUN, LIKES_PER_RUN)  # 人間らしさ③: 毎回件数を変える
+
+    # ── ウォームアップ：休止明けは1件ずつ・サボり多めでそっと再開 ──
+    warmup_left = int(state.get("warmup_runs_left", 0) or 0)
+    if warmup_left > 0:
+        likes_target = 1
+        state["warmup_runs_left"] = warmup_left - 1
+        _save_json(ALERT_FILE, state)
+        print(f"[like] {LABEL} ウォームアップ中（残り{warmup_left - 1}回）→ 今回は1件のみ")
+        if random.random() < 0.35:  # ウォームアップ中はさらに高確率でサボる
+            print(f"[like] {LABEL} ウォームアップ中のランダムスキップ")
+            return
     print(f"[like] {LABEL} 今回の目標: {likes_target}件")
     liked_count    = 0
     consecutive_fail = 0
