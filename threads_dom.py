@@ -50,10 +50,14 @@ def goto_ready(page, url, timeout=25000):
 
 
 def is_logged_in(page, retries=1):
-    """threads.com トップでログイン状態を確認する。
+    """threads.com でログイン状態を確認する。
     戻り値: True=ログイン中 / False=未ログイン / None=判定不能。
-    判定不能(None)は一時的な描画遅れのことが多いので、retries回まで再試行する
-    （偽いいね防止と、誤『判定不能』警告の抑制を両立）。"""
+
+    判定は2段構え:
+      ① トップのDOMサイン（作成/お知らせ等 or loginリンク or 再認証モーダル）
+      ② /activity（要ログインページ）のURLリダイレクト判定
+    ②はDOM描画に依存しないため、ヘッドレスの描画ゆらぎ（2026-07にGH Actionsで
+    ①がOK/不能を行き来した）に左右されない決定打。comment.pyで実績のある方式。"""
     for attempt in range(retries + 1):
         try:
             goto_ready(page, "https://www.threads.com/")
@@ -75,6 +79,21 @@ def is_logged_in(page, retries=1):
                     return False
             except Exception:
                 pass
+            # ── ②URLリダイレクト判定（DOM描画に依存しない決定打）──
+            try:
+                page.goto("https://www.threads.com/activity",
+                          wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(3000)
+                aurl = page.url
+                if "login" in aurl or "instagram.com" in aurl:
+                    print(f"[login] /activity がloginへリダイレクト → 未ログイン ({aurl})")
+                    return False
+                if "threads.com" in aurl and "/activity" in aurl \
+                        and page.locator(LOGIN_LINK_SEL).count() == 0:
+                    print("[login] /activity に滞在できた → ログイン中（URL判定）")
+                    return True
+            except Exception as e:
+                print(f"[login] /activity URL判定失敗: {e}")
         except Exception:
             pass
         if attempt < retries:
