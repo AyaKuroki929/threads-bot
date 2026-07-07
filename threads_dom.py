@@ -42,11 +42,25 @@ POST_CONTAINER_SEL = 'div[data-pressable-container="true"]'
 
 def goto_ready(page, url, timeout=25000):
     """networkidle まで待って遷移する。SPAのAPI応答完了を待つのが目的。
-    networkidleが取れない重いページ向けに domcontentloaded へフォールバック。"""
+    networkidleが取れない重いページ向けに domcontentloaded へフォールバック。
+    Metaのbot検知が「真っ白なページ」(body空・button 0)を返すことがあるため、
+    空ページを検知したら数秒置いてリロードする（最大2回）。"""
     try:
         page.goto(url, wait_until="networkidle", timeout=timeout)
     except Exception:
         page.goto(url, wait_until="domcontentloaded", timeout=min(timeout, 20000))
+    for _ in range(2):
+        try:
+            if page.locator('[role="button"], a, svg').count() > 0:
+                return
+            print(f"[goto_ready] 空ページ検知 → リロード: {url}")
+            page.wait_for_timeout(random.randint(3000, 5000))
+            try:
+                page.reload(wait_until="networkidle", timeout=timeout)
+            except Exception:
+                page.reload(wait_until="domcontentloaded", timeout=min(timeout, 20000))
+        except Exception:
+            return
 
 
 def is_logged_in(page, retries=1):
@@ -88,8 +102,11 @@ def is_logged_in(page, retries=1):
                 if "login" in aurl or "instagram.com" in aurl:
                     print(f"[login] /activity がloginへリダイレクト → 未ログイン ({aurl})")
                     return False
+                # 空ページ（bot検知の白紙）でURLだけ残っている場合を除外するため、
+                # ページに中身（ボタン等）があることも合格条件にする
                 if "threads.com" in aurl and "/activity" in aurl \
-                        and page.locator(LOGIN_LINK_SEL).count() == 0:
+                        and page.locator(LOGIN_LINK_SEL).count() == 0 \
+                        and page.locator('[role="button"]').count() > 0:
                     print("[login] /activity に滞在できた → ログイン中（URL判定）")
                     return True
             except Exception as e:

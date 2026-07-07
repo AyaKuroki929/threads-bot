@@ -355,11 +355,21 @@ def main():
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # Metaのbot検知はヘッドレスの指紋（HeadlessChrome UA・automationフラグ等）を
+        # 見て「真っ白なページ」を返すことがある（2026-07-07 診断ログで実証:
+        # title='' body='' button:0 svg:0）。実ブラウザ相当の指紋に整える。
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         ctx = browser.new_context(
             storage_state=SESSION_FILE,
             locale="ja-JP",
-            timezone_id="Asia/Tokyo"
+            timezone_id="Asia/Tokyo",
+            viewport={"width": 1280, "height": 800},
+            user_agent=("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"),
         )
         page = ctx.new_page()
 
