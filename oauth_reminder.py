@@ -276,7 +276,6 @@ def main():
         notify_admin(
             "⏰ とうこさん OAuth未完了リマインド送信\n\n"
             + "\n\n".join(parts)
-            + "\n\n自動リマインドはここまで。2回目でも動きがなければ個別フォローしてください。"
         )
 
     print(f"[oauth_reminder] 完了: 1回目{len(sent_list)}件 / 2回目{len(sent2_list)}件 / スキップ{len(skipped_list)}件")
