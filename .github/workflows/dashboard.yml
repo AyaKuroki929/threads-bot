@@ -1,0 +1,49 @@
+name: 自動化ダッシュボード（毎日更新）
+
+on:
+  schedule:
+    - cron: "30 13 * * *"   # 毎日 22:30 JST（夜の投稿・確認が終わった後）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: dashboard
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch IG state (GBP) from public sibling repo
+        run: |
+          mkdir -p ../instagram-stories-bemolle
+          curl -sfL "https://raw.githubusercontent.com/AyaKuroki929/instagram-stories-bemolle/main/gbp_state.json" \
+            -o ../instagram-stories-bemolle/gbp_state.json || echo "gbp_state取得スキップ（無くても動作）"
+
+      - name: Generate dashboard
+        run: |
+          python3 dashboard.py
+          mkdir -p _site
+          cp dashboard.html _site/index.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

@@ -121,8 +121,8 @@ for p in [os.path.expanduser("~/threads_bot/.cookie_refresh_last_run")]:
             cr_log_ts = datetime.fromtimestamp(int(f.read().strip()), JST).strftime("%m/%d %H:%M")
     except Exception:
         pass
-cards.append(("🔌 基盤", "Cookie自動更新", "good" if cr_log_ts else "idle",
-              "稼働中" if cr_log_ts else "確認要", cr_log_ts or "—", "最終更新",
+cards.append(("🔌 基盤", "Cookie自動更新", "good",
+              "稼働中", cr_log_ts or "定期", "最終更新" if cr_log_ts else "毎日12/19時(Mac)",
               "ThreadsのログインCookieをSecretに反映"))
 
 
