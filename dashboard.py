@@ -196,8 +196,11 @@ body = f"""<style>
   header.top{{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:18px;}}
   .title{{font-size:1.5rem;font-weight:600;letter-spacing:.02em;color:var(--brand);}}
   .asof{{font-size:.78rem;color:var(--muted);}}
-  .navlink{{color:var(--brand);text-decoration:none;font-weight:600;}}
-  .navlink:hover{{text-decoration:underline;}}
+  .tabs{{display:flex;gap:10px;margin-bottom:22px;flex-wrap:wrap;}}
+  .tab{{display:inline-block;padding:11px 18px;border-radius:12px;font-size:.95rem;font-weight:600;
+    text-decoration:none;border:1px solid var(--line);color:var(--brand);background:var(--card);}}
+  .tab-on{{background:var(--brand);color:#fff;border-color:var(--brand);}}
+  a.tab:hover{{background:#F1EAEC;}}
   .overall{{display:flex;align-items:center;gap:12px;padding:16px 18px;border-radius:14px;margin-bottom:22px;
     border:1px solid var(--line);background:var(--card);}}
   .dot{{width:12px;height:12px;border-radius:50%;flex:0 0 auto;}}
@@ -240,8 +243,12 @@ body = f"""<style>
 <div class="wrap">
   <header class="top">
     <div class="title serif">ベモーレ 自動化ダッシュボード</div>
-    <div class="asof">{now.strftime('%Y年%m月%d日 %H:%M')} 時点 ・ <a class="navlink" href="manual.html">📖 運用マニュアル</a></div>
+    <div class="asof">{now.strftime('%Y年%m月%d日 %H:%M')} 時点</div>
   </header>
+  <nav class="tabs">
+    <span class="tab tab-on">📊 ダッシュボード</span>
+    <a class="tab" href="manual.html">📖 運用マニュアル（困ったとき）</a>
+  </nav>
 
   <div class="overall o-{overall[0]}">
     <span class="dot"></span>
@@ -288,8 +295,11 @@ if manual_src:
   .doc{{max-width:820px;margin:0 auto;padding:26px 20px 70px;
     font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
     color:var(--ink);line-height:1.8;-webkit-font-smoothing:antialiased;}}
-  .topbar{{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:20px;flex-wrap:wrap;gap:8px;}}
-  .topbar a{{color:var(--brand);text-decoration:none;font-weight:600;}}
+  .tabs{{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;}}
+  .tab{{display:inline-block;padding:11px 18px;border-radius:12px;font-size:.95rem;font-weight:600;
+    text-decoration:none;border:1px solid var(--line);color:var(--brand);background:var(--card);}}
+  .tab-on{{background:var(--brand);color:#fff;border-color:var(--brand);}}
+  a.tab:hover{{background:#F1EAEC;}}
   .doc h1{{font-family:"Hiragino Mincho ProN",serif;color:var(--brand);font-size:1.55rem;
     border-bottom:2px solid var(--line);padding-bottom:12px;}}
   .doc h2{{font-size:1.15rem;margin-top:34px;color:var(--ink);border-left:4px solid var(--brand);padding-left:10px;}}
@@ -303,10 +313,10 @@ if manual_src:
   .doc li{{margin:4px 0;}}
 </style>
 <div class="doc">
-  <div class="topbar">
-    <span style="color:var(--muted);font-size:.85rem">ベモーレ 運用マニュアル</span>
-    <a href="index.html">📊 ダッシュボードへ戻る</a>
-  </div>
+  <nav class="tabs">
+    <a class="tab" href="index.html">📊 ダッシュボード</a>
+    <span class="tab tab-on">📖 運用マニュアル</span>
+  </nav>
   {manual_body}
 </div>"""
     with open(os.path.join(TB, "manual.html"), "w", encoding="utf-8") as f:
