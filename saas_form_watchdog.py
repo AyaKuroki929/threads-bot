@@ -170,6 +170,8 @@ def main():
             lines.append(f"・{who}")
             lines.append(f"  回答日:{p['ts']}")
             lines.append(f"  https://saas.shikisai.work/api/send-step?customer_id={p['cid']}")
+            if not p["in_line_users"]:
+                lines.append("  ⚠️ LINE紐付けなし→このURLはエラーになります。先に map_line で紐付けが必要（Claudeに依頼でOK）")
         lines.append("")
 
     if unknown_cid:
