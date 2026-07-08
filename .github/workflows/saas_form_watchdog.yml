@@ -1,0 +1,52 @@
+name: SaaS - フォーム回答 安全網（watchdog）
+
+# GASのonFormSubmit通知が死んでいても取りこぼさないためのバックアップ検知。
+# 「フォーム回答済みなのに STEP1/2 未送信 かつ 未連携」の人を検出して彩さんLINEへ通知。
+on:
+  schedule:
+    - cron: '0 1,7 * * *'   # 毎日 10:00 と 16:00 JST（枠に余裕・日中に気づける時間）
+  workflow_dispatch:
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install gspread google-auth
+
+      - name: Write Google Service Account
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
+
+      - name: Run form watchdog
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: python3 saas_form_watchdog.py
+
+      - name: Remove service account file
+        if: always()
+        run: rm -f google_service_account.json
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 SaaS安全網(watchdog)自体が失敗\n\nフォーム回答の取りこぼし検知が動いていません。\nログ確認：\n$RUN_URL"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
