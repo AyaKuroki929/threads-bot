@@ -196,6 +196,8 @@ body = f"""<style>
   header.top{{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:18px;}}
   .title{{font-size:1.5rem;font-weight:600;letter-spacing:.02em;color:var(--brand);}}
   .asof{{font-size:.78rem;color:var(--muted);}}
+  .navlink{{color:var(--brand);text-decoration:none;font-weight:600;}}
+  .navlink:hover{{text-decoration:underline;}}
   .overall{{display:flex;align-items:center;gap:12px;padding:16px 18px;border-radius:14px;margin-bottom:22px;
     border:1px solid var(--line);background:var(--card);}}
   .dot{{width:12px;height:12px;border-radius:50%;flex:0 0 auto;}}
@@ -238,7 +240,7 @@ body = f"""<style>
 <div class="wrap">
   <header class="top">
     <div class="title serif">ベモーレ 自動化ダッシュボード</div>
-    <div class="asof">{now.strftime('%Y年%m月%d日 %H:%M')} 時点</div>
+    <div class="asof">{now.strftime('%Y年%m月%d日 %H:%M')} 時点 ・ <a class="navlink" href="manual.html">📖 運用マニュアル</a></div>
   </header>
 
   <div class="overall o-{overall[0]}">
@@ -259,3 +261,54 @@ body = f"""<style>
 with open(os.path.join(TB, "dashboard.html"), "w", encoding="utf-8") as f:
     f.write(body)
 print(f"dashboard.html を生成しました（全体: {overall[0]} / 要対応 {len(alerts)}件）")
+
+
+# ── 運用マニュアルも同じサイトにHTML化（manual.html）─────────────
+manual_md_path = os.path.join(TB, "AUTOMATION_OPS_MANUAL.md")
+manual_src = ""
+try:
+    with open(manual_md_path, encoding="utf-8") as f:
+        manual_src = f.read()
+except Exception:
+    manual_src = ""
+
+if manual_src:
+    try:
+        import markdown  # CIでpip install。表・コードに対応
+        manual_body = markdown.markdown(manual_src, extensions=["tables", "fenced_code", "toc"])
+    except Exception:
+        # markdown未導入環境は最低限そのまま表示（読めればよい）
+        manual_body = "<pre style='white-space:pre-wrap'>" + esc(manual_src) + "</pre>"
+
+    manual_html = f"""<style>
+  :root {{ --ground:#F8F5F6; --card:#FFFFFF; --ink:#2C2328; --muted:#8A7B81;
+    --line:#ECE4E6; --brand:#6E4152; --good:#4F7D57; --warn:#B8862E; --crit:#B04A42; }}
+  *{{box-sizing:border-box;}}
+  body{{margin:0;background:var(--ground);}}
+  .doc{{max-width:820px;margin:0 auto;padding:26px 20px 70px;
+    font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,system-ui,sans-serif;
+    color:var(--ink);line-height:1.8;-webkit-font-smoothing:antialiased;}}
+  .topbar{{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:20px;flex-wrap:wrap;gap:8px;}}
+  .topbar a{{color:var(--brand);text-decoration:none;font-weight:600;}}
+  .doc h1{{font-family:"Hiragino Mincho ProN",serif;color:var(--brand);font-size:1.55rem;
+    border-bottom:2px solid var(--line);padding-bottom:12px;}}
+  .doc h2{{font-size:1.15rem;margin-top:34px;color:var(--ink);border-left:4px solid var(--brand);padding-left:10px;}}
+  .doc h3{{font-size:1rem;color:var(--brand);margin-top:22px;}}
+  .doc table{{border-collapse:collapse;width:100%;margin:14px 0;font-size:.9rem;display:block;overflow-x:auto;}}
+  .doc th,.doc td{{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}}
+  .doc th{{background:#F1EAEC;font-weight:600;white-space:nowrap;}}
+  .doc code{{background:#F1EAEC;padding:2px 6px;border-radius:5px;font-size:.86em;}}
+  .doc blockquote{{border-left:3px solid var(--brand);margin:14px 0;padding:6px 14px;color:var(--muted);background:var(--card);}}
+  .doc hr{{border:0;border-top:1px solid var(--line);margin:28px 0;}}
+  .doc li{{margin:4px 0;}}
+</style>
+<div class="doc">
+  <div class="topbar">
+    <span style="color:var(--muted);font-size:.85rem">ベモーレ 運用マニュアル</span>
+    <a href="index.html">📊 ダッシュボードへ戻る</a>
+  </div>
+  {manual_body}
+</div>"""
+    with open(os.path.join(TB, "manual.html"), "w", encoding="utf-8") as f:
+        f.write(manual_html)
+    print("manual.html も生成しました")

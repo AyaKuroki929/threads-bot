@@ -31,11 +31,15 @@ jobs:
           curl -sfL "https://raw.githubusercontent.com/AyaKuroki929/instagram-stories-bemolle/main/gbp_state.json" \
             -o ../instagram-stories-bemolle/gbp_state.json || echo "gbp_state取得スキップ（無くても動作）"
 
-      - name: Generate dashboard
+      - name: Install markdown (for ops manual rendering)
+        run: pip install markdown
+
+      - name: Generate dashboard & manual
         run: |
           python3 dashboard.py
           mkdir -p _site
           cp dashboard.html _site/index.html
+          [ -f manual.html ] && cp manual.html _site/manual.html || true
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
