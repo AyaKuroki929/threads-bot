@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
+from botlib import line_broadcast  # LINE送信は共通実装に集約
 
 _BASE = os.path.dirname(__file__)
 POSTS_FILE    = os.environ.get("POSTS_FILE",    os.path.join(_BASE, "posts.json"))
@@ -1879,18 +1880,7 @@ def _send_line_failure_notify(reason: str, slot: str):
         msg = f"⚠️ コメント対象なし（{slot_label}）\n@{USERNAME}\n\nコメントできるアカウントがプールにありません。キーワード検索でも新規発掘できませんでした。"
     else:
         msg = f"⚠️ 自動コメント全件失敗（{slot_label}）\n@{USERNAME}\n\n投稿は完了しましたが、他アカウントへのコメントに全件失敗しました。"
-    try:
-        body = {"messages": [{"type": "text", "text": msg}]}
-        req = urllib.request.Request(
-            "https://api.line.me/v2/bot/message/broadcast",
-            data=json.dumps(body).encode(),
-            headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req) as r:
-            print(f"[line] 失敗通知送信完了 status={r.status}")
-    except Exception as e:
-        print(f"[line] 失敗通知送信失敗（続行）: {e}")
+    line_broadcast(msg, token=LINE_TOKEN)  # 送信は共通実装（失敗は握って継続）
 
 
 def _send_line_notify(slot: str, texts: list, comment_results: list = None):
@@ -1928,18 +1918,7 @@ def _send_line_notify(slot: str, texts: list, comment_results: list = None):
             pass
 
     msg = f"📱 Threads投稿完了（{slot_label}）\n@{USERNAME}\n\n{content}{targets_msg}"
-    try:
-        body = {"messages": [{"type": "text", "text": msg}]}
-        req = urllib.request.Request(
-            "https://api.line.me/v2/bot/message/broadcast",
-            data=json.dumps(body).encode(),
-            headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req) as r:
-            print(f"[line] 通知送信完了 status={r.status}")
-    except Exception as e:
-        print(f"[line] 通知送信失敗（続行）: {e}")
+    line_broadcast(msg, token=LINE_TOKEN)  # 送信は共通実装（失敗は握って継続）
 
 
 def _git_pull_latest():

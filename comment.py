@@ -50,17 +50,8 @@ def _send_line(token, msg, critical=False):
     if not critical:
         print(f"[comment] LINE通知 停止中（skip）: {msg[:60]}...")
         return
-    import urllib.request as _req
-    body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
-    req = _req.Request(
-        "https://api.line.me/v2/bot/message/broadcast",
-        data=body,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    )
-    try:
-        _req.urlopen(req, timeout=10)
-    except Exception as e:
-        print(f"[comment] LINE通知失敗: {e}")
+    from botlib import line_broadcast  # 送信は共通実装に集約（criticalゲートはここで維持）
+    line_broadcast(msg, token=token)
 
 
 def _is_logged_in(page):
