@@ -21,6 +21,8 @@ SUPABASE_KEY        = os.environ.get("SUPABASE_SERVICE_KEY", "")
 CLIENT_LINE_TOKEN   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")   # とうこさんLINE（クライアント宛て）
 ADMIN_LINE_TOKEN    = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")     # Claude通知Bot（管理者宛て）
 
+SHEET_ID = "1Af6ZnH7Ghzn1APpVrFy5nFlftNaIX5YOeSvfFjSdU-U"  # サロン情報フォーム回答シート
+
 REMINDER_HOURS  = 24  # 1回目：STEP送信からこの時間以上経過したら対象
 REMINDER2_HOURS = 72  # 2回目：1回目リマインドからこの時間以上経過したら対象（3日）
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oauth_reminder_state.json")
@@ -61,6 +63,57 @@ def fetch_pending_users():
     req = urllib.request.Request(url, headers=_supabase_headers())
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
+
+
+def _load_sheet_identity_map():
+    """フォーム回答シートから customer_id → {name, tid, insta} の対応表を作る。
+    line_users の display_name/expected_threads_id が空（GAS不調時の回答など）でも
+    通知に必ず名前が出せるようにするため。読めない環境では空dictを返して従来動作。"""
+    try:
+        import gspread
+        ws = gspread.service_account(filename="google_service_account.json") \
+                    .open_by_key(SHEET_ID).get_worksheet(0)
+        m = {}
+        for r in ws.get_all_records():
+            cid = str(r.get("_customer_id", "") or "").strip()
+            if not cid:
+                continue
+            tid = str(r.get("Threadsのアカウント名（@から始まるID）", "") or "").strip()
+            while tid and tid[0] in ("@", "＠", " ", "　"):
+                tid = tid[1:]
+            m[cid] = {
+                "name":  str(r.get("オーナー名（投稿で使うお名前）", "") or "").strip(),
+                "tid":   tid.strip().lower(),
+                "insta": str(r.get("インスタグラムのURL", "") or "").strip(),
+            }
+        return m
+    except Exception as e:
+        print(f"[sheet] 対応表の読み込みスキップ: {e}")
+        return {}
+
+
+def _backfill_line_user(line_uid: str, name: str, tid: str,
+                        cur_name: str, cur_tid: str):
+    """line_users の空フィールドだけをシート値で自動補完（自己修復・既存値は上書きしない）"""
+    payload = {}
+    if name and not cur_name:
+        payload["display_name"] = name
+    if tid and not cur_tid:
+        payload["expected_threads_id"] = tid
+    if not payload:
+        return
+    url = (f"{SUPABASE_URL}/rest/v1/line_users"
+           f"?line_user_id=eq.{urllib.parse.quote(line_uid)}")
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={**_supabase_headers(), "Prefer": "return=minimal"},
+        method="PATCH",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            print(f"[backfill] {line_uid[:8]}…: {list(payload.keys())} をシートから補完")
+    except Exception as e:
+        print(f"[backfill] 失敗（続行）: {e}", file=sys.stderr)
 
 
 def fetch_reminded_users():
@@ -170,6 +223,8 @@ def main():
 
     print(f"[oauth_reminder] 開始 {datetime.now(timezone.utc).isoformat()}")
 
+    sheet_map = _load_sheet_identity_map()
+
     candidates = fetch_pending_users()
     print(f"[oauth_reminder] step_sent_at から{REMINDER_HOURS}時間超のリマインド未送信ユーザー: {len(candidates)}件")
 
@@ -182,6 +237,13 @@ def main():
         step_sent   = user.get("step_sent_at", "")
         threads_id  = (user.get("expected_threads_id") or "").strip()
         name        = (user.get("display_name") or "").strip()
+        # 空ならフォーム回答シートから補完（通知に必ず名前を出す＋Supabaseも自己修復）
+        _sheet = sheet_map.get(customer_id, {})
+        if (not name or not threads_id) and _sheet:
+            if line_uid:
+                _backfill_line_user(line_uid, _sheet.get("name", ""), _sheet.get("tid", ""), name, threads_id)
+            name       = name or _sheet.get("name", "")
+            threads_id = threads_id or _sheet.get("tid", "")
         # 通知に出す識別子：名前 / @Threads ID / customer_id のうち有るものを並べる（何かは必ず出す）
         _bits = [b for b in [name, (f"@{threads_id}" if threads_id else ""), customer_id] if b]
         who         = " / ".join(_bits) if _bits else "（ID不明）"
@@ -230,6 +292,12 @@ def main():
         reminded_at = user.get("oauth_reminded_at", "")
         threads_id  = (user.get("expected_threads_id") or "").strip()
         name        = (user.get("display_name") or "").strip()
+        _sheet = sheet_map.get(customer_id, {})
+        if (not name or not threads_id) and _sheet:
+            if line_uid:
+                _backfill_line_user(line_uid, _sheet.get("name", ""), _sheet.get("tid", ""), name, threads_id)
+            name       = name or _sheet.get("name", "")
+            threads_id = threads_id or _sheet.get("tid", "")
         _bits = [b for b in [name, (f"@{threads_id}" if threads_id else ""), customer_id] if b]
         who     = " / ".join(_bits) if _bits else "（ID不明）"
         display = name or threads_id or customer_id or "（ID不明）"

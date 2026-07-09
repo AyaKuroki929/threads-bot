@@ -24,6 +24,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install dependencies
+        run: pip install gspread google-auth
+
+      - name: Write Google Service Account
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
+
       - name: Run OAuth reminder
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -31,6 +39,10 @@ jobs:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: python3 oauth_reminder.py
+
+      - name: Remove service account file
+        if: always()
+        run: rm -f google_service_account.json
 
       - name: Commit reminder state
         run: |
