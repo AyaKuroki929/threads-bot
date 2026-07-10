@@ -1,0 +1,32 @@
+name: リマインダー - 古谷さん振込案内 (2026-08-01)
+
+# 8/1 に彩さんへ「古谷さんに振込リマインドを送る」LINE通知を出す使い捨てワークフロー。
+# ローカルの launchd リマインダーは過去2件（杉村5/31・山口6/30）が Mac スリープで
+# 未発火だった実績があるため、クラウド側の保険として作成（2026-07-10）。
+# 発火後はこのファイルを削除してよい（年ガードがあるので放置でも来年は発火しない）。
+
+on:
+  schedule:
+    - cron: '0 0 1 8 *'   # 8/1 09:00 JST（本命）
+    - cron: '0 3 1 8 *'   # 8/1 12:00 JST（GitHub遅延/スキップ保険・重複送信は許容）
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send LINE reminder (2026 only)
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          # 年ガード：2026年以外は何もしない（使い捨てworkflowの誤発火防止）
+          if [ "$(TZ=Asia/Tokyo date +%Y)" != "2026" ]; then
+            echo "2026年ではないためスキップ"
+            exit 0
+          fi
+          TEXT="📋 リマインド：古谷さんに8月分の振込案内LINEを送る（本日8/1）\n\n【背景】\n古谷さんの8月Squareサブスクは全スキップ済み。\nベーシック(10%off)＋リフレッシュ(定価)を振込対応。\n7月に『8/1にリマインド送りますね』と約束済み。\n\n【古谷さんへ送る文面（コピペ用）】\n─────────────\nおはようございます😊\n本日8/1、以下のお振込をお願いいたします🙏\n\n【8月分】\n・H.R.ベーシック（10%off）\n・リフレッシュ\n合計 ➡️ 13,284円\n\n⭕️振込先\n三井住友銀行\nトランクNORTH支店\n普通 0285507\n株式会社紫妃彩\n─────────────\n\n【入金確認後】\n・商品（ベーシック＋リフレッシュ）のお渡し手配\n・9月からサブスク再開するか古谷さんに確認"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
