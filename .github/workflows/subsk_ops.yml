@@ -1,0 +1,73 @@
+name: サブスク表 - 月次運用（シート作成・整合性チェック）
+
+# 元はローカル launchd（com.bemolle.subsk-create / subsk-check）で実行していたが、
+# Mac スリープ時に動かないため 2026-07-10 にクラウド移行。
+# GitHub schedule の遅延・スキップ対策として各ジョブ2本ずつ cron を張る（コードは冪等）。
+#  - create: 既にシートがあればスキップするので2回発火しても安全
+#  - check : 通知が最大2回届く可能性があるが、確実性を優先
+
+on:
+  schedule:
+    - cron: '0 0 25 * *'   # 25日 09:00 JST → create（本命）
+    - cron: '0 3 25 * *'   # 25日 12:00 JST → create（保険・冪等）
+    - cron: '0 11 28 * *'  # 28日 20:00 JST → check（本命）
+    - cron: '0 13 28 * *'  # 28日 22:00 JST → check（保険・通知重複は許容）
+  workflow_dispatch:
+    inputs:
+      command:
+        description: '実行コマンド'
+        required: true
+        type: choice
+        options: [check, create]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-api-python-client google-auth -q
+
+      - name: Write Google Service Account
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
+
+      - name: Run subsk_ops
+        env:
+          TZ: Asia/Tokyo
+          SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
+          SQUARE_LOCATION_BEMOLLE: ${{ secrets.SQUARE_LOCATION_BEMOLLE }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          # スケジュール発火時は cron 式からコマンドを判定、手動時は inputs を使う
+          case "${{ github.event.schedule }}" in
+            "0 0 25 * *"|"0 3 25 * *")   CMD=create ;;
+            "0 11 28 * *"|"0 13 28 * *") CMD=check ;;
+            *) CMD="${{ github.event.inputs.command }}" ;;
+          esac
+          echo "実行コマンド: $CMD"
+          python3 subsk_ops.py "$CMD"
+
+      - name: Remove service account file
+        if: always()
+        run: rm -f google_service_account.json
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 サブスク表 月次ジョブが失敗しました\n\nシート作成 or 整合性チェックが実行できていません。\nログ確認：\n$RUN_URL"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
