@@ -18,6 +18,10 @@ on:
         description: '特定サロンのみ投稿（テスト/デモ用・空なら全サロン）'
         required: false
         default: ''
+      dry_run:
+        description: 'dry-run（プール読込のみ確認・投稿しない）'
+        type: boolean
+        default: false
 
 concurrency:
   group: post-saas
@@ -32,6 +36,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # 第三者クライアントの投稿プールは private リポ saas-posts に隔離（公開リポに顧客ファイルを置かない）。
+      # 実行時にここへ取得して posts_saas/ に重ねる＝post_saas.py の読込ロジックは不変。
+      - name: クライアント投稿プールを private から取得
+        uses: actions/checkout@v4
+        with:
+          repository: AyaKuroki929/saas-posts
+          token: ${{ secrets.GH_PAT }}
+          path: .saas_posts_private
+
+      - name: private投稿プールを posts_saas/ に重ねる
+        run: |
+          mkdir -p posts_saas
+          cp .saas_posts_private/posts_*.json posts_saas/ 2>/dev/null || true
+          echo "posts_saas/ 合計 $(ls posts_saas/*.json 2>/dev/null | wc -l | tr -d ' ') ファイル（うちprivate $(ls .saas_posts_private/posts_*.json 2>/dev/null | wc -l | tr -d ' ') 件を重ね済み）"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -62,6 +81,7 @@ jobs:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ONLY_SALON: ${{ github.event.inputs.only_salon }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
         run: |
           set +e
           python3 post_saas.py ${{ steps.slot.outputs.slot }}
