@@ -24,6 +24,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # クライアント投稿の隔離先（private リポ）。生成後にここへ振り分けて公開リポには残さない。
+      - name: private投稿リポを取得（クライアント隔離先）
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: AyaKuroki929/saas-posts
+          ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
+          path: .saas_posts_private
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -58,6 +67,42 @@ jobs:
         if: always()
         run: rm -f google_service_account.json
 
+      # 自社アカ（公開OK）以外＝第三者クライアントの投稿ファイルを private リポへ隔離し、
+      # 公開リポの作業ツリーから除外する（次の Commit で公開リポに載らないようにする）。
+      # 新規クライアントも allowlist 外として自動で private 側へ回る。
+      - name: クライアント投稿を private へ隔離（公開リポに残さない）
+        if: ${{ !cancelled() }}
+        run: |
+          PUBLIC_KEEP="posts_bemolle_diet.json posts_aya_kuroki_0929.json posts_urakata_san_official.json posts_toko_test.json posts_て.json posts_テスト.json"
+          moved=0
+          if [ -d .saas_posts_private ]; then
+            for f in posts_saas/posts_*.json; do
+              [ -e "$f" ] || continue
+              b=$(basename "$f"); keep=0
+              for k in $PUBLIC_KEEP; do [ "$b" = "$k" ] && keep=1; done
+              if [ "$keep" = "0" ]; then cp "$f" .saas_posts_private/ && rm "$f" && moved=$((moved+1)); fi
+            done
+            echo "クライアント $moved 件を private へ隔離"
+            if [ -d .saas_posts_private/.git ]; then
+              cd .saas_posts_private
+              git config user.name "github-actions[bot]"; git config user.email "gha@users.noreply.github.com"
+              git add -A
+              if ! git diff --cached --quiet; then
+                git commit -q -m "saas: クライアント投稿を更新 $(TZ=Asia/Tokyo date '+%F %H:%M JST')"
+                for i in 1 2 3; do git push && break; git pull --rebase && sleep 2; done
+              fi
+              cd ..
+            fi
+          else
+            echo "::warning::private取得に失敗。クライアント投稿を公開ツリーから除外のみ実施（private未更新）"
+            for f in posts_saas/posts_*.json; do
+              [ -e "$f" ] || continue
+              b=$(basename "$f"); keep=0
+              for k in $PUBLIC_KEEP; do [ "$b" = "$k" ] && keep=1; done
+              [ "$keep" = "0" ] && rm "$f"
+            done
+          fi
+
       # シート読込失敗(exit 2)でも、同一実行で生成済みのローカル定義サロン分は
       # ディスクに書かれているため必ずコミットする（skipすると生成分が消滅する）
       - name: Commit generated posts
@@ -65,7 +110,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add posts_saas/
+          git add -A posts_saas/
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
