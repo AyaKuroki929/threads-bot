@@ -69,21 +69,15 @@ jobs:
           echo "exit_code=$ec" >> $GITHUB_OUTPUT
           exit $ec
 
-      - name: LINE通知（トークン切れ・exit 3）
-        if: failure() && steps.post.outputs.exit_code == '3'
+      # トークン切れ(exit3)・サロン別エラーは post_saas.py 内がアカウント名付きで
+      # LINE通知済み（.line_notified が置かれる）。ここは「Python到達前のインフラ層
+      # 失敗」だけを拾う保険（1障害＝複数broadcastの浪費を防ぐ）。
+      - name: LINE通知（インフラ層の失敗のみ）
+        if: failure()
         env:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
-            -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"🔑 SaaS Threads トークン切れ\n\nいずれかのサロンのThreads APIトークンが無効です。\nGitHub Actionsのログでどのサロンか確認し、トークンを再取得してSupabaseを更新してください。\n\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
-
-      - name: LINE通知（その他エラー）
-        if: failure() && steps.post.outputs.exit_code != '3'
-        env:
-          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-        run: |
+          if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           SLOT="${{ steps.slot.outputs.slot }}"
           EC="${{ steps.post.outputs.exit_code }}"
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
@@ -91,13 +85,17 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ SaaS Threads 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
 
-      - name: Healthcheck ping（投稿成功の証明）
-        if: success()
+      # 自アカ(bemolle/個人)が投稿できていればping。クライアント1件の失敗で
+      # pingが欠落し deadman worker が「GH Actions障害」と誤報するのを防ぐため、
+      # ジョブ成否ではなく post_saas.py が置く hc_ok マーカーで判定する。
+      - name: Healthcheck ping（自アカ投稿成功の証明）
+        if: ${{ !cancelled() }}
         env:
           HC_MORNING: ${{ secrets.HC_PING_URL_MORNING }}
           HC_NOON: ${{ secrets.HC_PING_URL_NOON }}
           HC_EVENING: ${{ secrets.HC_PING_URL_EVENING }}
         run: |
+          if [ ! -f hc_ok ]; then echo "自アカ失敗のためHC pingスキップ"; exit 0; fi
           case "${{ steps.slot.outputs.slot }}" in
             morning) URL="$HC_MORNING" ;;
             noon)    URL="$HC_NOON" ;;
@@ -117,15 +115,18 @@ jobs:
           python3 generate_posts.py saas_bemolle || echo "bemolle補充失敗（処理継続）"
           python3 generate_posts.py saas_personal || echo "personal補充失敗（処理継続）"
 
-      - name: Commit posts files（補充があった場合のみ）
-        if: success()
+      # if: success() だと、クライアント1件の失敗で成功済みアカウントの last_run が
+      # pushされず、heartbeatが「未投稿」と誤判定して旧プールから二重投稿していた。
+      # 失敗時も必ず走らせて last_run を保存する。
+      - name: Commit posts files（補充・last_runの保存）
+        if: ${{ !cancelled() }}
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
           git pull --rebase --autostash origin main 2>&1 || true
-          git add posts_saas/posts_bemolle_diet.json posts_saas/posts_aya_0929_private.json last_run.json last_run_personal.json 2>/dev/null || true
+          git add posts_saas/posts_bemolle_diet.json posts_saas/posts_aya_kuroki_0929.json last_run.json last_run_personal.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no generate changes"
           else

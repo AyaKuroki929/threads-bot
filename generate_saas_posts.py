@@ -804,8 +804,8 @@ def generate_for_salon(salon: dict):
     try:
         client = anthropic.Anthropic()
     except Exception as e:
-        print(f"[saas] Anthropic APIキーが取得できません → {e}")
-        return False
+        # キーが無い/無効なら全サロン生成不能＝沈黙させず落としてworkflowのLINE通知に乗せる
+        raise RuntimeError(f"Anthropic APIキーが取得できません（全サロン生成不能）: {e}")
     generated_any = False
 
     for slot in ["morning", "noon", "evening"]:
@@ -970,13 +970,17 @@ def main():
     target_salon = sys.argv[1] if len(sys.argv) > 1 else None
 
     print("[saas] スプレッドシートを読み込み中...")
+    sheet_failed = False
     try:
         salons = load_sheet_data() + load_school_data()
     except Exception as e:
         print(f"[saas] スプレッドシート読み込みエラー: {e}")
         print("[saas] google_service_account.json が設定されているか確認してください")
-        # シートが読めなくても、ローカル定義（B2B等）だけは処理を続行する
+        # シートが読めなくても、ローカル定義（B2B等）だけは処理を続行する。
+        # ただしシート由来の全クライアントを黙ってスキップすることになるため、
+        # 最後に exit 2 で失敗させて workflow のLINE通知に乗せる。
         salons = []
+        sheet_failed = True
     salons += load_local_salons()
     if not salons:
         sys.exit(1)
@@ -1001,6 +1005,9 @@ def main():
         generate_for_salon(salon)
 
     print("\n[saas] 全処理完了")
+    if sheet_failed:
+        print("[saas] ⚠️ シート読み込み失敗によりシート由来のクライアントを未処理のまま終了（exit 2）")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

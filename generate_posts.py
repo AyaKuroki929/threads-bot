@@ -402,7 +402,9 @@ if __name__ == "__main__":
     elif account == "saas_bemolle":
         generate_for_saas("bemolle_diet", "posts_saas/posts_bemolle_diet.json", "GENERATE_RULES.md")
     elif account == "saas_personal":
-        generate_for_saas("aya_0929_private", "posts_saas/posts_aya_0929_private.json", "GENERATE_RULES_personal.md")
+        # Supabaseの実サロン名は aya_kuroki_0929。旧名 aya_0929_private のファイルに
+        # 補充し続けて実プール(posts_aya_kuroki_0929.json)が枯渇していく事故の修正（2026-07-11）
+        generate_for_saas("aya_kuroki_0929", "posts_saas/posts_aya_kuroki_0929.json", "GENERATE_RULES_personal.md")
     else:
         print(f"[generate] 不明なアカウント: {account}")
         sys.exit(1)

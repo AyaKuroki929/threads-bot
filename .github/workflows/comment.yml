@@ -1,8 +1,10 @@
 name: Auto Comment (bemolle + personal)
 
+# repository_dispatch(comment-*)の購読は2026-07-11に削除。
+# 自動コメントはbemolle=ローカルMac実行/個人=停止(手動支援へ移管)のため、
+# dispatch発火時は両アカfalseでchromiumインストールだけして空回りしていた
+#（cron-job.orgのcomment-*はcomment_suggest.ymlが引き続き購読している）。
 on:
-  repository_dispatch:
-    types: [comment-morning, comment-noon, comment-evening]
   workflow_dispatch:
     inputs:
       account:
@@ -15,6 +17,11 @@ on:
         description: 'dry-run（実際にはコメントしない）'
         type: boolean
         default: false
+
+# 手動並行実行で commented_posts.json が競合しないよう直列化
+concurrency:
+  group: auto-comment
+  cancel-in-progress: false
 
 jobs:
   comment:
@@ -159,17 +166,20 @@ jobs:
       - name: Commit state
         if: steps.target.outputs.dry != 'true'
         run: |
-          git add commented_posts.json commented_posts_personal.json comment_targets.json comment_targets_personal.json 2>/dev/null || true
+          # api_usage_log.json も保存対象（漏れているとAPI使用量が毎回捨てられ月次レポートが常に0件になる）
+          git add commented_posts.json commented_posts_personal.json comment_targets.json comment_targets_personal.json api_usage_log.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "no changes"
           else
             git commit -m "state: auto comment $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             PUSHED=false
             for i in 1 2 3 4 5; do
-              # --autostash: api_usage_log.json 等の未ステージ変更があっても rebase を止めない。
+              # --autostash: 未ステージ変更があっても rebase を止めない。
               # これが無いと「You have unstaged changes」で pull が失敗し push が永久に rejected になる
               # （2026-05-25〜06-01 にコメント記録が一切保存されなかった原因）。
-              git pull --rebase --autostash -X ours origin main 2>&1 || true
+              # rebase中は ours/theirs が反転する: 今コミットしたローカルstateを守るのは -X theirs
+              # （-X ours だとconflict時にリモートを採用し、コメント記録が巻き戻って重複コメントになる）
+              git pull --rebase --autostash -X theirs origin main 2>&1 || true
               if git push; then
                 PUSHED=true
                 break
@@ -178,14 +188,8 @@ jobs:
               echo "push retry $i failed, wait ${WAIT}s"
               sleep $WAIT
             done
-            if [ "$PUSHED" = "false" ]; then
-              echo "⚠️ push 5回失敗 → force-with-lease で強制push"
-              if git push --force-with-lease; then
-                PUSHED=true
-              else
-                echo "force-with-lease も失敗"
-              fi
-            fi
+            # force-with-lease フォールバックは2026-07-11に削除
+            #（rebase失敗が続いた状態で強制pushすると、他workflowのstateコミットを消す恐れがあるため）
             # push が最終的に失敗したら必ず通知（state保存失敗は無音だと数日気づけないため）
             if [ "$PUSHED" = "false" ] && [ -n "$LINE_CHANNEL_ACCESS_TOKEN" ]; then
               curl -s -X POST https://api.line.me/v2/bot/message/broadcast \

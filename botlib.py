@@ -110,6 +110,14 @@ def line_broadcast(text: str, token: str = "", *, timeout: int = 10) -> bool:
             method="POST",
         )
         urllib.request.urlopen(req, timeout=timeout)
+        # 障害通知(🚨/⚠️/🔑)を送れた印。workflowの failure() 通知ステップは
+        # この印があれば重複送信をスキップする（1障害＝broadcast複数通の浪費を防ぐ）
+        try:
+            if any(m in text for m in ("🚨", "⚠️", "🔑")):
+                with open(".line_notified", "w") as f:
+                    f.write("1")
+        except Exception:
+            pass
         return True
     except Exception as e:
         print(f"[line] broadcast失敗（処理は継続）: {e}", file=sys.stderr)

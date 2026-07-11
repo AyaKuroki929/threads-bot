@@ -2,6 +2,8 @@ name: Register bemolle/personal in Supabase (one-time setup)
 
 # このワークフローを一度だけ手動実行してSupabaseにサロンを登録する。
 # 登録後は不要だが、トークン更新時にも使える。
+# ⚠️ 2026-07-11: 個人のサロン名を aya_kuroki_0929 に統一（旧名 aya_0929_private を
+# is_active:true で登録し直すと、同じthreads_user_idに毎スロット2本投稿される事故になる）
 on:
   workflow_dispatch:
 

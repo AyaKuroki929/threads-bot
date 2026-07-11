@@ -285,6 +285,33 @@ def _select_topic(texts, username):
         return chosen
 
 
+def _find_recent_post(user_id, token, text):
+    """publish応答喪失時の照合。直近10分の最新投稿が同じ本文で始まるならそのIDを返す。
+    タイムアウトでもサーバー側では公開済みのことがあり、リトライ（30秒→2分→5分）が
+    そのまま同文の二重投稿になるのを防ぐ。"""
+    try:
+        url = f"{THREADS_API}/{user_id}/threads?" + urllib.parse.urlencode({
+            "fields": "id,text,timestamp", "limit": 1, "access_token": token})
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            items = json.loads(resp.read()).get("data", [])
+        if not items:
+            return None
+        it = items[0]
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat((it.get("timestamp") or "").replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - dt).total_seconds() > 600:
+                return None
+        except Exception:
+            pass
+        head = (text or "").strip()[:60]
+        if head and (it.get("text") or "").strip()[:60] == head:
+            return it.get("id")
+    except Exception as e:
+        print(f"[publish] 直近投稿の照合に失敗: {e}")
+    return None
+
+
 def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     """コンテナ作成 → 待機 → 公開。post_id を返す。"""
     # 500字上限の安全キャップ（どんな生成でも長さ起因で投稿失敗しないように）
@@ -344,6 +371,15 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         raise RuntimeError(f"公開失敗 HTTP {e.code}: {body[:200]}")
+    except Exception as e:
+        # タイムアウト・応答喪失＝サーバー側では公開済みの可能性。直近投稿と照合して
+        # 一致すれば成功扱いにし、外側のリトライによる同文の二重投稿を防ぐ。
+        if not reply_to_id:  # ツリー2部目以降は/me/threadsに出ないため照合不可
+            pid = _find_recent_post(user_id, token, text)
+            if pid:
+                print(f"[publish] 応答喪失だが直近投稿と一致 → 成功扱い post_id={pid}")
+                return pid
+        raise RuntimeError(f"公開失敗（応答喪失・直近投稿にも見つからず）: {type(e).__name__}: {e}")
 
 
 # Meta(Threads)側の一時障害（HTTP 5xx / 429 / is_transient）は数分続くことがある。

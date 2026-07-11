@@ -272,6 +272,32 @@ def supabase_patch(path, data, params):
         return resp.status
 
 
+def _find_recent_post(user_id, token, text):
+    """publish応答喪失時の照合。直近10分の最新投稿が同じ本文で始まるならそのIDを返す。
+    タイムアウトでもサーバー側では公開済みのことがあり、盲目的な再試行は同文の二重投稿になる。"""
+    try:
+        url = f"{THREADS_API}/{user_id}/threads?" + urllib.parse.urlencode({
+            "fields": "id,text,timestamp", "limit": 1, "access_token": token})
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            items = json.loads(resp.read()).get("data", [])
+        if not items:
+            return None
+        it = items[0]
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat((it.get("timestamp") or "").replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - dt).total_seconds() > 600:
+                return None
+        except Exception:
+            pass
+        head = (text or "").strip()[:60]
+        if head and (it.get("text") or "").strip()[:60] == head:
+            return it.get("id")
+    except Exception as e:
+        print(f"[publish] 直近投稿の照合に失敗: {e}")
+    return None
+
+
 def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     create_url = f"{THREADS_API}/{user_id}/threads"
     payload = {
@@ -320,6 +346,15 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         raise RuntimeError(f"公開失敗 HTTP {e.code}: {body[:150]}")
+    except Exception as e:
+        # タイムアウト・応答喪失＝サーバー側では公開済みの可能性がある。
+        # 直近投稿を照合して一致すれば成功扱いにし、同文の二重投稿を防ぐ。
+        if not reply_to_id:  # ツリー2部目以降は/me/threadsに出ないため照合不可
+            pid = _find_recent_post(user_id, token, text)
+            if pid:
+                print(f"[publish] 応答喪失だが直近投稿と一致 → 成功扱い post_id={pid}")
+                return pid
+        raise RuntimeError(f"公開失敗（応答喪失・直近投稿にも見つからず）: {type(e).__name__}: {e}")
 
 
 THREADS_TEXT_LIMIT = 500
@@ -503,11 +538,17 @@ def main():
 
             if not SALON_FILTER and already_posted_today(salon_id, SLOT):
                 print(f"[SKIP] {salon_name}: {SLOT} は本日投稿済み（重複実行を防止）")
+                # SKIP時もリポジトリのlast_runを同期する。同期しないと、前回jobの
+                # 失敗等でlast_runが古いままの場合にheartbeatが「未投稿」と誤判定し
+                # 旧プールから二重投稿するリカバリを発火してしまう。
+                _sync_last_run(salon_name, SLOT)
                 results["ok"].append(salon_name)
                 continue
 
             used = get_used_posts(salon_id, SLOT)
             texts = pick_post(salon_name, SLOT, used)
+            # 使用済み判定はプール原文と突合するため、CTA付与・分割前の原文を控えておく
+            original_first = texts[0] if isinstance(texts, list) else texts
             texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")
             texts = _enforce_threads_limit(texts)  # 安全網：500字超は自動でツリー分割
             topic_tag = _select_topic(texts, salon_name)
@@ -518,7 +559,9 @@ def main():
             # 30分後の予備cronが「未投稿」と誤判定して同内容を再投稿するため、
             # 失敗を投稿失敗と混ぜず、明確に通知して人が判断できるようにする。
             try:
-                log_post(salon_id, SLOT, texts[0])
+                # CTA付与後の本文を記録すると get_used_posts との突合が永遠に外れ、
+                # 同じ投稿が数日内に再選択されるため、必ず加工前の原文を記録する
+                log_post(salon_id, SLOT, original_first)
             except Exception as e:
                 print(f"[log_post] 記録失敗（投稿自体は成功済み）: {e}")
                 _notify_line(
@@ -537,6 +580,18 @@ def main():
             _notify_line(f"⚠️ とうこさん 投稿エラー\n\nアカウント：{account_label}\nスロット：{SLOT}\nエラー：{str(e)[:100]}")
 
     print(f"\n完了: 成功={len(results['ok'])} 失敗={len(results['error'])} トークン切れ={len(results['token_expired'])}")
+
+    # 自アカ(bemolle/個人)が失敗していなければ healthcheck ping 許可の印を置く。
+    # クライアント1件の失敗でHC pingが欠落→deadman workerの「GH Actions障害」誤報を防ぐ。
+    own_accounts = {"bemolle_diet", "aya_kuroki_0929"}
+    failed_names = set(results["token_expired"]) | {e.split(":", 1)[0] for e in results["error"]}
+    if not (own_accounts & failed_names):
+        try:
+            with open("hc_ok", "w") as f:
+                f.write("1")
+        except Exception:
+            pass
+
     if results["token_expired"]:
         sys.exit(3)  # token expiry → workflow側で専用通知
     if results["error"]:

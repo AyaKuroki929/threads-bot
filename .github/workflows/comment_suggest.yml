@@ -48,11 +48,22 @@ jobs:
       - name: 自動いいね（ベモーレ・個人）
         continue-on-error: true
         run: |
+          FAIL=""
           if [ -n "$THREADS_SESSION" ]; then
-            python3 like_auto.py bemolle || echo "bemolle like 失敗"
+            python3 like_auto.py bemolle || FAIL="bemolle"
           fi
           if [ -n "$THREADS_SESSION_PERSONAL" ]; then
-            python3 like_auto.py personal || echo "personal like 失敗"
+            python3 like_auto.py personal || FAIL="$FAIL personal"
+          fi
+          # 起動即クラッシュ(import/構文/依存破損)だと like_auto 内蔵のLINE警告に到達せず
+          # 完全無音で何週間も止まるため、非0終了はここで通知する
+          #（like_auto が送信済みの場合は .line_notified で重複を抑制）
+          if [ -n "$FAIL" ] && [ ! -f .line_notified ]; then
+            echo "::warning::like_auto 失敗: $FAIL"
+            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 自動いいねが異常終了しました（$FAIL）。起動即クラッシュの可能性があります。Actionsのログを確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
           fi
 
       - name: Commit state
