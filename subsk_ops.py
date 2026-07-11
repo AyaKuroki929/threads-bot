@@ -323,29 +323,14 @@ def cmd_create():
         body={"values": [[f"定期購入　{nxt_name}"]]}
     ).execute()
 
-    # 4. 全行を読み取り、顧客行の数量列（C〜金額列の手前）をクリア
-    #    ※クリア範囲は金額列の位置から動的に決定（商品列の追加・削除に追従）
-    rows = _read_sheet(svc, nxt_name)
-    amt_idx = _amount_col_idx(rows)
-    last_qty_col = _col_letter(amt_idx - 1)  # 金額列の1つ左まで
-    clear_ranges = []
-    for i, row in enumerate(rows, 1):
-        if len(row) <= COL_NAME:
-            continue
-        name = row[COL_NAME]
-        if not name or name in ("合計", "(10日発送)", "(20日発送)"):
-            continue
-        if name in ("", "Ruby Fit", "Re Fresh") or i <= 3:
-            continue
-        clear_ranges.append(f"'{nxt_name}'!C{i}:{last_qty_col}{i}")
-
-    for r in clear_ranges:
-        svc.spreadsheets().values().clear(spreadsheetId=SID, range=r).execute()
-    print(f"[create] 数量クリア完了（{len(clear_ranges)}行・C〜{last_qty_col}列）")
+    # 4. 数量は前月のまま引き継ぐ（2026-07-11 変更：サブスクは毎月ほぼ同一のため
+    #    クリア→全手入力をやめ、スキップ・追加など変更分だけ調整する運用に）
+    print("[create] 数量は前月から引き継ぎ（クリアなし）")
 
     # 5. LINE通知
     msg = (f"[サブスク表] {nxt_name} シートを作成しました。\n"
-           f"数量は空欄の状態です。28日の整合性チェックまでに入力をお願いします。\n"
+           f"数量は{cur_name}の内容を引き継いでいます。\n"
+           f"スキップ・追加・解約などの変更分だけ調整してください。\n"
            f"https://docs.google.com/spreadsheets/d/{SID}/edit")
     _notify(msg)
     print(msg)

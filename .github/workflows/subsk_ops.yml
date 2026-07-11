@@ -8,8 +8,10 @@ name: サブスク表 - 月次運用（シート作成・整合性チェック�
 
 on:
   schedule:
-    - cron: '0 0 25 * *'   # 25日 09:00 JST → create（本命）
-    - cron: '0 3 25 * *'   # 25日 12:00 JST → create（保険・冪等）
+    # 2026-07-11 変更: create を25日→毎月1日に前倒し（翌月シートを月初から用意し、
+    # 月中に判明したスキップ・追加をいつでも書き込めるように。数量は前月から引き継ぎ）
+    - cron: '0 0 1 * *'    # 1日 09:00 JST → create（本命・翌月シート作成）
+    - cron: '0 3 1 * *'    # 1日 12:00 JST → create（保険・冪等）
     - cron: '0 11 28 * *'  # 28日 20:00 JST → check（本命）
     - cron: '0 13 28 * *'  # 28日 22:00 JST → check（保険・通知重複は許容）
   workflow_dispatch:
@@ -49,7 +51,7 @@ jobs:
         run: |
           # スケジュール発火時は cron 式からコマンドを判定、手動時は inputs を使う
           case "${{ github.event.schedule }}" in
-            "0 0 25 * *"|"0 3 25 * *")   CMD=create ;;
+            "0 0 1 * *"|"0 3 1 * *")     CMD=create ;;
             "0 11 28 * *"|"0 13 28 * *") CMD=check ;;
             *) CMD="${{ github.event.inputs.command }}" ;;
           esac
