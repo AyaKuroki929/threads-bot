@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: AyaKuroki929/saas-posts
-          token: ${{ secrets.GH_PAT }}
+          ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
           path: .saas_posts_private
 
       - name: private投稿プールを posts_saas/ に重ねる
