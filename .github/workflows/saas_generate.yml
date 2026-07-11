@@ -58,7 +58,10 @@ jobs:
         if: always()
         run: rm -f google_service_account.json
 
+      # シート読込失敗(exit 2)でも、同一実行で生成済みのローカル定義サロン分は
+      # ディスクに書かれているため必ずコミットする（skipすると生成分が消滅する）
       - name: Commit generated posts
+        if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

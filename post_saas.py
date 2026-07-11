@@ -345,6 +345,13 @@ def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
             return json.loads(resp.read())["id"]
     except urllib.error.HTTPError as e:
         body = e.read().decode()
+        # 5xx/429はサーバー側で公開が完了しているのにエラー応答だけ返るケースがあり、
+        # このままリトライ（一時障害扱い）に回すと同文の二重投稿になるため先に照合する
+        if e.code in (429, 500, 502, 503, 504) and not reply_to_id:
+            pid = _find_recent_post(user_id, token, text)
+            if pid:
+                print(f"[publish] HTTP {e.code} だが直近投稿と一致 → 成功扱い post_id={pid}")
+                return pid
         raise RuntimeError(f"公開失敗 HTTP {e.code}: {body[:150]}")
     except Exception as e:
         # タイムアウト・応答喪失＝サーバー側では公開済みの可能性がある。

@@ -71,7 +71,9 @@ jobs:
                   "is_active": True,
               },
               {
-                  "salon_name": "aya_0929_private",
+                  # 2026-07-11 旧名 aya_0929_private から改名。旧名のまま実行すると
+                  # 同一threads_user_idに2サロンが共存し毎スロット2本投稿される
+                  "salon_name": "aya_kuroki_0929",
                   "threads_user_id": "63084943935",
                   "access_token": os.environ["THREADS_TOKEN_PERSONAL"],
                   "is_active": True,
