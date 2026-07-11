@@ -39,7 +39,10 @@ jobs:
 
       # 第三者クライアントの投稿プールは private リポ saas-posts に隔離（公開リポに顧客ファイルを置かない）。
       # 実行時にここへ取得して posts_saas/ に重ねる＝post_saas.py の読込ロジックは不変。
+      # continue-on-error 必須：private取得が失敗しても投稿ジョブは止めない。
+      # 公開リポにクライアントファイルが残っている間はそれがフォールバックになる。
       - name: クライアント投稿プールを private から取得
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: AyaKuroki929/saas-posts
@@ -47,6 +50,7 @@ jobs:
           path: .saas_posts_private
 
       - name: private投稿プールを posts_saas/ に重ねる
+        continue-on-error: true
         run: |
           mkdir -p posts_saas
           cp .saas_posts_private/posts_*.json posts_saas/ 2>/dev/null || true
