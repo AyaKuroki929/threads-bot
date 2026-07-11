@@ -21,12 +21,16 @@ JST = timezone(timedelta(hours=9))
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-POSTS_DIR = os.path.join(os.path.dirname(__file__), "posts_saas")
+# 投稿本文プールの場所。既定は同ディレクトリの posts_saas/。
+# private リポ運用時は環境変数 POSTS_DIR でチェックアウト先を指す（公開リポに顧客ファイルを置かないため）。
+POSTS_DIR = os.environ.get("POSTS_DIR") or os.path.join(os.path.dirname(__file__), "posts_saas")
 
 SLOT = sys.argv[1] if len(sys.argv) > 1 else "morning"  # morning / noon / evening
 # 特定サロンのみ投稿（テスト/デモ用）。argv[2] または環境変数 ONLY_SALON。
 # 通常運用（スケジュール）では空＝全サロン。指定時は重複チェックも飛ばして必ず投稿する。
 SALON_FILTER = (sys.argv[2] if len(sys.argv) > 2 else os.environ.get("ONLY_SALON", "")).strip()
+# 検証用：DRY_RUN=1 でプール読込（POSTS_DIR）だけ確認し、Threadsへは投稿しない。
+DRY_RUN = os.environ.get("DRY_RUN") == "1" or "--dry-run" in sys.argv
 THREADS_API = "https://graph.threads.net/v1.0"
 
 
@@ -554,6 +558,13 @@ def main():
 
             used = get_used_posts(salon_id, SLOT)
             texts = pick_post(salon_name, SLOT, used)
+            if DRY_RUN:
+                # POSTS_DIR からのプール読込が成功したことだけ確認し、投稿・記録はしない。
+                # private リポ移行の read パス検証に使う（本番環境で無投稿で確認できる）。
+                n = len(texts) if isinstance(texts, list) else 1
+                print(f"[DRY-RUN] {salon_name}: {SLOT} プール読込OK（{n}部）→ 投稿スキップ / POSTS_DIR={POSTS_DIR}")
+                results["ok"].append(salon_name)
+                continue
             # 使用済み判定はプール原文と突合するため、CTA付与・分割前の原文を控えておく
             original_first = texts[0] if isinstance(texts, list) else texts
             texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")

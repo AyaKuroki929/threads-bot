@@ -27,7 +27,8 @@ SPREADSHEET_ID = "1Af6ZnH7Ghzn1APpVrFy5nFlftNaIX5YOeSvfFjSdU-U"
 # 空文字のままなら従来どおりサロンのみ処理（スクールはスキップ）。
 SCHOOL_SPREADSHEET_ID = "1sX130Vbe0UBrCjkLuAM68UbfbLv4wVpAQmee9Od5kps"
 SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "google_service_account.json")
-POSTS_DIR = os.path.join(os.path.dirname(__file__), "posts_saas")
+# 生成物の出力先。private リポ運用時は環境変数 POSTS_DIR で切替（公開リポに顧客ファイルを置かない）。
+POSTS_DIR = os.environ.get("POSTS_DIR") or os.path.join(os.path.dirname(__file__), "posts_saas")
 GENERATE_COUNT = 15
 THRESHOLD = 5
 
