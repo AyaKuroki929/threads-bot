@@ -63,7 +63,7 @@ jobs:
         run: rm -f google_service_account.json
 
       - name: Notify LINE on failure
-        if: failure()
+        if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |

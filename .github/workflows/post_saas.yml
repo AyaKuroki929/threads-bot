@@ -73,7 +73,7 @@ jobs:
       # LINE通知済み（.line_notified が置かれる）。ここは「Python到達前のインフラ層
       # 失敗」だけを拾う保険（1障害＝複数broadcastの浪費を防ぐ）。
       - name: LINE通知（インフラ層の失敗のみ）
-        if: failure()
+        if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
         env:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
