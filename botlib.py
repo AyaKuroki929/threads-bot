@@ -94,17 +94,38 @@ def _default_token() -> str:
     return os.environ.get("ADMIN_NOTIFY_LINE_TOKEN") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 
+# とうこさんLINEチャンネルでの管理者(黒木さん)User ID。
+# broadcast禁止時のpush宛先。Secret LINE_ADMIN_USER_ID があれば優先し、
+# 無い場合のフォールバック値は SAAS_SPEC.md に記載済みの公開情報（トークン無しでは何もできないID）。
+_ADMIN_UID_FALLBACK = "Ucf261a250763ff136250262e4639e9ee"
+
+
 def line_broadcast(text: str, token: str = "", *, timeout: int = 10) -> bool:
-    """LINE broadcast（管理者向け通知）。失敗しても例外を投げず、ログを残して False。
-    token 未指定時は ADMIN_NOTIFY_LINE_TOKEN → LINE_CHANNEL_ACCESS_TOKEN の順で解決。"""
+    """管理者向けLINE通知。失敗しても例外を投げず、ログを残して False。
+    token 未指定時は ADMIN_NOTIFY_LINE_TOKEN → LINE_CHANNEL_ACCESS_TOKEN の順で解決。
+
+    ⚠️ broadcastを使うのは Claude通知Bot（友だち=管理者のみ）の時だけ。
+    とうこさんLINE等の顧客が友だちにいるチャンネルでは、broadcastすると
+    管理者アラートが顧客全員に配信されてしまうため、管理者への push に自動で切り替える
+    （2026-07-12 総点検指摘「broadcast→push化」対応）。"""
     token = token or _default_token()
     if not token:
         print(f"[line] トークン無しのため未送信: {text[:60]}", file=sys.stderr)
         return False
     try:
-        body = json.dumps({"messages": [{"type": "text", "text": text}]}).encode()
+        admin_bot = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
+        if admin_bot and token == admin_bot:
+            # Claude通知Bot: 友だちは管理者1人だけなのでbroadcastで安全
+            url = f"{LINE_API}/broadcast"
+            payload = {"messages": [{"type": "text", "text": text}]}
+        else:
+            # 顧客が友だちにいるチャンネル（とうこさんLINE等）: 管理者へ直接push
+            uid = os.environ.get("LINE_ADMIN_USER_ID", "") or _ADMIN_UID_FALLBACK
+            url = f"{LINE_API}/push"
+            payload = {"to": uid, "messages": [{"type": "text", "text": text}]}
+        body = json.dumps(payload).encode()
         req = urllib.request.Request(
-            f"{LINE_API}/broadcast",
+            url,
             data=body,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             method="POST",

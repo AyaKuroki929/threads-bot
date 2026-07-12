@@ -57,16 +57,9 @@ def send_line(text):
     if not LINE_TOKEN:
         print("[suggest] LINEトークン無し（表示のみ）:\n" + text)
         return
-    body = json.dumps({"messages": [{"type": "text", "text": text}]}).encode()
-    req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/broadcast",
-        data=body,
-        headers={"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"},
-    )
-    try:
-        urllib.request.urlopen(req)
-    except Exception as e:
-        print(f"[suggest] LINE送信失敗: {e}")
+    # 送信は共通実装へ集約（とうこさんLINEトークン時は顧客broadcastでなく管理者pushになる）
+    from botlib import line_broadcast
+    line_broadcast(text, token=LINE_TOKEN)
     time.sleep(0.6)  # 順序を保つため少し待つ
 
 
