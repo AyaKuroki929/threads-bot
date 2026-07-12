@@ -30,10 +30,30 @@ SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "google_service_a
 # 生成物の出力先。private リポ運用時は環境変数 POSTS_DIR で切替（公開リポに顧客ファイルを置かない）。
 POSTS_DIR = os.environ.get("POSTS_DIR") or os.path.join(os.path.dirname(__file__), "posts_saas")
 GENERATE_COUNT = 15
-THRESHOLD = 5
+# 週1実行で消費は7本/週。閾値5だと生成失敗が1回あるだけで翌週前に枯渇する
+# （2026-07-06 うらかたeveningのJSON失敗→7-12枯渇の反省）。1週間分＋余裕を持たせる。
+THRESHOLD = 10
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+ADMIN_LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
+
+
+def _notify_admin(text: str):
+    """管理者LINE（Claude通知Bot）へ通知。失敗しても生成処理は止めない。"""
+    if not ADMIN_LINE_TOKEN:
+        return
+    try:
+        req = urllib.request.Request(
+            "https://api.line.me/v2/bot/message/broadcast",
+            data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+            headers={"Authorization": f"Bearer {ADMIN_LINE_TOKEN}",
+                     "Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        print(f"[saas] 管理者通知失敗（続行）: {e}")
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -927,6 +947,16 @@ JSON配列以外の文字は一切出力しないでください。"""
 
         if new_posts is None:
             print(f"[saas] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
+            # 黙って続行すると誰も気づかず翌週にプール枯渇する（2026-07-06の反省）→ 即通知
+            _notify_admin(
+                f"🚨 SaaS投稿生成 失敗\n\n"
+                f"サロン: {salon_name}\n"
+                f"スロット: {slot}\n"
+                f"エラー: {str(last_error)[:200]}\n\n"
+                f"このままだと約1週間でこのスロットが枯渇します。\n"
+                f"再実行: saas_generate.yml を salon_name={file_key} で手動実行\n"
+                f"（Claudeに「{salon_name}の{slot}生成やり直して」でもOK）"
+            )
             continue
 
         # 長さ検証：基準を超える投稿は保存しない（単発350字・ツリー各部400字まで）
