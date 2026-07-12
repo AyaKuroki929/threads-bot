@@ -1,0 +1,27 @@
+name: 単発リマインダー（用が済んだ行は消す）
+
+# 特定日に1回だけLINEするリマインダー置き場。
+# 追加方法: scheduleにcronを1行足し、下のstepに日付分岐を1つ足す。
+# 発火後は該当cron行とstepを削除する（残すと毎年同じ日に鳴る）。
+on:
+  schedule:
+    - cron: '0 0 1 8 *'   # 2026-08-01 09:00 JST: ElevenLabs解約判断
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: ElevenLabs解約判断リマインド（2026-08-01）
+        if: github.event.schedule == '0 0 1 8 *' || github.event_name == 'workflow_dispatch'
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          # 2026年のみ有効（来年鳴らないようガード）
+          [ "$(date -u +%Y)" = "2026" ] || exit 0
+          TEXT="⏰ リマインド：ElevenLabs Starterの次回課金が8/8です。\n解約するか継続するか、今週中に判断を。\n（声クローン「彩の声」を使う予定が当面なければ解約が無難です）\n\n判断したらClaudeに伝えてください。記憶ノートに記録します。"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
