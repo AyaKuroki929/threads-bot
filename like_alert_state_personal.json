@@ -1,8 +1,8 @@
 {
   "login_unknown": "2026-07-07T12:17:22.716073",
-  "login_unknown_streak": 1,
+  "login_unknown_streak": 0,
   "discard_count": 1,
   "silent_discard": "2026-07-07T14:09:28.402385",
-  "warmup_runs_left": 2,
-  "last_session_ts": "2026-07-12T03:13:02.520236"
+  "warmup_runs_left": 1,
+  "last_session_ts": "2026-07-12T12:18:31.026971"
 }
