@@ -19,6 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 送信記録(state)はprivateリポ保管（顧客LINE userIdを公開リポに置かないため・2026-07-12移設）。
+      # continue-on-error にしない：stateが読めないまま走ると送信済み記録が見えず
+      # 顧客に二重送信してしまうため、取得失敗はジョブごと失敗させる（失敗LINEが飛ぶ）。
+      - name: リマインド送信記録(state)を private から取得
+        uses: actions/checkout@v4
+        with:
+          repository: AyaKuroki929/saas-posts
+          ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
+          path: .saas_posts_private
+
+      - name: stateを配置（無ければ二重送信防止のため失敗させる）
+        run: |
+          cp .saas_posts_private/oauth_reminder_state.json ./oauth_reminder_state.json
+          echo "state OK: $(wc -c < oauth_reminder_state.json) bytes"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -44,10 +59,13 @@ jobs:
         if: always()
         run: rm -f google_service_account.json
 
-      - name: Commit reminder state
+      # stateの保存先はprivateリポ（saas-posts）。公開リポには一切コミットしない
+      - name: Commit reminder state (private repo)
         run: |
+          cd .saas_posts_private
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp ../oauth_reminder_state.json .
           git add oauth_reminder_state.json
           if git diff --cached --quiet; then
             echo "No state changes"

@@ -3,7 +3,7 @@
 - 1回目：step_sent_at から24時間以上経過してもOAuth未完了のクライアントに自動送信
          → oauth_reminded_at（Supabase）に記録して二重送信を防止
 - 2回目：1回目から72時間（3日）経過してもなおOAuth未完了なら、もう1回だけ送信
-         → oauth_reminder_state.json（リポジトリにコミット）に記録して二重送信を防止
+         → oauth_reminder_state.json（privateリポ saas-posts に保管・workflowが往復コピー）に記録して二重送信を防止
 - 彩さん（管理者）にも送信状況を通知
 """
 import json
