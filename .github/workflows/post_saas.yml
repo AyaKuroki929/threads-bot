@@ -83,6 +83,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ONLY_SALON: ${{ github.event.inputs.only_salon }}
           DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
@@ -100,6 +101,7 @@ jobs:
         if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
         env:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           SLOT="${{ steps.slot.outputs.slot }}"

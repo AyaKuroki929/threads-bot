@@ -107,6 +107,32 @@ def _safe_name(salon_name):
     return re.sub(r'[^\w\-]', '_', salon_name)
 
 
+# 自己修復ディスパッチの重複防止（同一実行内で同じサロンに2回キックしない）
+_GENERATE_DISPATCHED = set()
+
+
+def _trigger_generate(salon_name):
+    """在庫僅少時に生成ワークフロー(saas_generate)を自動起動する（自己修復）。
+    成功=True。GH_PAT未設定や失敗時はFalse（呼び元でフォールバック判断）。"""
+    pat = os.environ.get("GH_PAT", "")
+    if not pat:
+        return False
+    try:
+        payload = json.dumps({"ref": "main", "inputs": {"salon_name": salon_name}}).encode()
+        req = urllib.request.Request(
+            "https://api.github.com/repos/AyaKuroki929/threads-bot/actions/workflows/saas_generate.yml/dispatches",
+            data=payload, method="POST",
+            headers={"Authorization": f"Bearer {pat}",
+                     "Accept": "application/vnd.github+json",
+                     "Content-Type": "application/json",
+                     "X-GitHub-Api-Version": "2022-11-28"})
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as e:
+        print(f"[pool] 生成workflow自動キック失敗 ({salon_name}): {e}", file=sys.stderr)
+        return False
+
+
 def pick_post(salon_name, slot, used_texts):
     posts_file = os.path.join(POSTS_DIR, f"posts_{_safe_name(salon_name)}.json")
     if not os.path.exists(posts_file):
@@ -130,11 +156,21 @@ def pick_post(salon_name, slot, used_texts):
         return p if isinstance(p, str) else p[0]
 
     unused = [p for p in candidates if _key(p) not in used_texts]
+
+    # 自己修復：未使用が残りわずかなら、枯渇する前に生成ワークフローを自動起動する。
+    # （2026-07-12 うらかた枯渇の再発防止。人の対応を待たずに自動補充する）
+    if len(unused) <= 2 and salon_name not in _GENERATE_DISPATCHED:
+        _GENERATE_DISPATCHED.add(salon_name)
+        if _trigger_generate(salon_name):
+            print(f"[pool] {salon_name} {slot}: 未使用{len(unused)}本 → 生成workflowを自動起動（自己修復）")
+        elif not unused:
+            # 自動補充もできない時だけ人を呼ぶ（LINEは要アクション時のみの方針）
+            _notify_line(f"⚠️ {salon_name} の {slot} 投稿プールが枯渇し、過去投稿を再利用しています。\n自動補充の起動にも失敗したため、saas_generate を手動実行してください。")
+
     if not unused:
         # プール使い切り→過去投稿の再利用（同一文の再投稿はMetaのスパム判定リスク）。
-        # 黙って再利用せず管理者に知らせて補充を促す。
-        print(f"[pool] {salon_name} {slot}: 未使用プール枯渇 → 過去投稿を再利用（要補充）")
-        _notify_line(f"⚠️ {salon_name} の {slot} 投稿プールが枯渇し、過去投稿を再利用しています。\n生成ワークフロー(saas_generate)の状態を確認してください。")
+        # 自動補充を起動済みなので、次のスロットからは新ストックが使われる。
+        print(f"[pool] {salon_name} {slot}: 未使用プール枯渇 → 今回のみ過去投稿を再利用")
         unused = candidates
 
     chosen = random.choice(unused)

@@ -791,7 +791,8 @@ def generate_for_salon(salon: dict):
     Path(POSTS_DIR).mkdir(exist_ok=True)
     posts_path = os.path.join(POSTS_DIR, f"posts_{safe_name}.json")
 
-    if os.path.exists(posts_path):
+    file_existed = os.path.exists(posts_path)
+    if file_existed:
         posts = json.load(open(posts_path, encoding="utf-8"))
         for slot in ["morning", "noon", "evening"]:
             posts.setdefault(slot, [])
@@ -993,6 +994,14 @@ JSON配列以外の文字は一切出力しないでください。"""
         with open(posts_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=2)
         print(f"[saas] {posts_path} を更新しました")
+        # 完了LINEは「新規クライアントの初回生成」のときだけ（オンボーディングの節目）。
+        # 既存サロンの補充では送らない＝LINE配信数の節約（彩さんの方針 2026-07-12）。
+        if not file_existed:
+            _notify_admin(
+                f"✅ 投稿生成完了！\n\n"
+                f"Threads ID：@{file_key}\n\n"
+                f"本日から自動配信が開始されます。"
+            )
 
     return generated_any
 

@@ -131,17 +131,6 @@ jobs:
           echo "Push failed after 5 attempts"
           exit 1
 
-      - name: Notify LINE on completion
-        if: success() && github.event.inputs.salon_name != ''
-        env:
-          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-        run: |
-          TEXT="✅ 投稿生成完了！\n\nThreads ID：@${{ github.event.inputs.salon_name }}\n\n本日から自動配信が開始されます。"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
-            -H "Authorization: Bearer $LINE_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
-
       - name: Notify LINE on failure
         if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
         env:
