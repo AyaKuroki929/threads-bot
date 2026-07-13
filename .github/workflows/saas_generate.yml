@@ -33,6 +33,23 @@ jobs:
           ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
           path: .saas_posts_private
 
+      # ⭐ private の既存投稿を生成の入力に取り込む（これが無いと全クライアントが
+      #    「ファイル無し＝初回」と誤認され、毎週全員分を再生成→誤通知→プール上書きになる。2026-07-13の事故）
+      - name: private投稿を生成入力へ取り込み
+        run: |
+          mkdir -p posts_saas
+          if [ -d .saas_posts_private ]; then
+            n=0
+            for f in .saas_posts_private/posts_*.json; do
+              [ -e "$f" ] || continue
+              cp "$f" posts_saas/ && n=$((n+1))
+            done
+            echo "private投稿 $n 件を posts_saas/ に取り込み"
+          else
+            echo "::error::private投稿リポの取得に失敗。生成すると全クライアントを初回扱いで再生成してしまうため中断する"
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
