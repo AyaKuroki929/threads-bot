@@ -738,12 +738,11 @@ def school_to_rules(school: dict) -> str:
     return rules
 
 
-def _get_supabase_used_count(salon_name: str, slot: str) -> int:
-    """Supabaseのpost_logsから実際の使用済み投稿数を取得する。"""
+def _get_used_texts(salon_name: str, slot: str) -> set:
+    """Supabaseのpost_logsから、実際に投稿済みの本文集合を取得する。"""
     if not SUPABASE_URL or not SUPABASE_KEY:
-        return 0
+        return set()
     try:
-        # サロンIDを取得
         url = (f"{SUPABASE_URL}/rest/v1/salons"
                f"?salon_name=eq.{urllib.parse.quote(salon_name)}&select=id&limit=1")
         req = urllib.request.Request(url, headers={
@@ -753,27 +752,19 @@ def _get_supabase_used_count(salon_name: str, slot: str) -> int:
         with urllib.request.urlopen(req, timeout=10) as r:
             rows = json.loads(r.read())
         if not rows:
-            return 0
+            return set()
         salon_id = rows[0]["id"]
-        # 使用済み投稿数をContent-Rangeヘッダーで取得
         url = (f"{SUPABASE_URL}/rest/v1/post_logs"
-               f"?salon_id=eq.{salon_id}&slot=eq.{slot}&select=id")
+               f"?salon_id=eq.{salon_id}&slot=eq.{slot}&select=post_content&limit=2000")
         req = urllib.request.Request(url, headers={
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Prefer": "count=exact",
-            "Range-Unit": "items",
-            "Range": "0-0",
         })
-        with urllib.request.urlopen(req, timeout=10) as r:
-            cr = r.headers.get("Content-Range", "")
-            # "0-0/15" or "*/15" format
-            if "/" in cr:
-                return int(cr.split("/")[1])
-        return 0
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return {x.get("post_content") or "" for x in json.loads(r.read())}
     except Exception as e:
-        print(f"[saas] Supabase使用数取得エラー ({salon_name}/{slot}): {e}")
-        return 0
+        print(f"[saas] Supabase使用済み取得エラー ({salon_name}/{slot}): {e}")
+        return set()
 
 
 def _is_deactivated(salon_name: str) -> bool:
@@ -796,9 +787,12 @@ def _is_deactivated(salon_name: str) -> bool:
 
 
 def _remaining(posts, salon_name, slot):
-    total = len(posts.get(slot, []))
-    used_count = _get_supabase_used_count(salon_name, slot)
-    return total - used_count
+    """本当に未使用の本数（＝ファイル内の投稿のうち、まだ投稿されていないもの）。
+    旧「総数−投稿回数」方式は、ファイルを作り直したサロンで永久にマイナスになる欠陥があった（2026-07-13修正）。"""
+    used = _get_used_texts(salon_name, slot)
+    def _key(p):
+        return p if isinstance(p, str) else (p[0] if p else "")
+    return len([p for p in posts.get(slot, []) if _key(p) not in used])
 
 
 def generate_for_salon(salon: dict):
