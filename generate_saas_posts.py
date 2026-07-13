@@ -776,6 +776,25 @@ def _get_supabase_used_count(salon_name: str, slot: str) -> int:
         return 0
 
 
+def _is_deactivated(salon_name: str) -> bool:
+    """Supabaseのsalonsで is_active=false（停止中）のアカウントか。
+    停止中は投稿されないため生成も不要（テスト垢の誤生成・誤通知防止 2026-07-13）。"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        url = (f"{SUPABASE_URL}/rest/v1/salons"
+               f"?salon_name=eq.{urllib.parse.quote(salon_name)}&select=is_active&limit=1")
+        req = urllib.request.Request(url, headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rows = json.loads(r.read())
+        return bool(rows) and rows[0].get("is_active") is False
+    except Exception:
+        return False
+
+
 def _remaining(posts, salon_name, slot):
     total = len(posts.get(slot, []))
     used_count = _get_supabase_used_count(salon_name, slot)
@@ -787,6 +806,10 @@ def generate_for_salon(salon: dict):
     threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
     file_key = threads_id if threads_id else salon_name
     safe_name = re.sub(r'[^\w\-]', '_', file_key)
+
+    if _is_deactivated(file_key):
+        print(f"[saas] {file_key}: 停止中(is_active=false) → 生成スキップ")
+        return False
 
     Path(POSTS_DIR).mkdir(exist_ok=True)
     posts_path = os.path.join(POSTS_DIR, f"posts_{safe_name}.json")
