@@ -2,8 +2,8 @@
   "login_unknown": "2026-07-07T12:15:17.584819",
   "session_dead": "2026-07-07T12:34:25.429594",
   "login_unknown_streak": 0,
-  "last_session_ts": "2026-07-13T12:14:05.242863",
-  "discard_count": 1,
-  "silent_discard": "2026-07-07T22:15:57.010056",
+  "last_session_ts": "2026-07-14T03:15:07.703455",
+  "discard_count": 2,
+  "silent_discard": "2026-07-14T03:15:47.279752",
   "warmup_runs_left": 0
 }
