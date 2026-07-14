@@ -1,92 +1,26 @@
-name: Threads Auto Like (ベモーレ・個人)
+name: Threads Auto Like (廃止・停止中)
 
-# 2026-07-02: コメント提案機能を廃止し、いいね自動化のみに機能を絞った。
-# 旧名: bemolle Comment Suggest（コメント候補をLINE送信）
-# ワークフローファイル名 (comment_suggest.yml) は cron-job.org の発火URLに使われているため変更しない。
+# ⛔ 2026-07-14 廃止：Threadsの自動いいねがMetaのアクション制限（シャドウ制限）を
+#    繰り返し受けるため撤去。Sol(GPT)にも相談し「住宅IPで延命せず公式APIの投稿に絞る」
+#    のが最善と結論（公式Threads APIに「いいね実行」エンドポイントは存在しない）。
+#    集客の本命は投稿の質。いいねはアカウント資産を毀損しやすく実利も薄いため停止。
+#
+# 経緯: bemolle Comment Suggest（コメント候補LINE送信）
+#       → 2026-07-02 コメント廃止・いいねのみに
+#       → 2026-07-14 いいねも廃止（このファイル）
+#
+# 自動発火（repository_dispatch / schedule）は撤去。cron-job.org 側の
+# comment-morning/noon/evening ジョブが叩いても、workflow_dispatch のみ受けるため何も起きない。
+# 再開したくなったら repository_dispatch を戻し、下の job を復活させる。
+
 on:
-  # GitHub内蔵scheduleは遅延/スキップが多いため、cron-job.org の
-  # repository_dispatch(comment-morning/noon/evening) で毎日3回発火。
-  repository_dispatch:
-    types: [comment-morning, comment-noon, comment-evening]
-  workflow_dispatch:
-
-concurrency:
-  group: comment-suggest
-  cancel-in-progress: false
+  workflow_dispatch:   # 手動実行のみ（動作確認・一時的な再開検証用）
 
 jobs:
-  suggest:
+  noop:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # 人間らしいペーシング（開始ジッター最大5分＋いいね間隔8〜40秒×2アカ）のため拡大
-    permissions:
-      contents: write
-    env:
-      TZ: Asia/Tokyo
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-      ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-      THREADS_SESSION: ${{ secrets.THREADS_SESSION }}
-      THREADS_SESSION_PERSONAL: ${{ secrets.THREADS_SESSION_PERSONAL }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
+      - name: 停止中の告知
         run: |
-          pip install playwright anthropic -q
-          playwright install chromium --with-deps
-
-      - name: Pull latest state
-        run: |
-          git config user.email "bot@github-actions"
-          git config user.name "threads-bot"
-          git pull --rebase --autostash origin main 2>&1 || true
-
-      - name: 自動いいね（ベモーレ・個人）
-        continue-on-error: true
-        run: |
-          FAIL=""
-          if [ -n "$THREADS_SESSION" ]; then
-            python3 like_auto.py bemolle || FAIL="bemolle"
-          fi
-          if [ -n "$THREADS_SESSION_PERSONAL" ]; then
-            python3 like_auto.py personal || FAIL="$FAIL personal"
-          fi
-          # 起動即クラッシュ(import/構文/依存破損)だと like_auto 内蔵のLINE警告に到達せず
-          # 完全無音で何週間も止まるため、非0終了はここで通知する
-          #（like_auto が送信済みの場合は .line_notified で重複を抑制）
-          if [ -n "$FAIL" ] && [ ! -f .line_notified ]; then
-            echo "::warning::like_auto 失敗: $FAIL"
-            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
-              -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 自動いいねが異常終了しました（$FAIL）。起動即クラッシュの可能性があります。Actionsのログを確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
-          fi
-
-      - name: Commit state
-        run: |
-          # like_verify_queue*=反映検証キュー / like_pause*=自動休止マーカー / like_alert_state*=LINE警告の重複抑制
-          # 存在しないファイルが混ざると git add 全体が失敗するため1ファイルずつ（-A で削除も反映）
-          for f in liked_posts.json liked_posts_personal.json \
-                   comment_targets.json comment_targets_personal.json \
-                   like_verify_queue.json like_verify_queue_personal.json \
-                   like_pause.json like_pause_personal.json \
-                   like_alert_state.json like_alert_state_personal.json; do
-            git add -A -- "$f" 2>/dev/null || true
-          done
-          if git diff --staged --quiet; then
-            echo "no changes"
-          else
-            git commit -m "state: auto like $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
-            # rebase中は ours/theirs が反転する: いいね状態の巻き戻り(再いいね)を防ぐのは -X theirs
-            ok=""
-            for i in 1 2 3 4 5; do
-              git pull --rebase --autostash -X theirs origin main 2>&1 || true
-              if git push; then ok=1; break; fi
-              sleep $((RANDOM % 8 + 4))
-            done
-            if [ -z "$ok" ]; then echo "::warning::state push failed (liked_posts等が未保存・重複いいねの可能性)"; fi
-          fi
+          echo "自動いいねは 2026-07-14 に廃止されました。"
+          echo "投稿（公式Threads API）は post_saas.yml / post.yml で継続しています。"
