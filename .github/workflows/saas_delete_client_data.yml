@@ -1,0 +1,42 @@
+name: SaaS - クライアントデータ削除（削除依頼・契約終了時）
+
+# data-deletion.html で公約した削除を実行する。必ず先に dry_run:true で対象を確認してから実行すること。
+on:
+  workflow_dispatch:
+    inputs:
+      identifier:
+        description: 'salon_name または stripe_customer_id'
+        required: true
+      dry_run:
+        description: 'true=対象の確認のみ（削除しない）'
+        required: true
+        default: 'true'
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run deletion
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+            python3 saas_delete_client_data.py "${{ github.event.inputs.identifier }}"
+          else
+            python3 saas_delete_client_data.py "${{ github.event.inputs.identifier }}" --dry-run
+          fi
+
+      - name: Notify LINE on completion
+        if: success() && github.event.inputs.dry_run == 'false'
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          TEXT="🗑️ SaaSクライアントデータ削除 完了\n\n対象：${{ github.event.inputs.identifier }}\n\ndata-deletion.htmlの公約どおり、トークン・投稿記録・紐付けデータを削除しました。\nprivateリポの投稿プールファイルの削除も忘れずに。"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>サービス概要｜とうこさん（Threads自動投稿代行サービス）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif;
+    background: #faf9f7;
+    color: #333;
+    padding: 40px 16px 80px;
+    line-height: 1.8;
+  }
+  .wrap { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; font-weight: 800; color: #1a1a1a; margin-bottom: 8px; }
+  .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 40px; }
+  h2 { font-size: 1rem; font-weight: 700; color: #1a1a1a; margin: 32px 0 12px; border-left: 3px solid #c9a882; padding-left: 10px; }
+  p { color: #444; font-size: 0.9rem; margin-bottom: 10px; }
+  ul, ol { color: #444; font-size: 0.9rem; padding-left: 1.4em; margin-bottom: 10px; }
+  ul li, ol li { margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-bottom: 10px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e8e4de; vertical-align: top; }
+  th { color: #888; font-weight: 600; white-space: nowrap; width: 9em; }
+  a { color: #b0885e; }
+  .en { color: #777; font-size: 0.82rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>サービス概要</h1>
+  <p class="subtitle">株式会社紫妃彩 ／ とうこさん（Threads自動投稿代行サービス）<br>
+  <span class="en">Shikisai Inc. — "Toukosan" Threads Auto Post: a subscription SaaS that creates and publishes Threads posts on behalf of beauty salon clients.</span></p>
+
+  <h2>1. サービス内容</h2>
+  <p>「とうこさん」は、エステサロン・美容サロンのオーナー様向けの<strong>Threads投稿の自動作成・代行投稿サービス（月額制SaaS）</strong>です。</p>
+  <ul>
+    <li>お客様（サロンオーナー様）にヒアリングフォームでサロン情報・発信方針をご回答いただきます</li>
+    <li>その情報をもとに、AIがサロン専用の投稿文を作成します</li>
+    <li>お客様ご自身の同意操作（OAuth連携）を経て、お客様のThreadsアカウントに1日最大3回（朝・昼・夜）自動で投稿を公開します（回数・時間帯はサービス仕様に準じます）</li>
+  </ul>
+  <p class="en">Salon owners answer an intake form; AI drafts posts tailored to their salon; after the owner explicitly authorizes our app via Threads OAuth, posts are published to the owner's own Threads account up to three times a day.</p>
+
+  <h2>2. 提供者情報</h2>
+  <table>
+    <tr><th>提供者</th><td>株式会社紫妃彩（Shikisai Inc.）</td></tr>
+    <tr><th>代表者</th><td>黒木 彩</td></tr>
+    <tr><th>所在地</th><td>〒550-0014 大阪市西区北堀江三丁目11番7号202</td></tr>
+    <tr><th>連絡先</th><td>aya.k@shikisai.work</td></tr>
+    <tr><th>料金</th><td>月額2,750円（税込）・初期費用0円・最低利用期間3ヶ月</td></tr>
+  </table>
+
+  <h2>3. Threads APIとデータの取り扱い</h2>
+  <p>本サービスはMeta社のThreads APIを利用する<strong>技術提供者（Tech Provider）</strong>として、お客様の明示的な許可にもとづき、お客様に代わって以下の処理を行います。当社がお客様のThreadsログイン情報（パスワード等）を取得することはありません。</p>
+  <ul>
+    <li><strong>threads_basic</strong>：連携されたThreadsアカウントのユーザーID・ユーザー名を取得し、お客様と連携先アカウントを正しく識別するために使用します。また、配信状況の確認・サポート対応のため、連携アカウントの最近の投稿（ID・本文・リンク・投稿日時）を取得して管理画面に表示することがあります。</li>
+    <li><strong>threads_content_publish</strong>：お客様が提供されたサロン情報にもとづいて作成した投稿を、お客様ご本人のThreadsアカウントに自動公開するために使用します。</li>
+    <li><strong>threads_manage_replies</strong>：当サービスが公開した親投稿に対し、同じ連携アカウントから補足文を返信として公開し、複数投稿からなるスレッドを作成するためにのみ使用します。第三者ユーザーの返信内容の収集・分析には使用しません。</li>
+  </ul>
+  <p>当社が保存するMeta由来データは、ThreadsユーザーID・ユーザー名・アクセストークン・当サービスの公開処理で返される投稿IDおよび投稿本文の記録で、正しいアカウントへの公開、公開結果の確認、重複投稿の防止、障害対応のためにのみ処理します。</p>
+  <p>これらのデータは、保存時・通信時の暗号化とアクセス制御が適用されたクラウドデータベースに保存します。<strong>Meta由来データを販売せず、広告・顧客プロファイリングその他の独立した目的で第三者に提供しません</strong>。サービス提供に必要な範囲で、契約上の守秘義務およびデータ保護義務を課したクラウド・インフラ事業者（データベース、ホスティング、決済等）に処理を委託する場合があります（詳細は<a href="/privacy.html">プライバシーポリシー</a>）。</p>
+  <p>アクセストークンは、連携解除・削除のご依頼・契約終了の際に無効化・削除します。Meta由来データは、削除のご依頼があれば速やかに、通常は契約終了後90日以内に削除します（法令上保存が必要な記録を除く）。削除手順は<a href="/data-deletion.html">データ削除のご案内</a>をご覧ください。</p>
+  <p class="en">We store the linked account's user ID/username, access token, and records of posts we published. We may also fetch the linked account's recent posts (ID, text, permalink, timestamp) to display delivery status for support purposes. Data is kept in an access-controlled cloud database with encryption at rest and in transit, never sold or shared with third parties for independent purposes, and processed by contracted infrastructure providers only as needed to run the service. Tokens are revoked/deleted upon disconnection, deletion request, or contract termination; Meta-derived data is deleted promptly upon request and otherwise within 90 days after termination. See our <a href="/data-deletion.html">Data Deletion Instructions</a>.</p>
+  <h2>4. お客様による同意と管理</h2>
+  <ul>
+    <li>連携は、お客様ご自身がMetaの公式OAuth画面で3つの権限内容を確認し「許可」を押すことでのみ開始されます</li>
+    <li>お客様はいつでもThreadsアプリの「ウェブサイトのアクセス許可」から連携を解除できます</li>
+    <li>投稿内容の修正・停止のご要望は、LINEでいつでも受け付けています</li>
+  </ul>
+
+  <h2>5. 関連ページ</h2>
+  <ul>
+    <li><a href="/privacy.html">プライバシーポリシー</a></li>
+    <li><a href="/terms.html">利用規約</a></li>
+    <li><a href="/tokusho.html">特定商取引法に基づく表記</a></li>
+    <li><a href="/data-deletion.html">データ削除のご案内（Data Deletion Instructions）</a></li>
+    <li><a href="/signup">お申し込み（料金・契約条件）</a></li>
+  </ul>
+</div>
+</body>
+</html>
