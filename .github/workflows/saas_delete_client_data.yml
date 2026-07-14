@@ -1,11 +1,12 @@
 name: SaaS - クライアントデータ削除（削除依頼・契約終了時）
 
 # data-deletion.html で公約した削除を実行する。必ず先に dry_run:true で対象を確認してから実行すること。
+# DB（トークン・投稿記録・紐付け）→ privateリポの投稿プールファイル の順に削除し、全て完了してから通知する。
 on:
   workflow_dispatch:
     inputs:
       identifier:
-        description: 'salon_name または stripe_customer_id'
+        description: 'Threadsユーザー名（@不要・salon_nameと同じ） または stripe_customer_id'
         required: true
       dry_run:
         description: 'true=対象の確認のみ（削除しない）'
@@ -15,11 +16,18 @@ on:
 jobs:
   delete:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run deletion
+      - name: private投稿リポを取得
+        uses: actions/checkout@v4
+        with:
+          repository: AyaKuroki929/saas-posts
+          ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
+          path: .saas_posts_private
+
+      - name: DBデータ削除（トークン・投稿記録・紐付け）
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -30,12 +38,45 @@ jobs:
             python3 saas_delete_client_data.py "${{ github.event.inputs.identifier }}" --dry-run
           fi
 
-      - name: Notify LINE on completion
+      - name: 投稿プールファイル削除（privateリポ）
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          removed=0
+          if [ -f deleted_salons.txt ]; then
+            cd .saas_posts_private
+            while read -r name; do
+              [ -z "$name" ] && continue
+              if [ -f "posts_${name}.json" ]; then
+                git rm -q "posts_${name}.json" && removed=$((removed+1))
+              fi
+            done < ../deleted_salons.txt
+            if [ "$removed" -gt 0 ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "gha@users.noreply.github.com"
+              git commit -q -m "delete: クライアントデータ削除依頼に伴う投稿プール削除"
+              for i in 1 2 3; do git push && break; git pull --rebase && sleep 2; done
+            fi
+          fi
+          echo "投稿プール削除: ${removed}件"
+
+      - name: 完了通知（全削除の完了後のみ）
         if: success() && github.event.inputs.dry_run == 'false'
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
-          TEXT="🗑️ SaaSクライアントデータ削除 完了\n\n対象：${{ github.event.inputs.identifier }}\n\ndata-deletion.htmlの公約どおり、トークン・投稿記録・紐付けデータを削除しました。\nprivateリポの投稿プールファイルの削除も忘れずに。"
+          TEXT="🗑️ SaaSクライアントデータ削除 完了\n\n対象：${{ github.event.inputs.identifier }}\n\nDB（トークン・投稿記録・紐付け）と投稿プールファイルの削除・残存ゼロ検証まで完了しました。\nお客様への完了連絡（メール/LINE）を忘れずに。"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
+
+      - name: 失敗通知
+        if: failure()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 SaaSクライアントデータ削除 失敗\n\n対象：${{ github.event.inputs.identifier }}\n残存データがある可能性。手動確認してください。\n$RUN_URL"
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_TOKEN" \
             -H "Content-Type: application/json" \

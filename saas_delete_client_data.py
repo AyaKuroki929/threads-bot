@@ -3,7 +3,8 @@
 data-deletion.html で公約した削除（トークン無効化・Meta由来データ・フォーム由来データ）を実行する。
 
 使い方（GitHub Actions saas_delete_client_data.yml から、または手動）:
-  python3 saas_delete_client_data.py <salon_name または stripe_customer_id> [--dry-run]
+  python3 saas_delete_client_data.py <Threadsユーザー名/salon_name または stripe_customer_id> [--dry-run]
+  （@は付いていても外す。salon_name＝Threadsユーザー名）
 
 削除対象:
   1. salons 行（access_token・threads_user_id を含む）
@@ -45,6 +46,10 @@ def main():
         print(__doc__)
         sys.exit(1)
     ident = sys.argv[1].strip()
+    # 利用者は「@ユーザー名」で依頼してくる（data-deletion.html）ため@や空白を正規化
+    while ident and ident[0] in ("@", "＠"):
+        ident = ident[1:]
+    ident = ident.strip()
     dry = "--dry-run" in sys.argv
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -61,6 +66,13 @@ def main():
     customer_ids = {s.get("stripe_customer_id") for s in salons if s.get("stripe_customer_id")}
     if ident.startswith("cus_"):
         customer_ids.add(ident)
+
+    # line_users を expected_threads_id でも探す（customer_id紐付けが無い行の取り残し防止）
+    lu_extra = _req("GET", f"line_users?expected_threads_id=eq.{urllib.parse.quote(ident.lower())}&select=line_user_id,stripe_customer_id")
+    for r in lu_extra:
+        if r.get("stripe_customer_id"):
+            customer_ids.add(r["stripe_customer_id"])
+    lu_uids = {r["line_user_id"] for r in lu_extra}
 
     print(f"[delete] 対象識別子: {ident} / salons {len(salons)}件 / customer_ids {sorted(customer_ids)}")
     if not salons and not customer_ids:
@@ -85,8 +97,28 @@ def main():
     for cid in customer_ids:
         _req("DELETE", f"line_users?stripe_customer_id=eq.{urllib.parse.quote(cid)}", prefer="return=minimal")
         print(f"  [OK] line_users 削除（{cid}）")
+    for uid in lu_uids:
+        _req("DELETE", f"line_users?line_user_id=eq.{urllib.parse.quote(uid)}", prefer="return=minimal")
+        print(f"  [OK] line_users 削除（line_user_id={uid[:8]}…）")
 
-    print("[delete] 完了。posts_saas の投稿プールファイル（privateリポ）は別途削除すること。")
+    # ===== 削除後検証：残存があれば失敗させる（公約どおり消えたことを保証） =====
+    leftovers = []
+    for col in ("salon_name", "stripe_customer_id"):
+        leftovers += _req("GET", f"salons?{col}=eq.{urllib.parse.quote(ident)}&select=id")
+    for cid in customer_ids:
+        leftovers += _req("GET", f"line_users?stripe_customer_id=eq.{urllib.parse.quote(cid)}&select=line_user_id")
+    leftovers += _req("GET", f"line_users?expected_threads_id=eq.{urllib.parse.quote(ident.lower())}&select=line_user_id")
+    if leftovers:
+        print(f"[ERROR] 削除後も {len(leftovers)} 件残存。手動確認が必要", file=sys.stderr)
+        sys.exit(1)
+    print("[verify] 削除後の再検索: 残存0件 ✅")
+
+    # workflowがprivateリポの投稿プールを削除できるよう、対象サロン名を出力
+    import re as _re
+    with open("deleted_salons.txt", "w") as f:
+        for s2 in salons:
+            f.write(_re.sub(r"[^\w\-]", "_", s2["salon_name"]) + "\n")
+    print("[delete] DB削除完了。投稿プールファイルはworkflowが続けて削除する。")
 
 
 if __name__ == "__main__":
