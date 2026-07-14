@@ -1,6 +1,6 @@
 """
 とうこさんSaaS クライアントデータ削除スクリプト（データ削除依頼・契約終了時用）
-data-deletion.html で公約した削除（トークン無効化・Meta由来データ・フォーム由来データ）を実行する。
+data-deletion.html で公約した削除（トークンの当社システムからの削除・Meta由来データ・フォーム由来データ）を実行する。
 
 使い方（GitHub Actions saas_delete_client_data.yml から、または手動）:
   python3 saas_delete_client_data.py <Threadsユーザー名/salon_name または stripe_customer_id> [--dry-run]
