@@ -54,10 +54,20 @@ jobs:
               git config user.name "github-actions[bot]"
               git config user.email "gha@users.noreply.github.com"
               git commit -q -m "delete: クライアントデータ削除依頼に伴う投稿プール削除"
-              for i in 1 2 3; do git push && break; git pull --rebase && sleep 2; done
+              pushed=0
+              for i in 1 2 3; do
+                if git push; then pushed=1; break; fi
+                git pull --rebase && sleep 2
+              done
+              if [ "$pushed" != "1" ]; then echo "::error::privateリポへのpushに3回失敗"; exit 1; fi
             fi
+            # 残存ゼロ検証：対象ファイルが残っていたら失敗
+            while read -r name; do
+              [ -z "$name" ] && continue
+              if [ -f "posts_${name}.json" ]; then echo "::error::posts_${name}.json が残存"; exit 1; fi
+            done < ../deleted_salons.txt
           fi
-          echo "投稿プール削除: ${removed}件"
+          echo "投稿プール削除: ${removed}件（残存ゼロ検証済み）"
 
       - name: 完了通知（全削除の完了後のみ）
         if: success() && github.event.inputs.dry_run == 'false'

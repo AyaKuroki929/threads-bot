@@ -7,11 +7,12 @@ data-deletion.html で公約した削除（トークン無効化・Meta由来デ
   （@は付いていても外す。salon_name＝Threadsユーザー名）
 
 削除対象:
-  1. salons 行（access_token・threads_user_id を含む）
+  1. salons 行（access_token・threads_user_id を含む。トークンは当社システムから削除し以後不使用。
+     Threads側の連携許可の取り消しはお客様自身の操作で完結＝data-deletion.htmlに手順明記）
   2. post_logs（当サービスが公開した投稿の記録）
-  3. line_users 行（expected_threads_id / instagram_url 等フォーム由来の紐付け）
+  3. line_users 行（stripe_customer_id / expected_threads_id / line_user_id の3経路で削除）
   ※ Stripe上の決済・会計記録は法令保存のため削除しない（data-deletion.htmlに明記済み）
-  ※ 投稿プールファイル（private リポ posts_saas）は別途手動で削除する
+  ※ 投稿プールファイル（private リポ）は workflow(saas_delete_client_data.yml) が続けて削除する
 """
 import json
 import os
@@ -74,8 +75,8 @@ def main():
             customer_ids.add(r["stripe_customer_id"])
     lu_uids = {r["line_user_id"] for r in lu_extra}
 
-    print(f"[delete] 対象識別子: {ident} / salons {len(salons)}件 / customer_ids {sorted(customer_ids)}")
-    if not salons and not customer_ids:
+    print(f"[delete] 対象識別子: {ident} / salons {len(salons)}件 / customer_ids {sorted(customer_ids)} / line_users(tid一致) {len(lu_uids)}件")
+    if not salons and not customer_ids and not lu_uids:
         print("[delete] 該当データなし")
         return
 
@@ -103,6 +104,8 @@ def main():
 
     # ===== 削除後検証：残存があれば失敗させる（公約どおり消えたことを保証） =====
     leftovers = []
+    for s2 in salons:
+        leftovers += _req("GET", f"post_logs?salon_id=eq.{s2['id']}&select=id&limit=1")
     for col in ("salon_name", "stripe_customer_id"):
         leftovers += _req("GET", f"salons?{col}=eq.{urllib.parse.quote(ident)}&select=id")
     for cid in customer_ids:
