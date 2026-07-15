@@ -1,0 +1,96 @@
+name: SaaS - 予約停止（契約満了日の投稿自動停止）
+
+# 契約満了が確定したクライアントを、満了日の夜に自動で is_active=false にする。
+# 対象と日付はジョブ内の TARGETS に列挙（満了日, salon_name）。日付ガードで該当日以外は何もしない。
+# GitHubスケジュールの遅延・スキップ対策で当夜22:30と翌朝4:00の2スロット（冪等なので二重実行OK）。
+on:
+  schedule:
+    - cron: '30 13 26 8 *'  # 2026-08-26 22:30 JST（LaniBEAUTY満了日の夜・21時投稿の後）
+    - cron: '0 19 26 8 *'   # 2026-08-27 04:00 JST（保険・朝7時投稿の前）
+  workflow_dispatch:
+    inputs:
+      force_salon:
+        description: '日付ガードを無視して今すぐ停止するsalon_name（通常は空）'
+        required: false
+        default: ''
+
+jobs:
+  deactivate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Deactivate expired contracts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          FORCE_SALON: ${{ github.event.inputs.force_salon }}
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.parse
+          from datetime import datetime, timezone, timedelta
+
+          # (満了日JST, salon_name) —— 契約満了で停止するクライアントをここに追加していく
+          TARGETS = [
+              ("2026-08-26", "lanibeauty.830"),
+          ]
+
+          U = os.environ["SUPABASE_URL"]; K = os.environ["SUPABASE_KEY"]
+          H = {"apikey": K, "Authorization": f"Bearer {K}", "Content-Type": "application/json"}
+          today_jst = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d")
+          yesterday_jst = (datetime.now(timezone.utc) + timedelta(hours=9) - timedelta(days=1)).strftime("%Y-%m-%d")
+          force = (os.environ.get("FORCE_SALON") or "").strip()
+
+          done = []
+          for date, salon in TARGETS:
+              # 22:30スロットは当日、翌4:00スロットは翌日に走るので前日も許容
+              if not (force == salon or date in (today_jst, yesterday_jst)):
+                  print(f"[skip] {salon}: 満了日({date})ではない (today={today_jst})")
+                  continue
+              # 現在activeか確認（冪等：既にfalseなら何もしない＝2スロット目で二重通知しない）
+              req = urllib.request.Request(
+                  f"{U}/rest/v1/salons?salon_name=eq.{urllib.parse.quote(salon)}&select=id,is_active", headers=H)
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  rows = json.loads(r.read())
+              if not rows:
+                  print(f"[skip] {salon}: salonsに無し"); continue
+              if rows[0].get("is_active") is False:
+                  print(f"[skip] {salon}: 既に停止済み"); continue
+              req = urllib.request.Request(
+                  f"{U}/rest/v1/salons?salon_name=eq.{urllib.parse.quote(salon)}",
+                  data=json.dumps({"is_active": False}).encode(),
+                  headers={**H, "Prefer": "return=minimal"}, method="PATCH")
+              with urllib.request.urlopen(req, timeout=15):
+                  pass
+              # 検証
+              req = urllib.request.Request(
+                  f"{U}/rest/v1/salons?salon_name=eq.{urllib.parse.quote(salon)}&select=is_active", headers=H)
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  assert json.loads(r.read())[0]["is_active"] is False
+              print(f"[OK] {salon}: is_active=false（検証済み）")
+              done.append(salon)
+
+          if done and os.environ.get("LINE_TOKEN"):
+              text = ("🌺 契約満了に伴う投稿停止 完了\n\n"
+                      + "\n".join(f"・{s}" for s in done)
+                      + "\n\n投稿の自動配信を停止しました（検証済み）。\n"
+                      "データは削除ポリシーに従い、契約終了後90日以内に削除します（依頼があれば7営業日以内）。")
+              req = urllib.request.Request(
+                  "https://api.line.me/v2/bot/message/broadcast",
+                  data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+                  headers={"Authorization": f"Bearer {os.environ['LINE_TOKEN']}",
+                           "Content-Type": "application/json"}, method="POST")
+              urllib.request.urlopen(req, timeout=15)
+          PY
+
+      - name: Notify LINE on failure
+        if: failure() || cancelled()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 予約停止（契約満了）ワークフロー失敗\n\n満了クライアントの投稿が止まっていない可能性。手動確認してください。\n$RUN_URL"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
