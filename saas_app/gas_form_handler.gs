@@ -289,10 +289,9 @@ function onFormSubmit(e) {
     'Threads ID：' + threadsId +
     instaLine + recoveredLine + '\n\n' +
     '【やること】\n' +
-    '① MetaでThreadsテスター追加 →\n' +
-    'https://developers.facebook.com/apps/1497479218824264/roles/roles/\n\n' +
-    '② テスター追加後にこちらをタップ ↓\n' +
-    '（タップするとSTEP1/2がクライアントのLINEに自動送信されます）\n' +
+    'こちらをタップするだけ ↓\n' +
+    '（連携のご案内がクライアントのLINEに自動送信されます。\n' +
+    'テスター追加・STEP1は不要になりました 2026-07-17 Meta正式承認済み）\n' +
     sendStepUrl;
 
   var token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
