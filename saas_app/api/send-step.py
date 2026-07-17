@@ -66,8 +66,7 @@ def mark_step_sent(line_uid: str):
 def send_step_message(line_uid: str, customer_id: str):
     connect_url = f"https://saas.shikisai.work/api/connect?customer_id={urllib.parse.quote(customer_id)}"
     text = (
-        "Threadsとの連携手順をお送りします📱\n"
-        "やることは1つだけ、リンクを開いて「許可」を押すだけです✨\n\n"
+        "Threadsとの連携手順をお送りします📱\n\n"
         "📱 手順：\n"
         "① スマホのブラウザアプリを開く\n"
         "②「シークレットタブ」または\n"
