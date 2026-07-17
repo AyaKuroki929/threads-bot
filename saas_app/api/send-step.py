@@ -78,7 +78,8 @@ def send_step_message(line_uid: str, customer_id: str):
         "⑤「✅接続が完了しました」と表示されたら完了です🎉\n\n"
         "⚠️ 必ず「シークレットモード」で開いてください！\n"
         "（別のInstagramアカウントにログイン中だと、違うアカウントが連携されてしまうためです）\n\n"
-        "🚫 InstagramアプリやThreadsアプリはログアウトしないでください！（普段の利用に影響が出ます）\n\n"
+        "🚫 InstagramアプリやThreadsアプリはログアウトしないでください！\n"
+        "（普段の利用に影響が出ます）\n\n"
         "うまくいかない場合は、画面のスクリーンショットと一緒にこのLINEへお気軽にご返信ください😊"
     )
     req = urllib.request.Request(
