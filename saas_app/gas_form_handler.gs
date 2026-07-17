@@ -288,10 +288,10 @@ function onFormSubmit(e) {
     'オーナー名：' + ownerName + '\n' +
     'Threads ID：' + threadsId +
     instaLine + recoveredLine + '\n\n' +
+    // 2026-07-17 新運用：Meta正式承認（3権限＋アクセス認証）によりテスター追加・STEP1は廃止済み
     '【やること】\n' +
     'こちらをタップするだけ ↓\n' +
-    '（連携のご案内がクライアントのLINEに自動送信されます。\n' +
-    'テスター追加・STEP1は不要になりました 2026-07-17 Meta正式承認済み）\n' +
+    '（連携のご案内がクライアントのLINEに自動送信されます）\n' +
     sendStepUrl;
 
   var token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
