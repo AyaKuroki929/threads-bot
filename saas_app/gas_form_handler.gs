@@ -290,7 +290,7 @@ function onFormSubmit(e) {
     instaLine + recoveredLine + '\n\n' +
     // 2026-07-17 新運用：Meta正式承認（3権限＋アクセス認証）によりテスター追加・STEP1は廃止済み
     '【やること】\n' +
-    'こちらをタップするだけ ↓\n' +
+    'こちらをタップ ↓\n' +
     '（連携のご案内がクライアントのLINEに自動送信されます）\n' +
     sendStepUrl;
 
