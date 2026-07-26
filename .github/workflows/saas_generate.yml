@@ -13,6 +13,11 @@ on:
         description: '特定サロンのみ生成する場合はサロン名を入力（空欄で全サロン）'
         required: false
         default: ''
+      force_promo:
+        description: '月曜宣伝枠の文章を在庫に関係なく補充する（動作確認用）'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: saas-generate
@@ -91,7 +96,7 @@ jobs:
       - name: Refill promo posts (personal Monday)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python3 generate_promo_posts.py
+        run: python3 generate_promo_posts.py ${{ inputs.force_promo && '--force' || '' }}
 
       - name: Remove service account file
         if: always()
