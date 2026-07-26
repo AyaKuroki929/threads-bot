@@ -98,7 +98,11 @@ def main():
                 max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
             )
-            raw = resp.content[0].text.strip()
+            # 先頭が thinking ブロックのことがあるため、text ブロックだけを拾う
+            raw = "".join(b.text for b in resp.content
+                          if getattr(b, "type", "") == "text").strip()
+            if not raw:
+                raise RuntimeError("応答にテキストが含まれていません")
             break
         except Exception as e:
             last_err = e
