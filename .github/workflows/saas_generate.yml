@@ -86,6 +86,13 @@ jobs:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
 
+      # 個人アカの月曜21時「とうこさん」宣伝枠の文章在庫。週1本しか使わないが、
+      # 在庫が2本を切ったら3本足す（足りていれば何もしない冪等設計）。
+      - name: Refill promo posts (personal Monday)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 generate_promo_posts.py
+
       - name: Remove service account file
         if: always()
         run: rm -f google_service_account.json
@@ -133,7 +140,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A posts_saas/
+          git add -A posts_saas/ promo_posts_personal.json
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0

@@ -19,6 +19,11 @@ on:
         required: false
         type: boolean
         default: false
+      container_only:
+        description: "画像URLをThreadsが取得できるかだけ検証（投稿しない）"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   post:
@@ -43,4 +48,5 @@ jobs:
           ARGS=(--text "$POST_TEXT")
           if [ -n "$IMAGE_URL" ]; then ARGS+=(--image-url "$IMAGE_URL"); fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS+=(--dry-run); fi
+          if [ "${{ inputs.container_only }}" = "true" ]; then ARGS+=(--container-only); fi
           python3 manual_post.py "${ARGS[@]}"

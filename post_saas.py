@@ -338,13 +338,16 @@ def _find_recent_post(user_id, token, text):
     return None
 
 
-def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None):
+def _api_post(user_id, token, text, reply_to_id=None, topic_tag=None, image_url=""):
     create_url = f"{THREADS_API}/{user_id}/threads"
     payload = {
-        "media_type": "TEXT",
+        "media_type": "IMAGE" if image_url else "TEXT",
         "text": text,
         "access_token": token,
     }
+    if image_url:
+        # Threads側がこのURLへ取りに来るため、公開URLでなければコンテナ作成が失敗する
+        payload["image_url"] = image_url
     if reply_to_id:
         payload["reply_to_id"] = reply_to_id
     if topic_tag:
@@ -451,8 +454,9 @@ def _is_transient_error(e):
         "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "HTTP 429", "is_transient"))
 
 
-def threads_post(user_id, token, texts, topic_tag=None):
-    """単発またはツリー投稿。texts: list[str]"""
+def threads_post(user_id, token, texts, topic_tag=None, image_url=""):
+    """単発またはツリー投稿。texts: list[str]
+    image_url を渡すと1部目だけ画像付きになる（2部目以降はテキスト）。"""
     reply_to_id = None
     first_post_id = None
     for i, text in enumerate(texts):
@@ -462,7 +466,8 @@ def threads_post(user_id, token, texts, topic_tag=None):
             try:
                 post_id = _api_post(user_id, token, text,
                                     reply_to_id=reply_to_id,
-                                    topic_tag=tag)
+                                    topic_tag=tag,
+                                    image_url=image_url if i == 0 else "")
                 last_exc = None
                 break
             except TokenExpiredError:
@@ -526,6 +531,51 @@ def _sync_last_run(salon_name, slot):
         print(f"[heartbeat-sync] {fn} の {slot} を更新（{salon_name}・heartbeat誤リカバリ防止）")
     except Exception as e:
         print(f"[heartbeat-sync] {fn} 更新失敗（続行）: {e}")
+
+
+# ── 月曜夜の宣伝枠（個人アカのみ） ───────────────────────────────
+# 個人アカ(@aya_kuroki_0929)の月曜21時だけ、通常の投稿に代えて「とうこさん」の
+# 宣伝を画像付きで出す。文章は毎週変える（generate_promo_posts.py が在庫を補充）。
+PROMO_SALON = "aya_kuroki_0929"
+PROMO_SLOT = "evening"
+PROMO_POOL_FILE = os.path.join(os.path.dirname(__file__), "promo_posts_personal.json")
+PROMO_USED_FILE = os.path.join(os.path.dirname(__file__), "promo_used_personal.json")
+
+
+def is_promo_time(salon_name, slot):
+    if os.environ.get("FORCE_PROMO") == "1":
+        return salon_name == PROMO_SALON and slot == PROMO_SLOT
+    if salon_name != PROMO_SALON or slot != PROMO_SLOT:
+        return False
+    return datetime.now(JST).weekday() == 0  # 0=月曜
+
+
+def _load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def pick_promo():
+    """未使用の宣伝文を1本返す。在庫が無ければ None（通常投稿にフォールバック）。"""
+    pool = _load_json(PROMO_POOL_FILE, {})
+    posts = pool.get("posts") or []
+    image_url = pool.get("image_url") or ""
+    used = set(_load_json(PROMO_USED_FILE, []))
+    for text in posts:
+        if text not in used:
+            return {"text": text, "image_url": image_url}
+    return None
+
+
+def mark_promo_used(text):
+    used = _load_json(PROMO_USED_FILE, [])
+    if text not in used:
+        used.append(text)
+    with open(PROMO_USED_FILE, "w", encoding="utf-8") as f:
+        json.dump(used, f, ensure_ascii=False, indent=2)
 
 
 def main():
@@ -593,7 +643,17 @@ def main():
                 continue
 
             used = get_used_posts(salon_id, SLOT)
-            texts = pick_post(salon_name, SLOT, used)
+            promo = None
+            if is_promo_time(salon_name, SLOT):
+                promo = pick_promo()
+                if promo:
+                    print(f"[promo] {salon_name}: 月曜夜の宣伝枠として画像付きで投稿します")
+                else:
+                    # 在庫切れ。無投稿にはせず通常投稿に落とすが、気づけるよう通知する
+                    print(f"[promo] {salon_name}: 宣伝文の在庫が空 → 通常投稿にフォールバック")
+                    _notify_line("⚠️ 月曜夜の宣伝投稿：文章の在庫が空だったため、通常の投稿を出しました。"
+                                 "promo_posts_personal.json を確認してください。")
+            texts = [promo["text"]] if promo else pick_post(salon_name, SLOT, used)
             if DRY_RUN:
                 # POSTS_DIR からのプール読込が成功したことだけ確認し、投稿・記録はしない。
                 # private リポ移行の read パス検証に使う（本番環境で無投稿で確認できる）。
@@ -603,11 +663,16 @@ def main():
                 continue
             # 使用済み判定はプール原文と突合するため、CTA付与・分割前の原文を控えておく
             original_first = texts[0] if isinstance(texts, list) else texts
-            texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")
+            # 宣伝文はCTA（LINE誘導）を本文に含んだ完成品。IG CTAもトピックも付けない
+            image_url = promo["image_url"] if promo else ""
+            if not promo:
+                texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")
             texts = _enforce_threads_limit(texts)  # 安全網：500字超は自動でツリー分割
-            topic_tag = _select_topic(texts, salon_name)
+            topic_tag = None if promo else _select_topic(texts, salon_name)
 
-            post_id = threads_post(user_id, token, texts, topic_tag=topic_tag)
+            post_id = threads_post(user_id, token, texts, topic_tag=topic_tag, image_url=image_url)
+            if promo:
+                mark_promo_used(original_first)
 
             # 投稿はここで成功済み。log_post(Supabase記録)が失敗すると
             # 30分後の予備cronが「未投稿」と誤判定して同内容を再投稿するため、

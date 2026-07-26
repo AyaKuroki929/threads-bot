@@ -43,6 +43,9 @@ def main():
     ap.add_argument("--text", required=True)
     ap.add_argument("--image-url", default="")
     ap.add_argument("--dry-run", action="store_true")
+    # コンテナ作成までで止める。Threads側が画像URLを取得できるかだけを、
+    # 実際には投稿せずに確かめるための検証モード。
+    ap.add_argument("--container-only", action="store_true")
     args = ap.parse_args()
 
     token = os.environ.get("THREADS_ACCESS_TOKEN", "")
@@ -78,6 +81,9 @@ def main():
         return 0
 
     creation_id = _post(f"{THREADS_API}/{user_id}/threads", payload)["id"]
+    if args.container_only:
+        print(f"[ok] コンテナ作成に成功しました creation_id={creation_id}（公開はしていません）")
+        return 0
     print(f"[create] creation_id={creation_id} → 30秒待機")
     time.sleep(30)
 
