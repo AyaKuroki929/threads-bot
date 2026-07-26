@@ -31,9 +31,8 @@ SCHOOL_EMAILS = {"syokokumamoto0205@gmail.com"}
 # createNaporiForm 実行後の PUBLISHED_URL と CUSTOMER_ID_ENTRY。
 NAPORI_FORM_URL          = "https://docs.google.com/forms/d/e/1FAIpQLSeRiqCth4_QqOBVbiDyWwNNMr5xo_K34jsk1jGuhATmeWtClA/viewform"
 NAPORI_CUSTOMER_ID_ENTRY = "entry.1469119100"
-# ⚠️ ナポリさんがStripe決済で使うメールアドレスを小文字で入れる（未登録のうちは空。
-#    空のままだと決済時にサロン用フォームが送られてしまうため、決済前に必ず埋める）。
-NAPORI_EMAILS = set()
+# ナポリさんがStripe決済で使うメールアドレス（小文字で比較）
+NAPORI_EMAILS = {"youandcooooo@gmail.com"}
 
 
 def build_prefilled_form(email: str, customer_id: str) -> tuple:
