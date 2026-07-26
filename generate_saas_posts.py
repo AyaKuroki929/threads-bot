@@ -26,6 +26,10 @@ SPREADSHEET_ID = "1Af6ZnH7Ghzn1APpVrFy5nFlftNaIX5YOeSvfFjSdU-U"
 # スクール版（晶子サロンアカデミー等）の回答シート。createSchoolForm 実行後の SPREADSHEET_ID をここに入れる。
 # 空文字のままなら従来どおりサロンのみ処理（スクールはスキップ）。
 SCHOOL_SPREADSHEET_ID = "1sX130Vbe0UBrCjkLuAM68UbfbLv4wVpAQmee9Od5kps"
+# ナポリ（napori_mark）版。個人事業主向けコンサル「弱者のマーケティング」専用の回答シート。
+# サロン・スクールとは別の物語/感情ドリブン生成。誘導ゴール＝Instagramフォロー。日付付きイベント告知は作らない。
+# ※このSAをシートに共有（閲覧者以上）しないと読めない：threads-saas-bot@claude-code-connect-494302.iam.gserviceaccount.com
+NAPORI_SPREADSHEET_ID = "1GdlAeBQD5iGgaLPuiOioJNHI0LAIwNV5Xt-C2K0WlJ4"
 SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "google_service_account.json")
 # 生成物の出力先。private リポ運用時は環境変数 POSTS_DIR で切替（公開リポに顧客ファイルを置かない）。
 POSTS_DIR = os.environ.get("POSTS_DIR") or os.path.join(os.path.dirname(__file__), "posts_saas")
@@ -108,6 +112,34 @@ def load_school_data():
         # 共通の識別キー（名前・Threads ID）へエイリアス
         if not rec.get("サロン名"):
             rec["サロン名"] = rec.get("スクール・アカデミー名", "")
+        if not rec.get("Threadsのアカウント名（@から始まるID）"):
+            rec["Threadsのアカウント名（@から始まるID）"] = rec.get("ThreadsのアカウントID（@から始まるID）", "")
+        out.append(rec)
+    return out
+
+
+def load_napori_data():
+    """ナポリ（弱者のマーケティング・コンサル）の回答シートを読み込み、共通キーへエイリアスして返す。"""
+    if not NAPORI_SPREADSHEET_ID:
+        return []
+    try:
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(NAPORI_SPREADSHEET_ID)
+        ws = sh.get_worksheet(0)
+        records = ws.get_all_records()
+    except Exception as e:
+        print(f"[saas] ナポリシート読み込みスキップ（共有設定/IDを確認）: {e}")
+        return []
+    out = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        rec["_type"] = "napori"
+        # 共通の識別キー（名前・Threads ID）へエイリアス
+        if not rec.get("サロン名"):
+            rec["サロン名"] = (rec.get("投稿で呼ばれたいお名前・呼び方", "")
+                             or rec.get("お名前", ""))
         if not rec.get("Threadsのアカウント名（@から始まるID）"):
             rec["Threadsのアカウント名（@から始まるID）"] = rec.get("ThreadsのアカウントID（@から始まるID）", "")
         out.append(rec)
@@ -738,6 +770,192 @@ def school_to_rules(school: dict) -> str:
     return rules
 
 
+def napori_to_rules(napori: dict) -> str:
+    """ナポリ（個人事業主向けコンサル「弱者のマーケティング」）の1行をThreads投稿生成ルールに変換する。
+    サロン・スクール版と決定的に違う点：
+      ・読者は一般美容客でもサロンオーナーでもなく「頑張っているのに集客できない個人事業主（＝弱者）」。
+      ・誘導ゴールはLINEでもご予約でもなく Instagramのフォロー。
+      ・上手い文章より本人の思い・過去・人柄がそのまま出る、感情/物語ドリブンの投稿を作る。
+      ・日付が決まったイベント告知は作らない（鮮度が命なので本人が手動投稿する運用）。"""
+
+    tone_map = {
+        "使わない（または最小限）": "絵文字は使わない。または最小限（1〜2個まで）。",
+        "適度に使う": "絵文字を適度に使う（投稿あたり2〜4個程度）。",
+        "たくさん使う": "絵文字を積極的に使う（投稿あたり5個以上OK）。",
+    }
+
+    def v(key, *alts):
+        s = str(napori.get(key, "") or "").strip()
+        if not s:
+            for a in alts:
+                s = str(napori.get(a, "") or "").strip()
+                if s:
+                    break
+        if s in ("特になし", "なし", "ない", "特に無し", "無し", "了解"):
+            return ""
+        return s
+
+    name         = str(napori.get("投稿で呼ばれたいお名前・呼び方", "") or napori.get("お名前", "") or "").strip()
+    self_pronoun = (v("投稿で自分を何と呼びますか（一人称）") or "僕")
+    business     = v("あなたの事業を一言でいうと")
+    insta_url    = v("InstagramのURL（このThreadsで一番フォローしてほしい先）")
+    other_links  = v("lit.link・その他のリンク")
+
+    # セクション1：原点（心臓部）
+    rock_bottom  = v("この仕事を始める前、一番どん底だった頃の話")
+    hardest      = v("あの頃、一番しんどかった・悔しかった瞬間")
+    turning      = v("何がきっかけで変わり始めたか（転機の出来事）")
+    struggle     = v("変わるまでに実際にやったこと・した失敗")
+    to_past_self = v("どん底だった頃の自分に、今なら何と声をかけますか")
+    why_this_job = v("なぜ今、この仕事をやっているのか（お金以外の理由）")
+
+    # セクション2：届けたい相手
+    target       = v("どんな人を助けたいか（具体的な人物像とその人の悩み）")
+    jakusha_def  = v("「弱者のマーケティング」を一言でいうと")
+    why_jakusha  = v('なぜ"強者"ではなく"弱者"にこだわるのか')
+    before_after = v("お客様にどうなってほしいか（Before → After）")
+    client_story = v("実際に変わった受講生・お客様のエピソード")
+    testi_ok     = v("受講生・お客様の成果や声を投稿に使ってもOKですか？")
+
+    # セクション3：信念・日々
+    belief       = v("仕事で絶対に譲らない信念・口ぐせ")
+    contrarian   = v("世間の常識で「それ、違うと思う」こと（逆張り・持論）")
+    recent       = v("最近ムカついたこと・心が動いたこと")
+    character    = v("365日ピンクスーツの理由／自分のキャラをどう見せたいか")
+    humanity     = v("投稿に出してOKな人間味・プライベート")
+
+    # セクション4：サービス・実績
+    offering     = v("提供しているものと、対象・価格帯")
+    teaching     = v("サービスで教える具体的な中身")
+    numbers      = v("投稿に出してよい実績数字")
+    core_service = v("「交流会×SNSで毎月の集客を仕組み化」を、あなたの言葉で説明すると")
+    price_ok     = v("価格を投稿に出してもOKですか？")
+
+    # セクション5：イベント（背景のみ・日付付き告知は作らない）
+    event_kind   = v("定期的にやっているイベント・セミナーの種類と頻度")
+    event_after  = v("イベントに来た人にどうなってほしいか")
+
+    # セクション6：誘導・ゴール
+    cta_actions  = v("投稿の最後で読者にしてほしい行動（複数選択可）")
+    cta_url      = v("CTAで誘導したいURL（Instagram / lit.link など）") or insta_url
+    cta_freq     = v("CTA（誘導）を出す頻度")
+
+    # セクション7：トーン・NG
+    catchphrase  = v("語尾・口調のクセ、使ってほしい決めゼリフ・口ぐせ")
+    emoji        = tone_map.get(v("絵文字をどうしますか？"), "絵文字は控えめに（0〜2個）。")
+    ng_words     = v("触れてほしくない過去・NGワード・言いたくないこと")
+    no_bash      = v("下げたくない相手（名指しで批判したくない手法・人）")
+
+    # 最後：自由記入
+    free_note    = v("それ以外で伝えておきたいこと（自由記入）")
+
+    nl = chr(10)
+    rules = f"""あなたはThreadsの投稿を作るプロのコピーライターです。
+以下は「{name}」さん（{business or '個人事業主向けの弱者のマーケティング・コンサル'}）の本人ヒアリング回答です。
+この人にしか書けない、思い・過去・人柄がそのまま出る投稿を作ってください。
+
+# この人は誰か
+- 投稿で呼ばれたい名前：{name}
+- 一人称：{self_pronoun}
+- 事業：{business or '（未記入）'}
+
+## 原点（投稿の軸・最重要。ここを繰り返し投稿の素材にする）
+{f"### 一番どん底だった頃{nl}{rock_bottom}" if rock_bottom else ""}
+{f"### 一番しんどかった・悔しかった瞬間（読み手が最も心を動かす部分）{nl}{hardest}" if hardest else ""}
+{f"### 変わり始めた転機{nl}{turning}" if turning else ""}
+{f"### 変わるまでにやったこと・した失敗（成功談よりここが刺さる）{nl}{struggle}" if struggle else ""}
+{f"### どん底の頃の自分にかける言葉{nl}{to_past_self}" if to_past_self else ""}
+{f"### なぜ今この仕事をやっているのか（お金以外の一番の「なぜ」＝全投稿の背骨）{nl}{why_this_job}" if why_this_job else ""}
+
+## 届けたい相手（＝"弱者"）
+{f"どんな人を助けたいか：{target}" if target else ""}
+{f"「弱者のマーケティング」とは（本人の言葉）：{jakusha_def}" if jakusha_def else ""}
+{f'なぜ"弱者"にこだわるのか：{why_jakusha}' if why_jakusha else ""}
+{f"Before → After（読者にどうなってほしいか）：{before_after}" if before_after else ""}
+{f"変わったお客様のエピソード：{client_story}" if client_story else ""}
+→ 投稿は常に、この「頑張っているのに報われない弱者」に語りかける。上から目線で教えない。同じ痛みを知っている先輩として書く。
+
+## 信念・日々思っていること（日常投稿の素材）
+{f"譲らない信念・口ぐせ：{belief}" if belief else ""}
+{f"逆張り・持論（＝攻めのフックに使う）：{contrarian}" if contrarian else ""}
+{f"最近ムカついた・心が動いたこと：{recent}" if recent else ""}
+{f"キャラの見せ方：{character}" if character else ""}
+{f"出してOKな人間味・プライベート：{humanity}" if humanity else ""}
+
+## サービス・実績
+{f"提供しているもの・対象・価格帯：{offering}" if offering else ""}
+{f"教える中身：{teaching}" if teaching else ""}
+{f"出してよい実績数字：{numbers}" if numbers else ""}
+{f"サービスの核（交流会×SNSの仕組み化）：{core_service}" if core_service else ""}
+
+## イベント（背景情報として自然ににおわせる。※日付入りの告知投稿は作らない）
+{f"やっているイベント・頻度：{event_kind}" if event_kind else ""}
+{f"来た人にどうなってほしいか：{event_after}" if event_after else ""}
+→ 「毎月交流会をやっている」のように日付なしで自然に触れるのはOK。「〇月〇日開催」など日付・締切入りの告知は絶対に作らない（それは本人が手動投稿する）。
+
+## この人固有の言葉・文体（差別化の核・必ず反映）
+{f"一人称：{self_pronoun}" if self_pronoun else ""}
+{f"語尾のクセ・決めゼリフ・口ぐせ：{catchphrase}" if catchphrase else "（未記入）"}
+→ 上の言い回しを自然に織り込み、この人にしか書けない文体にする。整った・テンプレ的な言い回しは避ける。
+
+## CTA（投稿末尾の誘導）
+- メインのゴールは Instagramのフォロー。
+{f"してほしい行動：{cta_actions}" if cta_actions else ""}
+{f"誘導先URL：{cta_url}" if cta_url else ""}
+{f"その他リンク：{other_links}" if other_links else ""}
+{f"CTAの頻度：{cta_freq}（押し売り感を出さない）" if cta_freq else "毎回は出さない。押し売り感を出さない。"}
+→ CTAは「詳しくはプロフィールのInstagramから」のように自然に。全部の投稿にリンクを貼らない。
+
+## 価格・体験談の投稿使用ルール（本人指定）
+{f"価格記載：{price_ok}" if price_ok else "価格記載ルール：未指定（不明なら金額は出さずInstagramへ誘導）"}
+{f"お客様の成果・声の使用：{testi_ok}" if testi_ok else "体験談使用ルール：未指定（不明なら匿名・一般化して使う）"}
+
+## トーン・スタイル
+{emoji}
+ハッシュタグは付けない。
+短い文の改行を多用しThreadsで読みやすくする。友達に話すような温度感で、上手く書こうとしない。
+
+## 投稿の構造（ギャップ技法・常時適用）
+- タイトル行で「え？」と思わせるズレを作る：「〇〇なのに△△」「〇〇じゃない、実は△△」
+- 本人の過去のどん底・失敗を素材にしたギャップ（手取り13万→今、など）を積極的に使う
+- 失敗→転機→今のW型ストーリーを複数本に使う
+- 逆張りの持論を冒頭フックにした投稿を定期的に入れる（世間の常識を一度否定してから本音を語る）
+
+{f"## 自由記入（本人から・投稿に活かす）{nl}{free_note}" if free_note else ""}
+
+---
+
+## 【ナポリ版・必ず守るルール】（本人の要望より優先）
+
+### 読者・立ち位置
+- 読者は「頑張っているのに集客できない個人事業主（弱者）」。一般の美容客・サロンオーナー向けに書かない。
+- 「来店」「ご予約」「施術」といったサロンの誘導は書かない（この人はサロンではなくコンサル）。
+- 上から目線で教えない。同じ痛みを通ってきた先輩として、隣で語るように書く。
+
+### 日付付き告知の禁止（重要）
+- 「〇月〇日開催」「あと3日で締切」など、日付・締切・残席が入るイベント告知は絶対に作らない。
+- イベントは「毎月やっている」程度の背景情報として、日付なしで自然に触れるだけにする。
+
+### ネガティブ表現の禁止
+{f"- 名指しで批判・否定しない相手：{no_bash}" if no_bash else "- 特定の集客手法・他のコンサルを名指しで批判・否定しない（比較で自分の価値を語るのはOK）。"}
+- 逆張り・持論で「世間の常識」を否定するのはOK。ただし否定してよいのは「やり方・思い込み」であって「人」ではない。
+- 読み手が不安になるだけで終わる表現を使わない（必ず希望・次の一歩で着地）。
+
+### 禁則（絶対遵守）
+- 「絶対」「100%」「必ず儲かる」「誰でも成功する」などの誇大・断定的な収益保証はしない。
+{f"- 本人指定のNG：{ng_words}" if ng_words else ""}
+- 政治・宗教・占いの断定は避ける。
+- ハッシュタグ禁止。
+
+### AI臭の排除
+- 形式ワード禁止：「〜することが大切です」「〜していきましょう」「ぜひ〜してみてください」「いかがでしょうか」「ポイントは3つ」「まずは〜から」「日々の積み重ね」
+- 整いすぎた見出し→3項目→まとめ構造を使わない。
+- 「自分を大切に」「無理せず」など誰でも書ける抽象フレーズは禁止。
+- 同じ語尾を3文以上繰り返さない。文の長さにバラつきをつける。
+"""
+    return rules
+
+
 def _get_used_texts(salon_name: str, slot: str) -> set:
     """Supabaseのpost_logsから、実際に投稿済みの本文集合を取得する。"""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -829,11 +1047,13 @@ def generate_for_salon(salon: dict):
         rules = b2b_to_rules(salon)
     elif stype == "school":
         rules = school_to_rules(salon)
+    elif stype == "napori":
+        rules = napori_to_rules(salon)
     else:
         rules = salon_to_rules(salon)
 
-    # 週次リサーチから更新される共通インサイト（美容寄り）を追加。B2B・カスタムは対象外なのでスキップ。
-    if stype != "b2b" and not is_custom:
+    # 週次リサーチから更新される共通インサイト（美容寄り）を追加。B2B・ナポリ（コンサル）・カスタムは対象外なのでスキップ。
+    if stype not in ("b2b", "napori") and not is_custom:
         saas_rules_path = os.path.join(os.path.dirname(__file__), "GENERATE_RULES_saas.md")
         if os.path.exists(saas_rules_path):
             with open(saas_rules_path, encoding="utf-8") as f:
@@ -1029,7 +1249,7 @@ def main():
     print("[saas] スプレッドシートを読み込み中...")
     sheet_failed = False
     try:
-        salons = load_sheet_data() + load_school_data()
+        salons = load_sheet_data() + load_school_data() + load_napori_data()
     except Exception as e:
         print(f"[saas] スプレッドシート読み込みエラー: {e}")
         print("[saas] google_service_account.json が設定されているか確認してください")
