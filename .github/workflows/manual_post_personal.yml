@@ -1,0 +1,46 @@
+name: Manual Post (personal)
+
+# 個人アカウント（@aya_kuroki_0929）に手動で1本だけ投稿する。画像付き可。
+# 定期投稿（post_personal.yml）とは別系統で、告知・宣伝など単発の投稿に使う。
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: "投稿本文（500字以内）"
+        required: true
+        type: string
+      image_url:
+        description: "画像の公開URL（空ならテキストのみ）"
+        required: false
+        type: string
+      dry_run:
+        description: "本文を確認するだけで投稿しない"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Post to Threads（公式API）
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_API_TOKEN_PERSONAL }}
+          POST_TEXT: ${{ inputs.text }}
+          IMAGE_URL: ${{ inputs.image_url }}
+        run: |
+          if [ -z "$THREADS_ACCESS_TOKEN" ]; then
+            echo "⚠️ THREADS_API_TOKEN_PERSONAL が未設定です"
+            exit 1
+          fi
+          ARGS=(--text "$POST_TEXT")
+          if [ -n "$IMAGE_URL" ]; then ARGS+=(--image-url "$IMAGE_URL"); fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS+=(--dry-run); fi
+          python3 manual_post.py "${ARGS[@]}"

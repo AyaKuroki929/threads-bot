@@ -35,3 +35,6 @@ create_onboarding_form.gs
 .vercel
 dashboard.html
 manual.html
+
+# 投稿に添付する公開素材だけは追跡する
+!assets/*.png
