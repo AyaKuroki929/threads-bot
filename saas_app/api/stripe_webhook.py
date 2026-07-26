@@ -27,14 +27,24 @@ SCHOOL_CUSTOMER_ID_ENTRY = "entry.860086005"
 # このメールアドレスで決済した顧客にはスクール用フォームを送る（小文字で比較）
 SCHOOL_EMAILS = {"syokokumamoto0205@gmail.com"}
 
+# ── ナポリ版フォーム（napori_mark・弱者のマーケティング・コンサル）──────────
+# createNaporiForm 実行後の PUBLISHED_URL と CUSTOMER_ID_ENTRY。
+NAPORI_FORM_URL          = "https://docs.google.com/forms/d/e/1FAIpQLSeRiqCth4_QqOBVbiDyWwNNMr5xo_K34jsk1jGuhATmeWtClA/viewform"
+NAPORI_CUSTOMER_ID_ENTRY = "entry.1469119100"
+# ⚠️ ナポリさんがStripe決済で使うメールアドレスを小文字で入れる（未登録のうちは空。
+#    空のままだと決済時にサロン用フォームが送られてしまうため、決済前に必ず埋める）。
+NAPORI_EMAILS = set()
 
-def build_prefilled_form(email: str, customer_id: str) -> str:
-    """メールがスクール客ならスクール用フォーム、それ以外はサロン用フォームを
-    customer_id でプリフィルして返す。スクール用URLが未設定なら常にサロン用。"""
-    is_school = bool(SCHOOL_FORM_URL) and (email or "").strip().lower() in SCHOOL_EMAILS
-    url   = SCHOOL_FORM_URL if is_school else GOOGLE_FORM_URL
-    entry = SCHOOL_CUSTOMER_ID_ENTRY if is_school else CUSTOMER_ID_ENTRY
-    return f"{url}?{entry}={urllib.parse.quote(customer_id)}"
+
+def build_prefilled_form(email: str, customer_id: str) -> tuple:
+    """メールから送るフォームを出し分けて (URL, 種別) を返す。
+    種別は "napori" / "school" / "salon"。該当URLが未設定なら常にサロン用。"""
+    e = (email or "").strip().lower()
+    if bool(NAPORI_FORM_URL) and e in NAPORI_EMAILS:
+        return f"{NAPORI_FORM_URL}?{NAPORI_CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}", "napori"
+    if bool(SCHOOL_FORM_URL) and e in SCHOOL_EMAILS:
+        return f"{SCHOOL_FORM_URL}?{SCHOOL_CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}", "school"
+    return f"{GOOGLE_FORM_URL}?{CUSTOMER_ID_ENTRY}={urllib.parse.quote(customer_id)}", "salon"
 
 
 def _log(msg: str):
@@ -262,22 +272,35 @@ def handle_checkout_session(obj: dict):
         save_line_customer_mapping(line_uid, customer_id)
 
     # クライアントにフォームURLを自動送信（customer_idをpre-fill）
-    prefilled_form = build_prefilled_form(email, customer_id)
+    prefilled_form, form_kind = build_prefilled_form(email, customer_id)
     if line_uid:
-        client_msg = (
-            f"ご決済ありがとうございます😊\n\n"
-            f"さっそく、サロン情報のアンケートフォームをお送りします📋\n"
-            f"↓ こちらにご回答ください\n\n"
-            f"{prefilled_form}\n\n"
-            f"なるべく詳しくご回答いただくのがポイントです❣️\n"
-            f"実は、ここで投稿の質が大きく変わります✨\n\n"
-            f"いただいた内容をもとに、AIがあなたのサロン“専用”の投稿を作ります。\n"
-            f"書いていただくほど「そのサロンらしさ」が伝わる投稿になり、\n"
-            f"あっさりだと、どこにでもある投稿になりがちです💦\n\n"
-            f"「システムにサロンのことをたっぷり教える」つもりで、\n"
-            f"ぜひ丁寧にご記入くださいね😊\n\n"
-            f"ご記入後、担当者より次の手順をご連絡いたします。"
-        )
+        if form_kind == "napori":
+            client_msg = (
+                f"ご登録ありがとうございます😊\n\n"
+                f"さっそく、ヒアリングシートをお送りします📋\n"
+                f"↓ こちらにご回答ください\n\n"
+                f"{prefilled_form}\n\n"
+                f"上手く書こうとしなくて大丈夫です。\n"
+                f"友達に話すように、思っていることをそのまま書いてください❣️\n\n"
+                f"正直に・具体的に・感情そのままで書いていただくほど、\n"
+                f"あなたにしか書けない、刺さる投稿になります✨\n\n"
+                f"ご記入後、担当者より次の手順をご連絡いたします。"
+            )
+        else:
+            client_msg = (
+                f"ご決済ありがとうございます😊\n\n"
+                f"さっそく、サロン情報のアンケートフォームをお送りします📋\n"
+                f"↓ こちらにご回答ください\n\n"
+                f"{prefilled_form}\n\n"
+                f"なるべく詳しくご回答いただくのがポイントです❣️\n"
+                f"実は、ここで投稿の質が大きく変わります✨\n\n"
+                f"いただいた内容をもとに、AIがあなたのサロン“専用”の投稿を作ります。\n"
+                f"書いていただくほど「そのサロンらしさ」が伝わる投稿になり、\n"
+                f"あっさりだと、どこにでもある投稿になりがちです💦\n\n"
+                f"「システムにサロンのことをたっぷり教える」つもりで、\n"
+                f"ぜひ丁寧にご記入くださいね😊\n\n"
+                f"ご記入後、担当者より次の手順をご連絡いたします。"
+            )
         line_push_client(line_uid, client_msg)
     else:
         _log("handle_checkout_session: LINE user ID not set (client used static payment link)")
@@ -368,7 +391,7 @@ def handle_invoice_paid(obj: dict):
         email = email or "不明"
         amount = obj.get("amount_paid", 0)
         _log(f"handle_invoice_paid fallback notify: name={name!r}, email={email!r}")
-        prefilled = build_prefilled_form(email, customer_id)
+        prefilled, _ = build_prefilled_form(email, customer_id)
         line_push_admin(
             f"🎉 とうこさん 新規登録！（invoice.paid）\n\n"
             f"名前: {name}\n"
