@@ -347,19 +347,27 @@ def handle_payment_failed(obj: dict):
     if not salon:
         return
     attempt = obj.get("attempt_count", 0)
+
+    # 再決済URL（この請求書専用の支払いページ）。webhookペイロードに入っているのを
+    # 通知とログに残す。以前は捨てていて、後から本人へリマインドを送りたいときに
+    # 彩さんがダッシュボードでコピーする手間が発生していた（2026-07-27改修）。
+    invoice_url = obj.get("hosted_invoice_url", "") or ""
+    _log(f"payment_failed: salon={salon['salon_name']} attempt={attempt} hosted_invoice_url={invoice_url}")
+    url_block = f"\n\n💳 再決済URL（本人にリマインドを送る時にこのまま使えます）:\n{invoice_url}" if invoice_url else ""
+
     if isinstance(attempt, int) and attempt >= 3:
         deactivate_salon(salon["id"])
         line_push_admin(
             f"🔴 とうこさん 自動停止（支払い失敗 {attempt}回）\n\n"
             f"サロン: {salon['salon_name']}\n\n"
-            f"Stripeのサブスクは継続中のため、入金されれば自動で投稿再開します。\n\n"
+            f"Stripeのサブスクは継続中のため、入金されれば自動で投稿再開します。{url_block}\n\n"
             f"https://dashboard.stripe.com"
         )
     else:
         line_push_admin(
             f"⚠️ とうこさん 支払い失敗（{attempt}回目）\n\n"
             f"サロン: {salon['salon_name']}\n\n"
-            f"Stripeが自動リトライします。3回失敗でサービス自動停止。\n\n"
+            f"Stripeが自動リトライします。3回失敗でサービス自動停止。{url_block}\n\n"
             f"https://dashboard.stripe.com"
         )
 
