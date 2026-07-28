@@ -41,6 +41,12 @@ TRANSFER_ADJUSTMENTS = {
 }
 
 
+# ── 消費税率 ──────────────────────────────────────────────────────────────
+# サプリ等の食品は軽減税率8%だが、食品でない商品は10%（例: マックスボディー）。
+# ヘッダー行の商品名（改行無視・部分一致）がここに載っていれば税込換算を10%で行う。
+TAX10_PRODUCTS = ("マックスボディー",)
+
+
 # ── Google Sheets 認証 ────────────────────────────────────────────────────
 def _sheets():
     if SA_PATH.exists():
@@ -347,7 +353,7 @@ def cmd_check():
     print(f"[check] 翌月 {nxt_name} の整合性チェック開始...")
 
     # Sheets（翌月分）の顧客別合計を取得
-    sheets_totals = _get_sheets_totals(svc, nxt_name)
+    sheets_totals, sheets_tax10 = _get_sheets_totals(svc, nxt_name)
 
     # 振込対応分をシート合計から差し引く（照合はSquare課金分だけで行う）
     adj_notes = []
@@ -359,11 +365,16 @@ def cmd_check():
     # Square 側で翌月に課金される予定の合計を取得（CANCEL/PAUSE考慮済み）
     square_totals = _get_square_expected_totals(nxt_str)
 
-    # Sheets は税抜 → 税込換算（Square方式: tax = floor(excl × 0.08)）
-    def to_tax_incl(excl):
-        return excl + int(excl * 0.08)
+    # Sheets は税抜 → 税込換算（Square方式: tax = floor(excl × rate)）
+    # 食品は8%・TAX10_PRODUCTS（マックスボディー等）は10%で計算する
+    # ※ TRANSFER_ADJUSTMENTS で差し引くのは8%商品の想定（10%商品を振込対応に
+    #   する場合は tax10 側からも引く改修が必要）
+    def to_tax_incl(name, excl):
+        excl10 = min(sheets_tax10.get(name, 0), excl)
+        excl8 = excl - excl10
+        return excl8 + int(excl8 * 0.08) + excl10 + int(excl10 * 0.10)
 
-    sheets_incl = {k: to_tax_incl(v) for k, v in sheets_totals.items()}
+    sheets_incl = {k: to_tax_incl(k, v) for k, v in sheets_totals.items()}
 
     # 比較（許容誤差 ±2円：端数処理の差）
     TOLERANCE = 2
@@ -426,15 +437,27 @@ def cmd_check():
 
 
 def _get_sheets_totals(svc, sheet_name):
-    """シートから顧客別の金額合計 {苗字さん: 合計} を返す。
+    """シートから顧客別の (金額合計, うち税率10%商品の金額) を
+    ({苗字さん: 税抜合計}, {苗字さん: 10%商品の税抜金額}) で返す。
     金額列はヘッダー名「金額」で動的に判定（商品列を追加・削除しても壊れない）。"""
     rows = _read_sheet(svc, sheet_name)
     if not rows:
-        return {}
+        return {}, {}
 
     amt_idx = _amount_col_idx(rows)
 
-    totals = {}
+    # 税率10%商品の列 {列idx: 税抜単価} をヘッダー行から検出
+    headers = rows[1] if len(rows) >= 2 else []
+    prices = rows[2] if len(rows) >= 3 else []
+    tax10_cols = {}
+    for i, h in enumerate(headers):
+        if any(p in str(h).replace("\n", "") for p in TAX10_PRODUCTS):
+            try:
+                tax10_cols[i] = int(str(prices[i]).replace(",", "").replace("¥", ""))
+            except (ValueError, TypeError, IndexError):
+                pass
+
+    totals, tax10_totals = {}, {}
     for row in rows:
         if len(row) <= amt_idx:
             continue
@@ -447,8 +470,15 @@ def _get_sheets_totals(svc, sheet_name):
             if amt > 0:
                 totals[name] = totals.get(name, 0) + amt
         except (ValueError, TypeError):
-            pass
-    return totals
+            continue
+        for i, price in tax10_cols.items():
+            try:
+                qty = int(str(row[i]).strip() or 0) if len(row) > i else 0
+            except (ValueError, TypeError):
+                qty = 0
+            if qty > 0:
+                tax10_totals[name] = tax10_totals.get(name, 0) + qty * price
+    return totals, tax10_totals
 
 
 # ── エントリポイント ──────────────────────────────────────────────────────
