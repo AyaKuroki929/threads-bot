@@ -47,6 +47,25 @@ TRANSFER_ADJUSTMENTS = {
 TAX10_PRODUCTS = ("マックスボディー",)
 
 
+# ── シート作成直後に自動で入れる数量 ─────────────────────────────────────
+# スキップは指示がない限り「その月だけ」（2026-07-29 彩さん明言）。翌月シートは
+# 前月コピーで作られるため、放置するとスキップの空欄がそのまま翌月に引き継がれる。
+# スキップをシートに反映したら、必ずここに翌月の復元エントリを追加すること。
+# ワコナル（3/6/9/12月課金）のような隔月・四半期商品の課金月もここで入れる。
+# 形式: {"作成するシートの月": [(セル, 数量, メモ), ...]}（セル位置は前月シート基準＝コピー後も同じ）
+CREATE_AUTO_QTY = {
+    "2026-09": [
+        ("G6", 1, "古谷さん プロテイン（彩担当行）8月スキップ分を再開"),
+        ("G7", 1, "古谷さん プロテイン（有加担当行）8月スキップ分を再開"),
+        ("J8", 1, "古谷さん バーン 8月スキップ分を再開"),
+        ("G14", 2, "長原さん HRプロテイン2袋 8月スキップ分を再開"),
+        ("I14", 1, "長原さん ベーシック 8月スキップ分を再開"),
+        ("K14", 1, "長原さん フォーウーマン 8月スキップ分を再開"),
+        ("M11", 1, "桑原さん ワコナル 課金月（3/6/9/12月）"),
+    ],
+}
+
+
 # ── Google Sheets 認証 ────────────────────────────────────────────────────
 def _sheets():
     if SA_PATH.exists():
@@ -333,11 +352,27 @@ def cmd_create():
     #    クリア→全手入力をやめ、スキップ・追加など変更分だけ調整する運用に）
     print("[create] 数量は前月から引き継ぎ（クリアなし）")
 
-    # 5. LINE通知
+    # 5. 1ヶ月スキップの復元・課金月商品の数量を自動投入
+    #    （スキップは指示がない限りその月だけ。前月コピーだと空欄が引き継がれるため戻す）
+    restored = []
+    entries = CREATE_AUTO_QTY.get(nxt_str, [])
+    if entries:
+        svc.spreadsheets().values().batchUpdate(
+            spreadsheetId=SID,
+            body={"valueInputOption": "USER_ENTERED",
+                  "data": [{"range": f"'{nxt_name}'!{cell}", "values": [[qty]]}
+                           for cell, qty, _ in entries]}
+        ).execute()
+        restored = [f"・{memo}（{cell}={qty}）" for cell, qty, memo in entries]
+        print("[create] 自動投入:\n" + "\n".join(restored))
+
+    # 6. LINE通知
     msg = (f"[サブスク表] {nxt_name} シートを作成しました。\n"
            f"数量は{cur_name}の内容を引き継いでいます。\n"
            f"スキップ・追加・解約などの変更分だけ調整してください。\n"
            f"https://docs.google.com/spreadsheets/d/{SID}/edit")
+    if restored:
+        msg += "\n\n以下は自動で数量を入れました（1ヶ月スキップの再開・課金月商品）：\n" + "\n".join(restored)
     _notify(msg)
     print(msg)
 
