@@ -3,17 +3,16 @@ name: サブスク表 - 月次運用（シート作成・整合性チェック�
 # 元はローカル launchd（com.bemolle.subsk-create / subsk-check）で実行していたが、
 # Mac スリープ時に動かないため 2026-07-10 にクラウド移行。
 # GitHub schedule の遅延・スキップ対策として各ジョブ2本ずつ cron を張る（コードは冪等）。
-#  - create: 既にシートがあればスキップするので2回発火しても安全
-#  - check : 通知が最大2回届く可能性があるが、確実性を優先
+# 同じ日に成功済みの schedule 実行があれば保険発火は何もしない（LINE重複防止・2026-08-01彩さん指示）。
 
 on:
   schedule:
     # 2026-07-11 変更: create を25日→毎月1日に前倒し（翌月シートを月初から用意し、
     # 月中に判明したスキップ・追加をいつでも書き込めるように。数量は前月から引き継ぎ）
     - cron: '0 0 1 * *'    # 1日 09:00 JST → create（本命・翌月シート作成）
-    - cron: '0 3 1 * *'    # 1日 12:00 JST → create（保険・冪等）
+    - cron: '0 3 1 * *'    # 1日 12:00 JST → create（保険・本命成功済みならスキップ）
     - cron: '0 11 28 * *'  # 28日 20:00 JST → check（本命）
-    - cron: '0 13 28 * *'  # 28日 22:00 JST → check（保険・通知重複は許容）
+    - cron: '0 13 28 * *'  # 28日 22:00 JST → check（保険・本命成功済みならスキップ）
   workflow_dispatch:
     inputs:
       command:
@@ -27,22 +26,45 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # 保険cron対策：同じ日に成功済みのschedule実行があれば以降を全てスキップする。
+      # 本命が失敗/未発火の時だけ保険が本番実行される（成功LINEの二重送信を防ぐ）。
+      # 手動実行（workflow_dispatch）はこの判定を通らず常に実行される。
+      - name: 同日成功済みなら保険をスキップ
+        id: dedup
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          N=$(gh api "repos/${{ github.repository }}/actions/workflows/subsk_ops.yml/runs?event=schedule&status=success&created=${TODAY}T00:00:00Z..${TODAY}T23:59:59Z" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | length")
+          echo "本日の成功済みschedule実行: $N 件"
+          if [ "$N" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "既に成功済みのためスキップします"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.dedup.outputs.skip != 'true'
 
       - name: Set up Python
+        if: steps.dedup.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
+        if: steps.dedup.outputs.skip != 'true'
         run: pip install google-api-python-client google-auth -q
 
       - name: Write Google Service Account
+        if: steps.dedup.outputs.skip != 'true'
         env:
           GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
 
       - name: Run subsk_ops
+        if: steps.dedup.outputs.skip != 'true'
         env:
           TZ: Asia/Tokyo
           SQUARE_ACCESS_TOKEN: ${{ secrets.SQUARE_ACCESS_TOKEN }}
