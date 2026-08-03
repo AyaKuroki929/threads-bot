@@ -103,8 +103,8 @@ def main() -> int:
     # ① シート自由記入欄へ追記 → 読み直し検証
     expected_id = ids[row - 1]
     cur = ws.cell(row, free_idx).value or ""
-    if a.material.strip() in cur:
-        # 再実行時の二重追記防止（途中失敗→再実行しても安全）
+    if a.material.strip() in [p.strip() for p in cur.split("\n\n")]:
+        # 再実行時の二重追記防止（段落単位の完全一致。部分一致だと別素材を既存扱いする恐れ）
         print("⏭️ シート学習: 同じ素材が既に追記済み → スキップ")
     else:
         # 書き込み直前に行のIDを読み直す（並べ替え・行挿入で別クライアントに書かない）
