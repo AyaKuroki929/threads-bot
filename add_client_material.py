@@ -56,6 +56,8 @@ def main() -> int:
     a = ap.parse_args()
 
     # 事前検証（書き込む前に全部確かめる）
+    if len(a.salon) < 4:
+        sys.exit("❌ --salon は4文字以上で指定する（短い断片は誤マッチの危険）")
     if not a.material.strip().startswith("【"):
         sys.exit("❌ --material は【日付・出典】から書き始める（例:【お客様の声（2026-08-03 ◯◯さん提供）】…）")
     for slot, text in a.post:
@@ -83,6 +85,14 @@ def main() -> int:
     safe_name = re.sub(r"[^\w\-]", "_", tid)
     print(f"対象: {ids[row-1]}（シート{row}行目 / posts_{safe_name}.json）")
 
+    # 投稿を追加する場合は、シートに書く前にプールの存在を確認する
+    # （シートだけ更新されてプールが無い、という中途半端な状態を作らない。Sol指摘#12）
+    if a.post and not a.dry_run:
+        chk = subprocess.run(["gh", "api", f"repos/{POSTS_REPO}/contents/posts_{safe_name}.json",
+                              "-q", ".name"], capture_output=True, text=True)
+        if chk.returncode != 0:
+            sys.exit(f"❌ プール posts_{safe_name}.json がリポジトリに存在しません。先にプールを作るか名前を確認")
+
     if a.dry_run:
         print(f"[DRY_RUN] シート追記予定: {a.material[:60]}…")
         for slot, text in a.post:
@@ -91,13 +101,21 @@ def main() -> int:
         return 0
 
     # ① シート自由記入欄へ追記 → 読み直し検証
+    expected_id = ids[row - 1]
     cur = ws.cell(row, free_idx).value or ""
-    new = (cur.rstrip() + "\n\n" if cur.strip() else "") + a.material.strip()
-    ws.update_cell(row, free_idx, new)
-    back = ws.cell(row, free_idx).value or ""
-    if a.material.strip() not in back:
-        sys.exit("❌ シート書き込みの読み直し検証に失敗（追記が実在しない）")
-    print(f"✅ シート学習: 追記＋読み直し検証OK（自由記入欄 {len(back)}字）")
+    if a.material.strip() in cur:
+        # 再実行時の二重追記防止（途中失敗→再実行しても安全）
+        print("⏭️ シート学習: 同じ素材が既に追記済み → スキップ")
+    else:
+        # 書き込み直前に行のIDを読み直す（並べ替え・行挿入で別クライアントに書かない）
+        if (ws.cell(row, tid_idx).value or "") != expected_id:
+            sys.exit("❌ シートの行がずれています（並べ替え？）。書き込み中止・最初からやり直してください")
+        new = (cur.rstrip() + "\n\n" if cur.strip() else "") + a.material.strip()
+        ws.update_cell(row, free_idx, new)
+        back = ws.cell(row, free_idx).value or ""
+        if a.material.strip() not in back or (ws.cell(row, tid_idx).value or "") != expected_id:
+            sys.exit("❌ シート書き込みの読み直し検証に失敗")
+        print(f"✅ シート学習: 追記＋読み直し検証OK（自由記入欄 {len(back)}字）")
 
     # ② 投稿プールへ追加 → push → リモート検証
     if a.post:
@@ -122,22 +140,28 @@ def main() -> int:
             for slot, text in a.post:
                 assert text in [x if isinstance(x, str) else x[0] for x in d2.get(slot, [])]
             subprocess.run(["git", "-C", str(repo), "add", pool.name], check=True)
-            r = subprocess.run(["git", "-C", str(repo),
-                                "-c", "user.name=Aya Kuroki",
-                                "-c", "user.email=nailsalon.flat@gmail.com",
-                                "commit", "-q", "-m",
-                                f"[sheet-ok] {safe_name}: クライアント素材を投稿化（シート学習済み）"],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
+            staged = subprocess.run(["git", "-C", str(repo), "diff", "--cached", "--quiet"]).returncode
+            if staged == 0:
                 print("⏭️ プール: 変更なし（全てスキップ済み）")
             else:
+                r = subprocess.run(["git", "-C", str(repo),
+                                    "-c", "user.name=Aya Kuroki",
+                                    "-c", "user.email=nailsalon.flat@gmail.com",
+                                    "commit", "-q", "-m",
+                                    f"[sheet-ok] {safe_name}: クライアント素材を投稿化（シート学習済み）"],
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    # 差分があるのにcommitできない＝異常。「変更なし」と誤報しない（Sol指摘#13）
+                    sys.exit(f"❌ git commit失敗（差分あり）: {r.stderr.strip()[:200]}")
                 subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", "main"], check=True)
+                # push直後に別プロセスが先へ進んでいても、自分のcommitがリモートの祖先なら成功（Sol指摘#14）
+                subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin", "main"], check=True)
+                ok = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                                     "HEAD", "origin/main"]).returncode == 0
+                if not ok:
+                    sys.exit("❌ push後のリモート検証に失敗（コミットがリモートに含まれていない）")
                 local = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                                        capture_output=True, text=True).stdout.strip()
-                remote = subprocess.run(["git", "-C", str(repo), "ls-remote", "origin", "main"],
-                                        capture_output=True, text=True).stdout.split()[0]
-                if local != remote:
-                    sys.exit("❌ push後のリモート検証に失敗")
                 print(f"✅ プール: push＋リモート反映検証OK（{local[:7]}）")
 
     print("\n🏁 完了: シート学習と投稿プールの両方が実物検証済みです")
