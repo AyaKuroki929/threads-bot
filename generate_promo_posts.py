@@ -32,10 +32,7 @@ PROMPT = f"""あなたは、Threads自動投稿サービス「とうこさん」
 - 導入時の作業＝Googleフォームにサロン情報を記入＋連携リンクを開いて許可を1回押す。以降の作業はない
 - 月2,750円（税込）・最低利用期間3ヶ月
 - 画像は付けられない。ビフォーアフターや当日の告知は本人が手動投稿する必要がある
-- 投稿者本人のThreadsは一文字も手書きしていない。直近30日の表示回数は合計32,020回・1日平均1,067回
-- 現在12アカウントで稼働。直近27日で投稿が0件だった日は0日。1日30〜36件・合計1,000件
-- 一番長く動いているアカウントは2026年5月19日から止まっていない
-- サロンのInstagramは8日で1,113人から1,149人になった
+{{facts}}
   ※この数字を使うときは「同じ時期に広告も回しているのでThreadsだけの成果ではない」と必ず本文に書く
 - 投稿者自身も、施術・片付け・発注で手一杯になり投稿が続かなかった
 
@@ -95,12 +92,28 @@ NG_NAMES = [
 # 誇大・断定表現
 NG_WORDS = ["絶対", "必ず", "100%", "確実", "保証", "いちばん安い", "一番安い",
             "最安", "手遅れ", "今すぐ始めないと", "誰でも稼げる", "儲かります"]
-# 本文に書いてよい数字（実測データ）。これ以外の3桁以上の数字が出たら不採用。
-ALLOWED_NUMS = {
-    "2750", "2,750", "3", "7", "12", "9", "30", "27", "36", "1000", "1,000",
-    "32020", "32,020", "1067", "1,067", "1113", "1,113", "1149", "1,149",
-    "2026", "5", "19", "1", "2", "8", "0", "450", "350",
-}
+# 本文に書いてよい数字。refresh_promo_facts.py が毎月更新する promo_facts.json の実測値＋
+# サービス仕様の固定値。ここに無い数字が本文にあれば不採用（捏造・古い数字の混入を防ぐ）。
+FACTS_FILE = os.path.join(BASE, "promo_facts.json")
+
+
+def _facts() -> dict:
+    try:
+        with open(FACTS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _allowed_nums() -> set:
+    f = _facts()
+    nums = set(f.get("fixed_nums") or
+               ["2750", "2,750", "3", "7", "12", "9", "1", "2", "5", "8", "0",
+                "30", "2026", "19", "450", "280", "10", "20", "1113", "1,113"])
+    for v in f.values():
+        if isinstance(v, int):
+            nums.add(str(v)); nums.add(f"{v:,}")
+    return nums
 # Instagram増加を語るときは「広告も併用しており Threads だけの成果ではない」の明記が必要。
 # 単に「広告」の語があるだけでは不可（別の文脈で広告に触れているだけのことがあるため）。
 IG_NUMS = ("1,113", "1113", "1,149", "1149")
@@ -123,8 +136,9 @@ def reject_reason(p: str):
             return f"誇大・断定表現が含まれる（{w}）"
     # 数字チェック：URL部分を除いた本文の数字を見る
     body = p.replace(LINE_URL, "")
+    allowed = _allowed_nums()
     for n in re.findall(r"[0-9][0-9,]*", body):
-        if n not in ALLOWED_NUMS:
+        if n not in allowed:
             return f"実データに無い数字（{n}）"
     if any(n in body for n in IG_NUMS) and not any(w in body for w in AD_DISCLAIMER):
         return "Instagramの数字を出しているのに広告併用の明記が無い"
@@ -160,7 +174,21 @@ def main():
         return 1
 
     existing = "\n\n---\n\n".join(posts[-6:]) if posts else "（まだありません）"
-    prompt = PROMPT.replace("{existing}", existing)
+    f = _facts()
+    if f:
+        facts_block = (
+            f"- 投稿者本人のThreadsは一文字も手書きしていない。"
+            f"直近30日の表示回数は合計{f.get('views_total', 0):,}回・1日平均{f.get('views_avg', 0):,}回\n"
+            f"- 現在{f.get('active_accounts', 0)}アカウントで稼働。"
+            f"直近{f.get('log_days', 0)}日で投稿が0件だった日は{f.get('zero_days', 0)}日。"
+            f"1日{f.get('log_min', 0)}〜{f.get('log_max', 0)}件・合計{f.get('log_total', 0):,}件\n"
+            f"- 一番長く動いているアカウントは{f.get('oldest_start', '')}から止まっていない\n"
+            f"- サロンのInstagramは7月末の1,113人から{f.get('ig_followers', 0):,}人になった"
+        )
+        print(f"[promo] 実測値を差し込みます（{f.get('updated_at')}時点）")
+    else:
+        raise RuntimeError("promo_facts.json がありません。先に refresh_promo_facts.py を実行してください")
+    prompt = PROMPT.replace("{existing}", existing).replace("{facts}", facts_block)
 
     client = anthropic.Anthropic()
     last_err = None

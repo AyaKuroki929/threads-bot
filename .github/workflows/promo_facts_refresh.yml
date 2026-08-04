@@ -1,0 +1,83 @@
+name: 宣伝文の実測値を月次更新
+
+# 宣伝投稿には「直近30日で◯回表示」「Instagramが◯人」といった実測値を本文に埋めている。
+# この数字は書いた瞬間から古くなるため、毎月1日に取り直し、古い数字が残ったままの
+# 未使用ストックを捨てて、新しい数字で作り直させる（放置すると古い数字＝嘘を配信し続ける）。
+#
+# 流れ: 実測値を再取得 → 古い数字の未使用ストックを削除 → 新しい数字で補充 → commit/push
+# 失敗したときだけ⚠️LINEが飛ぶ（成功時は静か。LINE配信枠の節約）。
+
+on:
+  schedule:
+    - cron: '0 1 1 * *'   # 毎月1日 10:00 JST
+    - cron: '0 4 1 * *'   # 保険（同日 13:00 JST。GitHubのschedule遅延・スキップ対策）
+  workflow_dispatch:
+
+concurrency:
+  group: promo-facts
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -q "anthropic<2"
+
+      # 実測値を取り直し、古い数字が入った未使用ストックを削除する
+      - name: Refresh facts and purge stale posts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+        run: python3 refresh_promo_facts.py --purge
+
+      # 削除で在庫が減った分を、新しい数字で作り直す
+      - name: Refill promo posts with fresh numbers
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 generate_promo_posts.py
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "gha@users.noreply.github.com"
+          git add promo_facts.json promo_posts_personal.json
+          if git diff --cached --quiet; then
+            echo "変更なし"; exit 0
+          fi
+          git commit -q -m "promo: 実測値を月次更新 $(TZ=Asia/Tokyo date '+%F %H:%M JST')"
+          for i in 1 2 3; do git push && break; git pull --rebase && sleep 3; done
+
+      # 失敗＝古い数字のまま配信され続ける状態。沈黙させない
+      - name: Warn on failure
+        if: failure()
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          text = ("⚠️ とうこさん宣伝文の実測値の月次更新に失敗しました。\n\n"
+                  "このままだと宣伝投稿が古い数字のまま配信されます。\n"
+                  "Claudeに「宣伝の数字を更新して」と伝えてください。\n"
+                  f"{os.environ['RUN_URL']}")
+          req = urllib.request.Request(
+              "https://api.line.me/v2/bot/message/broadcast",
+              data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+              headers={"Authorization": f"Bearer {os.environ['ADMIN_NOTIFY_LINE_TOKEN']}",
+                       "Content-Type": "application/json"},
+              method="POST")
+          with urllib.request.urlopen(req, timeout=15) as r:
+              assert r.status == 200, f"LINE通知失敗: {r.status}"
+          print("warned")
+          PY
