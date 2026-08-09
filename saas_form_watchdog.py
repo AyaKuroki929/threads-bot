@@ -19,6 +19,7 @@
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -80,9 +81,25 @@ def fetch_connected():
 
 
 def read_form_rows():
-    gc = gspread.service_account(filename="google_service_account.json")
-    ws = gc.open_by_key(SHEET_ID).get_worksheet(0)
-    return ws.get_all_records()
+    # Google Sheets APIは時々5xx（503 The service is currently unavailable等）や429を返す。
+    # リトライ無しだと一瞬の一時障害でwatchdogが落ち、誤アラーム＋その回の検知スキップになる。
+    # 一時障害は指数バックオフで最大3回リトライ。それでもダメなら例外を上げてLINE🚨（本物の障害は今まで通り気づける）。
+    TRANSIENT = {429, 500, 502, 503, 504}
+    max_attempts = 4
+    for attempt in range(1, max_attempts + 1):
+        try:
+            gc = gspread.service_account(filename="google_service_account.json")
+            ws = gc.open_by_key(SHEET_ID).get_worksheet(0)
+            return ws.get_all_records()
+        except gspread.exceptions.APIError as e:
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code in TRANSIENT and attempt < max_attempts:
+                wait = 5 * (2 ** (attempt - 1))  # 5s → 10s → 20s
+                print(f"[watchdog] Sheets API {code} 一時障害。{wait}s後にリトライ ({attempt}/{max_attempts - 1})",
+                      file=sys.stderr)
+                time.sleep(wait)
+                continue
+            raise
 
 
 def notify_admin(text):
