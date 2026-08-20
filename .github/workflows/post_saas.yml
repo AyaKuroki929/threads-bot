@@ -75,7 +75,7 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: pip install anthropic -q
+        run: pip install -q "anthropic<2"
 
       - name: Threads投稿（公式API）
         id: post
@@ -137,7 +137,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          pip install anthropic -q
+          pip install -q "anthropic<2"
           python3 generate_posts.py saas_bemolle || echo "bemolle補充失敗（処理継続）"
           python3 generate_posts.py saas_personal || echo "personal補充失敗（処理継続）"
 

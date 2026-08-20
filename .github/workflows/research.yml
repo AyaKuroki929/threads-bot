@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install playwright anthropic
+          pip install playwright "anthropic<2"
           python -m playwright install --with-deps chromium
 
       - name: Restore session

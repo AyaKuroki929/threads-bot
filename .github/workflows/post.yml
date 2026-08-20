@@ -83,7 +83,7 @@ jobs:
             exit 0
           fi
           # トピックAI選択に必要（無いと毎回フォールバックになる）
-          pip install anthropic -q
+          pip install -q "anthropic<2"
           set +e
           if [ "${{ steps.slot.outputs.dry }}" = "true" ]; then
             python3 post_api.py ${{ steps.slot.outputs.name }} --dry-run
@@ -164,7 +164,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          pip install anthropic -q
+          pip install -q "anthropic<2"
           python3 generate_posts.py bemolle
 
       - name: LINE通知（補充失敗）

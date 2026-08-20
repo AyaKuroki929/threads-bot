@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install anthropic gspread google-auth
+      - run: pip install "anthropic<2" gspread google-auth
       - name: Generate preview (no commit, log only)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
