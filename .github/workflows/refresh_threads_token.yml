@@ -31,6 +31,14 @@ jobs:
               with urllib.request.urlopen(url, timeout=30) as resp:
                   d = json.loads(resp.read())
                   expires = d.get('expires_in', 0) // 86400
+                  # 有効期間をstep出力へ（非延長の早期検知用）。失敗しても更新本体に影響させない
+                  try:
+                      go = os.environ.get('GITHUB_OUTPUT')
+                      if go:
+                          with open(go, 'a') as f:
+                              f.write(f'expires_days={expires}\n')
+                  except Exception:
+                      pass
                   print(f'[bemolle] リフレッシュ成功（有効期間 {expires}日）', file=sys.stderr)
                   print(d['access_token'])
           except Exception as e:
@@ -72,6 +80,13 @@ jobs:
               with urllib.request.urlopen(url, timeout=30) as resp:
                   d = json.loads(resp.read())
                   expires = d.get('expires_in', 0) // 86400
+                  try:
+                      go = os.environ.get('GITHUB_OUTPUT')
+                      if go:
+                          with open(go, 'a') as f:
+                              f.write(f'expires_days={expires}\n')
+                  except Exception:
+                      pass
                   print(f'[personal] リフレッシュ成功（有効期間 {expires}日）', file=sys.stderr)
                   print(d['access_token'])
           except Exception as e:
@@ -181,3 +196,23 @@ jobs:
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+
+      # 更新は成功でも「有効期間が延びていない」＝静かな失効の予兆を早期に掴む。
+      # 正常なら約60日に戻る。40日未満は非延長の疑い（Metaで実際に起きた200なのに未延長と同型）。
+      - name: 非延長の早期警告（有効期間が短ければLINE）
+        if: always()
+        run: |
+          warn=""
+          B="${{ steps.bemolle.outputs.expires_days }}"
+          P="${{ steps.personal.outputs.expires_days }}"
+          if [ -n "$B" ] && [ "$B" -lt 40 ] 2>/dev/null; then warn="${warn}❌ bemolle_diet：残り${B}日\n"; fi
+          if [ -n "$P" ] && [ "$P" -lt 40 ] 2>/dev/null; then warn="${warn}❌ aya_kuroki_0929：残り${P}日\n"; fi
+          if [ -n "$warn" ]; then
+            MSG="🚨 Threadsトークンが延長されていない可能性\n\n${warn}\n更新は成功していますが有効期間が延びていません。毎週下がるなら手動で再取得が必要です（放置すると失効して投稿・朝ストーリーが停止）。"
+            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+          else
+            echo "有効期間OK（bemolle=${B:-?}日 personal=${P:-?}日）"
+          fi
