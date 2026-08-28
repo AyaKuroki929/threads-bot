@@ -82,13 +82,43 @@ def normalize_threads_id(raw: str) -> str:
     return s.strip().lower()
 
 
+# ── シート読み込みの一時障害リトライ（2026-08-29追加）────────────────────
+# Google Sheets APIは 500/503/429 を一時的に返すことがある（2026-08-28に503で生成が停止）。
+# 1回失敗しただけで止めると、そのぶんクライアントの在庫補充が遅れ🚨も飛ぶ。
+# post_saas.py と同じ考え方で、一時障害のときだけ段階的に待って粘る。
+SHEET_RETRY_WAITS = [20, 60, 150]  # 合計4回試行（最大約4分）
+
+
+def _is_transient_sheet_error(e) -> bool:
+    s = str(e)
+    if any(c in s for c in ("[500]", "[502]", "[503]", "[504]", "[429]")):
+        return True
+    return any(w in s.lower() for w in
+               ("unavailable", "internal error", "backend error", "rate limit",
+                "quota exceeded", "timed out", "timeout", "connection reset"))
+
+
+def _sheet_with_retry(fn, label: str):
+    """シート読み込みを一時障害に強くする。恒久的なエラー（権限・ID間違い）は即座に投げる。"""
+    import time as _t
+    for i in range(len(SHEET_RETRY_WAITS) + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if i == len(SHEET_RETRY_WAITS) or not _is_transient_sheet_error(e):
+                raise
+            wait = SHEET_RETRY_WAITS[i]
+            print(f"[saas] {label}: 一時障害のため{wait}秒後に再試行 "
+                  f"({i + 1}/{len(SHEET_RETRY_WAITS)}): {str(e)[:120]}")
+            _t.sleep(wait)
+
+
 def load_sheet_data():
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(SPREADSHEET_ID)
-    ws = sh.get_worksheet(0)
-    records = ws.get_all_records()
-    return records
+    def _read():
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        return gc.open_by_key(SPREADSHEET_ID).get_worksheet(0).get_all_records()
+    return _sheet_with_retry(_read, "サロンシート")
 
 
 def load_school_data():
@@ -96,11 +126,11 @@ def load_school_data():
     if not SCHOOL_SPREADSHEET_ID:
         return []
     try:
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(SCHOOL_SPREADSHEET_ID)
-        ws = sh.get_worksheet(0)
-        records = ws.get_all_records()
+        def _read():
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+            gc = gspread.authorize(creds)
+            return gc.open_by_key(SCHOOL_SPREADSHEET_ID).get_worksheet(0).get_all_records()
+        records = _sheet_with_retry(_read, "スクールシート")
     except Exception as e:
         print(f"[saas] スクールシート読み込みスキップ（共有設定/IDを確認）: {e}")
         return []
@@ -123,11 +153,11 @@ def load_napori_data():
     if not NAPORI_SPREADSHEET_ID:
         return []
     try:
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(NAPORI_SPREADSHEET_ID)
-        ws = sh.get_worksheet(0)
-        records = ws.get_all_records()
+        def _read():
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+            gc = gspread.authorize(creds)
+            return gc.open_by_key(NAPORI_SPREADSHEET_ID).get_worksheet(0).get_all_records()
+        records = _sheet_with_retry(_read, "ナポリシート")
     except Exception as e:
         print(f"[saas] ナポリシート読み込みスキップ（共有設定/IDを確認）: {e}")
         return []
