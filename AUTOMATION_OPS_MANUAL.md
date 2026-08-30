@@ -51,11 +51,13 @@
 | 07:00 | IGストーリー投稿 | @bemolle_diet のストーリー自動投稿 |
 | 07:30 | Threads朝投稿 | SaaS各アカ・ベモーレ・個人の朝の投稿 |
 | 08:00〜09:00 | Threads→ストーリー | Threadsの朝投稿をIGストーリーにも展開 |
+| 09:00 | 動画ストーリー | 「リール/9時ストーリー素材」の動画をシャッフル一巡で1本ストーリー投稿（cron-job.org主系・同系統連続回避・IGリポジトリ） |
 | 09:00 | 個人リマインダー | reminders.json の当日分をClaude通知BotでLINEに送信（公庫=毎月27日など・保険発火9:40・IGリポジトリ） |
 | 09:00 | GASデプロイ版ズレ監視 | GASの本番デプロイが最新版か点検・ズレたらLINE（正常時は無音・IGリポジトリ） |
 | 10:00 | OAuthリマインダー | SaaSクライアントの連携未完了を通知 |
 | 11:00 | ハートビート① | 朝投稿が成功したか確認・失敗なら再投稿 |
 | 12:30 | Threads昼投稿 | 各アカの昼の投稿 |
+| 18:00 | 閉店ストーリー | @bemolle_diet の閉店お知らせ（日曜以外・固定文A〜D日付ローテ＋土曜は定休日案内・cron-job.org主系・時間窓17〜20時・IGリポジトリ） |
 | 16:00 | ハートビート② | 昼投稿の成功確認 |
 | 3回/日 | 自動いいね | ベモーレ・個人（cron-job.org経由・朝昼夜） |
 | 21:30 | Threads夜投稿 | 各アカの夜の投稿 |
@@ -93,6 +95,8 @@
 |---|---|---|
 | daily_story | instagram-stories | 毎朝IGストーリーを自動投稿 |
 | threads_story | instagram-stories | Threadsの投稿をIGストーリーにも展開 |
+| story_video | instagram-stories | 毎朝9時のストーリー動画（シャッフル一巡） |
+| closing_story | instagram-stories | 18時の閉店ストーリー（日曜以外） |
 | post_saas | threads-bot | SaaSクライアント＋ベモーレ＋個人のThreads投稿（Graph API・主系） |
 | generate_posts / saas_generate | threads-bot | Claudeで投稿本文を生成しプールに補充 |
 | heartbeat | threads-bot | 投稿が本当に成功したか検証・失敗なら再投稿 |
