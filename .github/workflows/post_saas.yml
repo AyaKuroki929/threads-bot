@@ -106,10 +106,10 @@ jobs:
           if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           SLOT="${{ steps.slot.outputs.slot }}"
           EC="${{ steps.post.outputs.exit_code }}"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ SaaS Threads 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ SaaS Threads 投稿エラー\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       # 自アカ(bemolle/個人)が投稿できていればping。クライアント1件の失敗で
       # pingが欠落し deadman worker が「GH Actions障害」と誤報するのを防ぐため、
@@ -166,10 +166,10 @@ jobs:
             done
             if [ -z "$ok" ]; then
               # push失敗=last_runが古いまま→heartbeatが「未投稿」と誤判定し再投稿する重大事象
-              curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
                 -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 状態push 3回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}'
+                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 状態push 3回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
               touch .line_notified  # failure() 汎用通知と二重送信しないための印
               exit 1
             fi

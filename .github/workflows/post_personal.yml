@@ -150,20 +150,20 @@ jobs:
       - name: LINE通知（トークン切れ）
         if: (failure() || cancelled()) && steps.alert_token.outputs.created == 'true'
         run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"🔑 個人Threads 停止\n\nAPIトークン切れで投稿できなくなりました。\n\n📱 対応してください：\n\ncd ~/threads_bot\nexport META_APP_SECRET=シークレット\npython3 get_threads_token.py personal"}]}'
+            -d '{"messages":[{"type":"text","text":"🔑 個人Threads 停止\n\nAPIトークン切れで投稿できなくなりました。\n\n📱 対応してください：\n\ncd ~/threads_bot\nexport META_APP_SECRET=シークレット\npython3 get_threads_token.py personal"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       - name: LINE通知（予期せぬエラー）
         if: (failure() || cancelled()) && steps.post.outputs.exit_code != '3'
         run: |
           SLOT="${{ steps.params.outputs.name }}"
           EC="${{ steps.post.outputs.exit_code }}"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 個人Threads エラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 個人Threads エラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       - name: 投稿ストック自動補充（残り3本以下で発動）
         id: generate
@@ -178,10 +178,10 @@ jobs:
       - name: LINE通知（補充失敗）
         if: steps.generate.outcome == 'failure'
         run: |
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"messages":[{"type":"text","text":"⚠️ 個人 投稿ストック補充失敗\n\nANTHROPIC_API_KEY切れの可能性あり。残りが少なくなる前に確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}'
+            -d '{"messages":[{"type":"text","text":"⚠️ 個人 投稿ストック補充失敗\n\nANTHROPIC_API_KEY切れの可能性あり。残りが少なくなる前に確認してください。\nhttps://github.com/AyaKuroki929/threads-bot/actions"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       - name: Commit state files
         if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'

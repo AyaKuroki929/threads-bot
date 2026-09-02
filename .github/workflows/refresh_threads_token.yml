@@ -192,10 +192,10 @@ jobs:
           [ "${{ steps.bemolle.outputs.ok }}" = "false" ] && MSG="${MSG}❌ bemolle_diet トークン更新失敗\n"
           [ "${{ steps.personal.outputs.ok }}" = "false" ] && MSG="${MSG}❌ aya_kuroki_0929 トークン更新失敗\n"
           MSG="${MSG}\n来週また自動で再試行されます。\n60日以内に成功すれば問題ありません。"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       # 更新は成功でも「有効期間が延びていない」＝静かな失効の予兆を早期に掴む。
       # 正常なら約60日に戻る。40日未満は非延長の疑い（Metaで実際に起きた200なのに未延長と同型）。
@@ -209,10 +209,10 @@ jobs:
           if [ -n "$P" ] && [ "$P" -lt 40 ] 2>/dev/null; then warn="${warn}❌ aya_kuroki_0929：残り${P}日\n"; fi
           if [ -n "$warn" ]; then
             MSG="🚨 Threadsトークンが延長されていない可能性\n\n${warn}\n更新は成功していますが有効期間が延びていません。毎週下がるなら手動で再取得が必要です（放置すると失効して投稿・朝ストーリーが停止）。"
-            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
               -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
           else
             echo "有効期間OK（bemolle=${B:-?}日 personal=${P:-?}日）"
           fi

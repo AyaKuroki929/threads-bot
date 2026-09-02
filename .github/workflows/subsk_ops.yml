@@ -91,7 +91,7 @@ jobs:
         run: |
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           TEXT="🚨 サブスク表 月次ジョブが失敗しました\n\nシート作成 or 整合性チェックが実行できていません。\nログ確認：\n$RUN_URL"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"

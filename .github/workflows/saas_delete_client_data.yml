@@ -75,10 +75,10 @@ jobs:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
           TEXT="🗑️ SaaSクライアントデータ削除 完了\n\n対象：${{ github.event.inputs.identifier }}\n\nDB（トークン・投稿記録・紐付け）と投稿プールファイルの削除・残存ゼロ検証まで完了しました。\nお客様への完了連絡（メール/LINE）を忘れずに。"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       - name: 失敗通知
         if: failure()
@@ -87,7 +87,7 @@ jobs:
         run: |
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           TEXT="🚨 SaaSクライアントデータ削除 失敗\n\n対象：${{ github.event.inputs.identifier }}\n残存データがある可能性。手動確認してください。\n$RUN_URL"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"

@@ -217,10 +217,10 @@ jobs:
             fi
           fi
           MSG="${MSG}\nhttps://github.com/AyaKuroki929/threads-bot/actions"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
       - name: Summary
         if: always()

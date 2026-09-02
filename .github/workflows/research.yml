@@ -68,10 +68,10 @@ jobs:
               sleep $((i*5))
             done
             if [ -z "$ok" ]; then
-              curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
                 -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"messages":[{"type":"text","text":"⚠️ 週次リサーチ: ルール更新のpushに失敗しました（他ワークフローとの競合の可能性）。今週分は反映されていません。"}]}'
+                -d '{"messages":[{"type":"text","text":"⚠️ 週次リサーチ: ルール更新のpushに失敗しました（他ワークフローとの競合の可能性）。今週分は反映されていません。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
               exit 1
             fi
             echo "ルール更新をプッシュしました"
@@ -82,7 +82,7 @@ jobs:
         run: |
           DIFF="${{ steps.commit_rules.outputs.diff }}"
           MSG="📋 週次ルール変更あり\n\n${DIFF}\n\n⚠️ ベモーレにないメニュー・価格・成分が追加されていないか確認してください"
-          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}"
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"${MSG}\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
