@@ -141,7 +141,7 @@ def line_broadcast(text: str, token: str = "", *, timeout: int = 10) -> bool:
             pass
         return True
     except Exception as e:
-        print(f"[line] broadcast失敗（処理は継続）: {e}", file=sys.stderr)
+        print(f"::error::[line] 通知送信失敗（処理は継続・通知は届いていない）: {e}", file=sys.stderr)
         return False
 
 
