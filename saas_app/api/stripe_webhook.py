@@ -372,8 +372,55 @@ def handle_payment_failed(obj: dict):
         )
 
 
+# ── 解約待ちリスト（2026-09-06 追加・うらかたさんの cancel watch と同じ考え方）─────
+# 解約が決まった方をここに登録しておくと、Stripeが「最終課金が通った」と通知してきた瞬間に
+# 彩さんへ「期間終了時にキャンセルを設定してください」とLINEが飛ぶ。
+# 日付を決め打ちしたリマインダーと違い、課金がずれても失敗しても正しいタイミングで届く。
+# 設定を忘れたまま次の請求が走った場合も、その課金でもう一度通知が飛ぶ（取りこぼさない）。
+# 解約設定が済めば以降の請求が無くなるので、通知も自然に止まる。
+CANCEL_WATCH = {
+    # customer_id: {名前, 満了日, メール, 備考}
+    "cus_V0wKgFmqaF2CC1": {
+        "name": "長町 孝彰",
+        "until": "2026-11-05",
+        "email": "youandcooooo@gmail.com",
+        "note": "ナポリさん。2026-08-05契約・最低利用期間3ヶ月（8/5・9/5・10/5の3回課金）。"
+                "Threads連携が未完了のため投稿停止の操作は不要。",
+    },
+}
+
+
+def handle_cancel_watch(obj: dict) -> bool:
+    """解約待ちの方の課金が通ったら、彩さんへ解約設定のリマインドを送る。送ったらTrue。"""
+    customer_id = obj.get("customer", "") or ""
+    w = CANCEL_WATCH.get(customer_id)
+    if not w:
+        return False
+    # 定期課金の請求だけを対象にする（初回登録や手動請求では鳴らさない）
+    if obj.get("billing_reason") not in (None, "subscription_cycle", "subscription_create"):
+        _log(f"cancel_watch: billing_reason={obj.get('billing_reason')} のためスキップ")
+        return False
+    amount = obj.get("amount_paid", 0)
+    line_push_admin(
+        f"💳 {w['name']}さんの課金が通りました\n\n"
+        f"✅ Stripeで「期間終了時にキャンセル」を設定してください。\n"
+        f"https://dashboard.stripe.com/customers/{customer_id}\n\n"
+        f"対象：{w['name']}さん\n"
+        f"メールアドレス：{w['email']}\n"
+        f"満了日：{w['until']}（この日をもって契約終了）\n"
+        f"今回の課金：¥{amount:,}\n\n"
+        f"※設定しないと満了日に次の請求が走ります。\n"
+        f"{w['note']}"
+    )
+    _log(f"cancel_watch: {w['name']} へのリマインドを送信（invoice={obj.get('id')}）")
+    return True
+
+
 def handle_invoice_paid(obj: dict):
-    """invoice.paid: 既存サロンの支払い再開のみ処理。新規登録は checkout.session.completed で処理。"""
+    """invoice.paid: 解約待ちの通知／既存サロンの支払い再開。新規登録は checkout.session.completed で処理。"""
+    # 解約待ちの方は、この課金が「最終課金」なので最優先で彩さんへ知らせる
+    if handle_cancel_watch(obj):
+        return
     lines = obj.get("lines", {}).get("data", [])
     _log(f"handle_invoice_paid: lines_count={len(lines)}, subscription={obj.get('subscription')!r}")
 
