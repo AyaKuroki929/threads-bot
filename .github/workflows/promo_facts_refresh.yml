@@ -45,9 +45,15 @@ jobs:
       - name: Refill promo posts with fresh numbers
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 使用済みの正本はDB。渡さないと補充側だけ「未使用」と数えて補充が止まる
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python3 generate_promo_posts.py
 
+      # ⚠️ 補充が失敗しても、数字の更新と古い在庫の除去はリポジトリに残す。
+      # 残さないと、次回また古い数字のまま同じ処理をやり直すことになる
       - name: Commit
+        if: "!cancelled()"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "gha@users.noreply.github.com"

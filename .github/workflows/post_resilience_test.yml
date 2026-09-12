@@ -1,0 +1,41 @@
+name: 投稿の二重投稿・欠落テスト
+
+# 投稿の根幹（公開判定・照合・記録）を触ったら、pushのたびに機械で確かめる。
+# ここが落ちたら「二重投稿」か「投稿欠落」の経路が復活している。人の目に頼らない。
+on:
+  push:
+    paths:
+      - "post_saas.py"
+      - "post_state.py"
+      - "tests/**"
+      - "sql/**"
+      - ".github/workflows/post_resilience_test.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: シミュレータで敵対シナリオを流す
+        run: python3 tests/test_post_resilience.py
+
+      - name: 安全装置をわざと壊して、テストが検知するか確かめる
+        run: python3 tests/test_safety_mutations.py
+
+  notify-on-failure:
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: LINEへ通知
+        env:
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $ADMIN_NOTIFY_LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 とうこさん：投稿の二重投稿・欠落テストが落ちました。post_saas.py / post_state.py の変更を確認してください。"}]}'
