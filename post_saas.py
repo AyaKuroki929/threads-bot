@@ -1520,7 +1520,11 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label):
         topic_tag = None if promo else _select_topic(texts, salon_name)
         # ⚠️ 投稿の前に本文を台帳へ残す。残さないと、途中で止まったとき
         # 次の実行が別の本文を選んでしまい、公開済みのパートと対応が取れなくなる
-        row = post_state.update(row, payload={
+        # ⚠️ 新しく選び直した本文で始めるので、前回の失敗で残ったパートの記録は捨てる。
+        # 残すと、原文の固定（original_hash）が前回の本文のままになり、
+        # 今回公開した本文を記録できなくなる（2026-09-12 Sol指摘#1）。
+        # ここへ来るのは「何も公開していない」と確定した枠だけなので、捨てて安全。
+        row = post_state.update(row, parts=[], payload={
             "texts": texts, "original_first": original_first,
             "topic_tag": topic_tag, "image_url": image_url, "promo": bool(promo)})
 

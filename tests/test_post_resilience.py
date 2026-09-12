@@ -1674,5 +1674,38 @@ check("差し替えを見抜く",
       post_saas._original_mismatch(post_state.fetch(op), "原文B（未投稿）") is not None,
       "見抜けなかった")
 
+
+# ── 73. 未公開で失敗した枠を選び直したとき、公開した本文を記録できる ────────
+print("\n(73) 選び直し（改ざんなしの通常運用）")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+# 1回目：本文Aで始めるが、公開を明確に断られて未公開が確定する
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+W.publish_behavior = lambda cid, n: "http400"
+W.status_override = "ERROR"
+post_saas.pick_post = lambda name, slot, used: ["本文A"]
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.get_used_posts = lambda sid, slot: set()
+post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
+post_saas._enforce_threads_limit = lambda t: t
+post_saas._select_topic = lambda t, n: None
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        post_saas._run_slot(row, "go", SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
+    except Exception:
+        pass
+check("1回目は公開されない", len(W.posts) == 0, len(W.posts))
+print("  → 次の実行で別の本文Bを選び直す")
+W.publish_behavior = lambda cid, n: "ok"
+W.status_override = None
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=1)).isoformat()
+post_saas.pick_post = lambda name, slot, used: ["本文B"]
+a2, row2 = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+with contextlib.redirect_stdout(io.StringIO()):
+    st2, d2 = post_saas._run_slot(row2, a2, SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
+check("本文Bが公開される", any(p["text"] == "本文B" for p in W.posts), [p["text"] for p in W.posts])
+check("本文Bが記録される", any(l["post_content"] == "本文B" for l in W.post_logs), W.post_logs)
+check("完了になる", W.attempts[op]["status"] == "logged", W.attempts[op]["status"])
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
