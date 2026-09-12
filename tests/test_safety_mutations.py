@@ -193,6 +193,20 @@ MUTATIONS = [
     ("メモの追記で通知済みの印を壊さない",
      "        head, mark = note.split(RECOVER_NOTE_MARK, 1)\n        return head + extra + RECOVER_NOTE_MARK + mark",
      "        pass"),
+    ("実行中に日付が変わったら新しい投稿をしない",
+     "                        if _date_rolled_over():",
+     "                        if False and _date_rolled_over():"),
+    ("穴埋め側のアカウント照合",
+     '            if salon.get("threads_user_id") and str(salon["threads_user_id"]) != str(user_id):\n'
+     '                failed.append(salon["salon_name"] + "（アカウント不一致）")',
+     '            if False:\n'
+     '                failed.append(salon["salon_name"] + "（アカウント不一致）")'),
+    ("昨夜の抜けを台帳に残す",
+     '                post_state._req("POST", post_state.TABLE, body={',
+     '                {} and post_state._req("POST", post_state.TABLE, body={'),
+    ("確認できなかったサロンを知らせる",
+     "    if unchecked:",
+     "    if False:"),
     ("時間帯を過ぎた実行でも穴を埋める",
      "        if win is not None and jst_hour not in win:\n"
      '            print(f"[LATE] {SLOT} の時間帯を過ぎています（現在 {jst_hour}時JST）"',

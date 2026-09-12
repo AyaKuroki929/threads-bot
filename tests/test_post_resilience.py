@@ -2660,5 +2660,121 @@ check("昨夜の分は勝手に出さない", [p["text"] for p in W.posts] == ["
       [p["text"] for p in W.posts])
 post_saas.check_previous_slot = lambda salons: 0
 
+
+# ── 108. 実行中に日付が変わったら、新しい投稿はしない ───────────────────
+print("\n(108) 日付を跨いだ実行")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_saas._run_jst_date = "2026-01-01"      # 実行開始時の日付が今日と違う＝日付が変わった状態
+W.publish_behavior = lambda cid, n: "ok"
+with contextlib.redirect_stdout(io.StringIO()):
+    res = post_saas.threads_post(post_state.fetch(op), "USER1", "TOK", TEXTS1,
+                                 original_first=TEXTS1[0])
+post_saas._run_jst_date = None
+check("投稿しない", len(W.posts) == 0, len(W.posts))
+check("コンテナも作らない", W.calls["create"] == 0, W.calls["create"])
+check("未完として残す", not res["complete"], res["note"])
+
+# ── 109. 穴埋めは本来の枠のあと・専用の持ち時間で ─────────────────────
+print("\n(109) 穴埋めの順番と持ち時間")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.GAPFILL_BUDGET_SEC = 30
+W.salons = [dict(SALON_ROW, id=f"{i}1111111-1111-1111-1111-111111111111",
+                 salon_name=f"サロン{i}") for i in range(1, 4)]
+texts_by_slot = {"morning": ["朝の本文"], "noon": ["昼の本文"]}
+post_saas.pick_post = lambda name, slot, used: list(texts_by_slot[slot])
+W.publish_behavior = lambda cid, n: "ok"
+W.latency = 6          # 通信1回6秒（穴埋めの持ち時間をすぐ使い切る）
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+W.latency = 0
+post_saas.GAPFILL_BUDGET_SEC = 150
+noon_posts = [p for p in W.posts if p["text"] == "昼の本文"]
+check("本来の昼枠は3件とも出る", len(noon_posts) == 3, [p["text"] for p in W.posts])
+post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 110. 昨夜の抜けは、通知が届かなくても次に持ち越す ────────────────────
+print("\n(110) 昨夜の抜けの持ち越し")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "morning"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+NOTIFY_OK[0] = False       # LINEが送れない
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+yop = f"{SALON}:{YESTERDAY}:evening"
+check("台帳に印が残る", yop in W.attempts, list(W.attempts))
+check("回収対象に入る",
+      any(r["op_id"] == yop for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+print("  → LINEが復旧したら知らせが届く")
+NOTIFY_OK[0] = True
+NOTIFY.clear()
+W.attempts[yop]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("知らせが届く", len(NOTIFY) >= 1, NOTIFY)
+check("勝手に投稿しない", not any(p["text"] == "朝の本文" and i > 0
+                                  for i, p in enumerate(W.posts)), len(W.posts))
+post_saas.check_previous_slot = lambda salons: 0
+
+# ── 111. 確認できなかったサロンを「抜けなし」と言わない ──────────────────
+print("\n(111) 取りこぼしの確認ができない")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "noon"
+W.salons = [dict(SALON_ROW)]
+orig_apt = post_saas.already_posted_today
+post_saas.already_posted_today = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.check_previous_slot(W.salons)
+post_saas.already_posted_today = orig_apt
+check("確認できなかったと知らせる", any("確認できませんでした" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 112. 穴埋めでも、登録アカウントと実物が違えば投稿しない ────────────────
+print("\n(112) 穴埋め時のアカウント不一致")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+W.salons = [dict(SALON_ROW, threads_user_id="BETSU_NO_ID")]
+W.publish_behavior = lambda cid, n: "ok"
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.check_previous_slot(W.salons)
+check("穴埋めでも投稿しない", len(W.posts) == 0, [p["text"] for p in W.posts])
+check("理由を知らせる", any("アカウント不一致" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+post_saas.check_previous_slot = lambda salons: 0
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
