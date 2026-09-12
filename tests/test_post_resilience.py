@@ -2453,5 +2453,66 @@ with contextlib.redirect_stdout(io.StringIO()):
 check("投稿は増えない", len(W.posts) == 1, len(W.posts))
 check("記録が戻る", len(W.post_logs) == 1, W.post_logs)
 
+
+# ── 101. 本文一覧が欠けていても、原文が一致するなら記録は戻す ──────────────
+print("\n(101) texts 欠損でも記録は戻す")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")     # texts が無い
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    creation_id="C_TX", post_id="P_TX", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED, logged=False)
+check("戻せると判定する", post_saas._repairable(post_state.fetch(op)), "戻せないと判定した")
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("記録が戻る", len(W.post_logs) == 1, W.post_logs)
+check("投稿はしない", len(W.posts) == 0, len(W.posts))
+
+# ── 102. 本文ハッシュ・原文ハッシュは、それぞれ単独で効く ────────────────
+print("\n(102) ハッシュ確認の効き目")
+for label, part_hash_text, orig_hash_text in (
+        ("本文ハッシュだけ不一致", "ちがう本文", TEXTS1[0]),
+        ("原文ハッシュだけ不一致", TEXTS1[0], "ちがう原文")):
+    reset()
+    W.salons = [SALON_ROW]
+    op = f"{SALON}:{YESTERDAY}:noon"
+    a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+    row = post_state.update(row, payload={"texts": [TEXTS1[0]], "original_first": TEXTS1[0],
+                                          "topic_tag": None, "image_url": "", "promo": False},
+                            publisher_user_id="USER1")
+    post_state.set_part(post_state.fetch(op), 0,
+                        hash=post_state.part_hash(part_hash_text),
+                        original_hash=post_state.part_hash(orig_hash_text),
+                        creation_id="C_HH", post_id="P_HH",
+                        status=post_state.PART_PUBLISHED)
+    post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="不一致")
+    check(f"{label}：戻せないと判定", not post_saas._repairable(post_state.fetch(op)),
+          "戻せると判定した")
+    seen = []
+    for _ in range(2):
+        W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+        with contextlib.redirect_stdout(io.StringIO()):
+            post_saas.recover_open_attempts(W.salons)
+        seen.append(W.attempts[op]["status"])
+    check(f"{label}：記録しない", len(W.post_logs) == 0, W.post_logs)
+    check(f"{label}：人待ちへ移って回り続けない", seen[-1] == "attention", seen)
+
+# ── 103. 記録復旧の追記で、通知済みの印を壊さない ──────────────────
+print("\n(103) メモの追記と通知済みの印")
+reset()
+note = "なにかの理由" + post_saas.RECOVER_NOTE_MARK + "hold"
+check("印より前に足す",
+      post_saas._append_note(note, "／記録は復旧済み").endswith(post_saas.RECOVER_NOTE_MARK + "hold"),
+      post_saas._append_note(note, "／記録は復旧済み"))
+check("種類が読み取れる",
+      post_saas._notified_kinds({"note": post_saas._append_note(note, "／記録は復旧済み")}) == {"hold"},
+      post_saas._notified_kinds({"note": post_saas._append_note(note, "／記録は復旧済み")}))
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

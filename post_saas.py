@@ -1308,13 +1308,26 @@ def _repairable(row):
     payload = row.get("payload") or {}
     texts = payload.get("texts") or []
     text = payload.get("original_first") or (texts[0] if texts else None)
-    if not text or not texts:
+    if not text:
         return False
-    if first.get("hash") != post_state.part_hash(texts[0]):
+    # ⚠️ texts が欠けていても、残っている原文が両方のハッシュに一致するなら安全に戻せる
+    # （2026-09-12 Sol指摘#1：欠損だけを理由に諦めると、公開済み本文が使用済みにならない）
+    body = texts[0] if texts else text
+    if first.get("hash") != post_state.part_hash(body):
         return False
     if _original_mismatch(row, text):
         return False
     return True
+
+
+def _append_note(note, extra):
+    """メモに説明を足す。⚠️「通知済み:」の印より**前**に足す。
+    後ろに足すと印の一部として読まれ、同じ理由の通知が何度も飛ぶ（Sol指摘#3）。"""
+    note = note or ""
+    if RECOVER_NOTE_MARK in note:
+        head, mark = note.split(RECOVER_NOTE_MARK, 1)
+        return head + extra + RECOVER_NOTE_MARK + mark
+    return note + extra
 
 
 def _notified_kinds(row):
@@ -1482,7 +1495,8 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
         # logged を立てて回収対象から外す（毎回この行で枠を使い潰さないため・Sol指摘#6）
         try:
             post_state.update(row, logged=True, status=post_state.STATUS_HOLD_REPAIR,
-                              note=(row.get("note") or "") + "／記録すべき公開投稿なし（人の確認待ち）")
+                              note=_append_note(row.get("note"),
+                                                "／記録すべき公開投稿なし（人の確認待ち）"))
         except Exception as e:
             print(f"[state] 人待ち印の保存に失敗: {str(e)[:80]}")
         return "no_text", "記録すべき公開投稿が見つかりません（人の確認が必要）"
@@ -1511,8 +1525,8 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
             # （2026-09-12 Sol指摘#1）。知らせが届いてから移す（_mark_notified）
             post_state.update(row, logged=True,
                               status=finish_status or post_state.STATUS_HOLD_REPAIR,
-                              note=None if finish_status else
-                                   (row.get("note") or "") + "／記録は復旧済み")
+                              note=None if finish_status
+                              else _append_note(row.get("note"), "／記録は復旧済み"))
         except Exception as e:
             print(f"[state] 記録済み印の保存に失敗: {str(e)[:80]}")
         if not finish_status:
