@@ -135,6 +135,7 @@ class World:
             return self.salons
         if table == "post_logs":
             if method == "GET":
+                self.calls["log_get"] = self.calls.get("log_get", 0) + 1
                 sid_raw = q.get("salon_id", [None])[0]
                 slot = eqval("slot")
                 if sid_raw and sid_raw.startswith("in."):

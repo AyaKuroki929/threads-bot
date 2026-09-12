@@ -3162,7 +3162,54 @@ post_saas.already_posted_today = orig_apt2
 check("投稿しない", len(W.posts) == 0, [p["text"] for p in W.posts])
 check("点検済みにしない", not os.path.exists(post_saas.GAP_MARK_FILE),
       open(post_saas.GAP_MARK_FILE).read() if os.path.exists(post_saas.GAP_MARK_FILE) else "")
+check("投稿を止める印は作らない（一時障害でその日を止めない）",
+      not any(k.endswith(f"{JST_DATE}:morning") for k in W.attempts), list(W.attempts))
+print("  → 通信が戻れば、その日のうちに埋められる")
+W.publish_behavior = lambda cid, n: "ok"
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.check_previous_slot(W.salons)
+check("復旧後に埋められる", any(p["text"] == "朝の本文" for p in W.posts),
+      [p["text"] for p in W.posts])
 post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 128. 公開が不明なのに確認先が無い枠は、新しく作らない ────────────────
+print("\n(128) 確認先(コンテナ)が消えた未確定")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    status=post_state.PART_UNKNOWN, lost_response=True)   # creation_id なし
+W.publish_behavior = lambda cid, n: "ok"
+with contextlib.redirect_stdout(io.StringIO()):
+    res = post_saas.threads_post(post_state.fetch(op), "USER1", "TOK", TEXTS1,
+                                 original_first=TEXTS1[0])
+check("新しく作らない", W.calls["create"] == 0, W.calls["create"])
+check("投稿しない", len(W.posts) == 0, len(W.posts))
+check("人へ渡す", res["slot_status"] == "attention", res["slot_status"])
+
+# ── 129. 締切を過ぎていたら、点検の通信を始めない ────────────────────
+print("\n(129) 点検の締切")
+reset()
+W.salons = [dict(SALON_ROW)]
+post_saas._deadline = CLOCK.time() - 1        # すでに締切超過
+before = W.calls.get("log_get", 0)
+raised = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas._scan_gaps(W.salons, 2)
+except Exception as e:
+    raised = type(e).__name__
+post_saas._deadline = None
+check("止まる", raised is not None, raised)
+check("通信を1回も始めない", W.calls.get("log_get", 0) == before,
+      f'{W.calls.get("log_get", 0) - before}回')
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

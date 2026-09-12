@@ -228,6 +228,18 @@ MUTATIONS = [
     ("失敗があれば点検済みにしない",
      "    if not failed:",
      "    if True:"),
+    ("公開が不明なのに確認先が無ければ作らない",
+     "                if not creation_id and same and (\n"
+     '                        p.get("lost_response") or p.get("status") == post_state.PART_UNKNOWN):',
+     "                if False and same and (\n"
+     '                        p.get("lost_response") or p.get("status") == post_state.PART_UNKNOWN):'),
+    ("点検の各ページ取得前に締切を見る",
+     '        if _out_of_time("投稿記録の取得"):\n            raise RuntimeError("持ち時間内に投稿記録を確認しきれませんでした")',
+     "        pass"),
+    ("確認できないだけの枠を投稿禁止にしない",
+     '                failed.append(f"{salon[\'salon_name\']}({slot})（確認できず・次回やり直し）")\n                continue',
+     '                _flag_missing(salon, d, slot, "確認できません")\n'
+     '                failed.append(f"{salon[\'salon_name\']}({slot})（確認できず・次回やり直し）")\n                continue'),
     ("ページ送りで全件取る",
      "        offset += page",
      "        offset += page * 2"),

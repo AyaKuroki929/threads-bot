@@ -914,6 +914,13 @@ def threads_post(row, user_id, token, texts, topic_tag=None, image_url="",
             else:
                 creation_id = p.get("creation_id") if same and p.get("status") in (
                     post_state.PART_CONTAINER, post_state.PART_UNKNOWN) else None
+                if not creation_id and same and (
+                        p.get("lost_response") or p.get("status") == post_state.PART_UNKNOWN):
+                    # ⚠️「公開できたか不明」の印があるのに、確かめる相手（コンテナ）が無い。
+                    # 新しく作ると、実は公開済みだった場合に二重投稿になる（Sol指摘#1）
+                    return _result(False, post_state.STATUS_ATTENTION,
+                                   f"{label}: 公開できたか不明なのに確認先が残っていません。"
+                                   "取り違えを避けるため出しません")
                 outcome = "failed"
                 for round_no in range(1, MAX_POST_ATTEMPTS + 1):
                     if not creation_id:
@@ -2153,10 +2160,11 @@ def _check_gaps(salons):
                 if already_posted_today(salon["id"], slot, op_id, jst_date=d):
                     continue
             except Exception as e:
-                # 確認できないなら出さない。ただし「点検済み」にもしない（Sol指摘#3）
-                failed.append(f"{salon['salon_name']}({slot})（確認できず）")
-                if not _flag_missing(salon, d, slot, f"確認できませんでした: {str(e)[:60]}"):
-                    unflagged.append(f"{salon['salon_name']}({d} {slot})")
+                # ⚠️ 確認できないだけの枠を hold_repair にしない。
+                # それをすると、一時的な通信エラーだけでその日の投稿を止めてしまう
+                # （2026-09-12 Sol指摘#2）。点検済みにしないので次の実行で見直される
+                print(f"[gap] {salon['salon_name']} {d} {slot} を確認できません: {str(e)[:60]}")
+                failed.append(f"{salon['salon_name']}({slot})（確認できず・次回やり直し）")
                 continue
             action, row = _acquire_with_retry(salon["id"], d, slot)
             if action in ("hold", "skip"):
