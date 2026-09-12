@@ -1277,7 +1277,25 @@ def _add_failure(failures, row, op_id, kind, reason):
 
 # 「人が見ないと先へ進めない」失敗の種類。まとめ通知が届いたら attention へ移す
 HUMAN_KINDS = {"publisher_mismatch", "publisher_unknown", "payload_missing",
-               "original_mismatch", "mismatch", "no_text", "account", "hold"}
+               "original_mismatch", "mismatch", "no_text", "account", "hold", "expired"}
+
+
+def _repairable(row):
+    """自動で記録を戻せる余地が、まだ残っているか。
+
+    ⚠️ 通知が届いたからといって、記録の復旧まで諦めてはいけない。
+    諦めると公開済み投稿が永久に記録されず、その本文がまた選ばれる
+    （2026-09-12 Sol指摘#1）。"""
+    if row.get("logged") and not _promo_pending(row):
+        return False
+    first = post_state.get_part(row, 0) or {}
+    if first.get("expired"):
+        return False          # コンテナが消えた＝もう確かめようがない
+    if first.get("status") == post_state.PART_PUBLISHED:
+        return True           # 公開済み。記録を戻せる
+    if first.get("status") in (post_state.PART_CONTAINER, post_state.PART_UNKNOWN):
+        return True           # まだ確かめる余地がある
+    return False
 
 
 def _notified_kinds(row):
@@ -1302,7 +1320,9 @@ def _mark_notified(failures):
             base = (cur.get("note") or "").split(RECOVER_NOTE_MARK)[0]
             fields = {"note": base + RECOVER_NOTE_MARK + ",".join(sorted(kinds))}
             # 知らせが届いたので、人の確認待ちへ移してよい（届くまでは回収対象に残す）
-            if f["kind"] in HUMAN_KINDS and cur.get("status") == post_state.STATUS_HOLD_REPAIR:
+            if f["kind"] in HUMAN_KINDS \
+                    and cur.get("status") == post_state.STATUS_HOLD_REPAIR \
+                    and not _repairable(cur):
                 fields["status"] = post_state.STATUS_ATTENTION
             post_state.update(cur, **fields)
         except Exception as e:
@@ -1407,6 +1427,15 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
                 print(f"[state] 公開確定の保存に失敗: {str(e)[:80]}")
                 _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=row.get("note"))
                 return "state", "公開の確定を保存できませんでした"
+        elif st in ("EXPIRED", "ERROR"):
+            # コンテナが消えた＝これ以上は何を待っても分からない。人に渡す
+            try:
+                row = post_state.set_part(row, 0, expired=True)
+            except Exception as e:
+                print(f"[state] 期限切れ印の保存に失敗: {str(e)[:60]}")
+            _state_finish(row, post_state.STATUS_HOLD_REPAIR,
+                          note=f"コンテナが{st}のため、公開できたか確認できません（人の確認が必要）")
+            return "expired", f"コンテナが{st}で、公開できたか確認できません"
         else:
             # まだ分からない。記録対象に残したまま次回また確認する
             _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=row.get("note"))
@@ -1564,8 +1593,11 @@ def recover_open_attempts(salons, skip_op_ids=()):
                         continue
                     if row.get("logged"):
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot}: 全公開・記録済み → 完了")
-                        _state_finish(row, post_state.STATUS_LOGGED)
-                        _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)
+                        if _state_finish(row, post_state.STATUS_LOGGED):
+                            _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)
+                        else:
+                            _add_failure(failures, _safe_fetch(op_id, row), op_id,
+                                         "state", "完了の印を台帳に残せませんでした")
                         continue
                     print(f"[recover] {salon['salon_name']} {jst_date} {slot}: 記録だけ戻します")
                     kind, reason = _repair_safe(row, salon, slot, jst_date, quiet=True,
@@ -1616,7 +1648,14 @@ def recover_open_attempts(salons, skip_op_ids=()):
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot} を完了しました")
                     else:
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot} は未完のまま: {detail}")
-                        _add_failure(failures, _safe_fetch(op_id, row), op_id,
+                        # ⚠️ 投稿を止める理由があっても、**公開済みの記録は戻す**。
+                        # 戻さないと、その本文が使用済みにならず後日また選ばれる
+                        # （2026-09-12 Sol指摘#1）
+                        cur = _safe_fetch(op_id, row) or row
+                        if _repairable(cur):
+                            _repair_safe(cur, salon, slot, jst_date, quiet=True)
+                            cur = _safe_fetch(op_id, cur) or cur
+                        _add_failure(failures, cur, op_id,
                                      kind or "incomplete", str(detail)[:60])
                 except TokenExpiredError:
                     print(f"[recover] トークン切れ: {op_id}")
@@ -1796,7 +1835,11 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         # 通常投稿に落とした理由は、実際に出せてから知らせる（Sol指摘#5）
         if promo_fallback and not quiet:
             _notify_line(f"⚠️ 月曜夜の宣伝投稿：{promo_fallback}")
-        _state_finish(row, post_state.STATUS_LOGGED)
+        if not _state_finish(row, post_state.STATUS_LOGGED):
+            # ⚠️ 台帳に「完了」を残せていないのに成功と言わない（Sol指摘#2）。
+            # 投稿と記録は済んでいるので、次の実行は再投稿せず完了印だけ付け直す
+            print(f"[OK?] {salon_name}: 投稿と記録は済みましたが完了印を残せませんでした")
+            return "error", "完了の印を台帳に残せませんでした（投稿と記録は完了）", "state"
         _sync_last_run(salon_name, slot, jst_date=row.get("jst_date"))
         print(f"[OK] {salon_name}: post_id={post_id}")
         return "ok", None, None
@@ -1944,9 +1987,11 @@ def main():
                     continue
                 if row.get("logged"):
                     print(f"[{salon_name}] {SLOT}: 全パート公開・記録済み → 完了にします")
-                    _state_finish(row, post_state.STATUS_LOGGED)
-                    _sync_last_run(salon_name, SLOT, jst_date=jst_date)
-                    results["ok"].append(salon_name)
+                    if _state_finish(row, post_state.STATUS_LOGGED):
+                        _sync_last_run(salon_name, SLOT, jst_date=jst_date)
+                        results["ok"].append(salon_name)
+                    else:
+                        results["error"].append(f"{salon_name}: 完了の印を台帳に残せませんでした")
                     continue
                 print(f"[{salon_name}] {SLOT}: 全パート公開済み → 記録だけ戻します")
                 _repair_safe(row, salon, SLOT, jst_date,

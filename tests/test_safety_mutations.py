@@ -105,15 +105,15 @@ MUTATIONS = [
      '            raise TokenExpiredError(f"トークン切れ HTTP {e.code}（コンテナ状態の問い合わせ）")',
      '            return None'),
     ("回収完了後の last_run 同期",
-     '                        _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)\n'
-     "                        continue",
-     "                        continue"),
+     "                        if _state_finish(row, post_state.STATUS_LOGGED):\n"
+     '                            _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)',
+     "                        if _state_finish(row, post_state.STATUS_LOGGED):\n"
+     "                            pass"),
     ("通常経路・全公開済みの last_run 同期",
-     "                    _sync_last_run(salon_name, SLOT, jst_date=jst_date)\n"
-     '                    results["ok"].append(salon_name)\n'
-     "                    continue",
-     '                    results["ok"].append(salon_name)\n'
-     "                    continue"),
+     "                    if _state_finish(row, post_state.STATUS_LOGGED):\n"
+     "                        _sync_last_run(salon_name, SLOT, jst_date=jst_date)",
+     "                    if _state_finish(row, post_state.STATUS_LOGGED):\n"
+     "                        pass"),
     ("履歴が先頭から連続していることの確認",
      '            return (f"パート{i}が公開済み・投稿IDありになっていないのに、"\n'
      '                    f"{i+1}部目の履歴があります")',
@@ -180,9 +180,25 @@ MUTATIONS = [
     ("別実行が状態を変えた行を上書きしない",
      '                if fresh.get("status") != row.get("status"):',
      "                if False:"),
+    ("記録が戻せるうちは人待ちにしない",
+     "                    and not _repairable(cur):\n"
+     '                fields["status"] = post_state.STATUS_ATTENTION',
+     "                    and True:\n"
+     '                fields["status"] = post_state.STATUS_ATTENTION'),
+    ("投稿を止めても公開済みの記録は戻す",
+     "                        if _repairable(cur):\n"
+     "                            _repair_safe(cur, salon, slot, jst_date, quiet=True)",
+     "                        if False:\n"
+     "                            _repair_safe(cur, salon, slot, jst_date, quiet=True)"),
+    ("コンテナが消えた枠は人へ渡す",
+     '        elif st in ("EXPIRED", "ERROR"):',
+     "        elif False:"),
+    ("完了印を残せなければ成功と言わない",
+     "        if not _state_finish(row, post_state.STATUS_LOGGED):",
+     "        if False and not _state_finish(row, post_state.STATUS_LOGGED):"),
     ("知らせが届いてから人待ちへ移す（まとめ通知側）",
-     '            if f["kind"] in HUMAN_KINDS and cur.get("status") == post_state.STATUS_HOLD_REPAIR:',
-     "            if False:"),
+     '            if f["kind"] in HUMAN_KINDS \\',
+     "            if False \\"),
     ("公開後の台帳保存失敗は記録の修復を続ける(hold_repair)",
      "                return _result(False, post_state.STATUS_HOLD_REPAIR,\n"
      '                               f"{label}は公開できましたが台帳に保存できませんでした"',

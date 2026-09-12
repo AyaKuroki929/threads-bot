@@ -2228,5 +2228,92 @@ check("以後は回収対象から外れる",
       not any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
       [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
 
+
+# ── 93. 通知が届いても、記録が戻せるうちは回収対象に残す ────────────────
+print("\n(93) 通知後も記録の復旧は続ける（logged=False から）")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+# 2部構成・親だけ公開済み・記録は未完・台帳の投稿者が今のアカウントと違う
+row = post_state.update(row, payload={"texts": TEXTS2, "original_first": TEXTS2[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="ACCOUNT_A", logged=False)
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS2[0]),
+                    original_hash=post_state.part_hash(TEXTS2[0]),
+                    creation_id="C_R1", post_id="P_R1", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("知らせは届く", any("片づけられなかった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:160])
+check("1部目の記録は戻る", len(W.post_logs) == 1, W.post_logs)
+check("記録が戻るまで回収対象から外さない",
+      W.attempts[op]["logged"] or any(r["op_id"] == op
+                                      for r in post_state.open_issues(salon_ids=[SALON])),
+      f'logged={W.attempts[op]["logged"]} status={W.attempts[op]["status"]}')
+print("  → 記録がまだ戻せないうちは、通知が届いても人待ちにしない")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"texts": TEXTS2, "original_first": TEXTS2[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="ACCOUNT_A", logged=False)
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS2[0]),
+                    original_hash=post_state.part_hash(TEXTS2[0]),
+                    creation_id="C_R2", post_id="P_R2", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+W.log_insert_behavior = lambda n: "fail"      # 記録がまだ戻せない
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("記録が戻っていない（前提）", not W.attempts[op]["logged"], W.attempts[op]["logged"])
+check("人待ちにしない", W.attempts[op]["status"] == "hold_repair", W.attempts[op]["status"])
+check("回収対象に残る",
+      any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+
+# ── 94. コンテナが消えた枠は、いつまでも回し続けない ────────────────────
+print("\n(94) コンテナが EXPIRED のまま")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    creation_id="C_EX2", status=post_state.PART_UNKNOWN, lost_response=True)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="未確定")
+W.status_override = "EXPIRED"
+seen = []
+for _ in range(3):
+    W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.recover_open_attempts(W.salons)
+    seen.append(W.attempts[op]["status"])
+W.status_override = None
+check("投稿はしない", len(W.posts) == 0, len(W.posts))
+check("知らせる", any("片づけられなかった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:160])
+check("最後は人待ちになって回り続けない", seen[-1] == "attention", seen)
+
+# ── 95. 完了の印を残せなければ、成功と言わない ─────────────────────
+print("\n(95) 完了印の保存が失敗")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+W.publish_behavior = lambda cid, n: "ok"
+def block_logged(o, body):
+    return "fail" if body.get("status") == "logged" else "ok"
+W.attempts_patch_behavior = block_logged
+(res, row, _), out = quiet(lambda: run(TEXTS1))
+W.attempts_patch_behavior = None
+check("投稿は出る", len(W.posts) == 1, len(W.posts))
+check("記録も残る", len(W.post_logs) == 1, len(W.post_logs))
+check("成功とは言わない", res.get("status") != "ok", res.get("status"))
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
