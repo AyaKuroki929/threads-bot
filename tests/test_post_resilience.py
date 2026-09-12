@@ -16,7 +16,15 @@ fakeapi.install()
 W = fakeapi.W
 
 import post_state, post_saas
-post_saas._notify_line = lambda m: NOTIFY.append(m)
+def _fake_notify(message):
+    """通知の差し替え。本物と同じく「送れたか」を返す（返さないと
+    通知済みの印が付かず、連発防止のテストが通らない）。"""
+    NOTIFY.append(message)
+    return NOTIFY_OK[0]
+
+
+NOTIFY_OK = [True]      # False にすると「送信に失敗した」状況を作れる
+post_saas._notify_line = _fake_notify
 
 
 class _Clock:
@@ -67,6 +75,7 @@ TEXTS2 = ["これはテスト本文の1部目です。", "これは2部目の返
 def reset(**kw):
     global NOTIFY
     NOTIFY = []
+    NOTIFY_OK[0] = True
     SYNCED.clear()
     W.__init__()
     CLOCK.reset()
@@ -1483,11 +1492,11 @@ for sid in (SALON, S2):
     W.attempts[o]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 orig_repair = post_saas._repair_log_only
 calls = {"n": 0}
-def boom(row, salon, slot, jst_date, finish_status=None):
+def boom(row, salon, slot, jst_date, finish_status=None, quiet=False):
     calls["n"] += 1
     if calls["n"] == 1:
         raise TimeoutError("timed out")
-    return orig_repair(row, salon, slot, jst_date, finish_status=finish_status)
+    return orig_repair(row, salon, slot, jst_date, finish_status=finish_status, quiet=quiet)
 post_saas._repair_log_only = boom
 escaped = None
 try:
@@ -1706,6 +1715,129 @@ with contextlib.redirect_stdout(io.StringIO()):
 check("本文Bが公開される", any(p["text"] == "本文B" for p in W.posts), [p["text"] for p in W.posts])
 check("本文Bが記録される", any(l["post_content"] == "本文B" for l in W.post_logs), W.post_logs)
 check("完了になる", W.attempts[op]["status"] == "logged", W.attempts[op]["status"])
+
+
+# ── 74. 通知が送れなかったら「通知済み」にしない ────────────────────
+print("\n(74) 通知の送信に失敗")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    creation_id="C_NS", post_id="P_NS", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED, logged=False)
+W.log_insert_behavior = lambda n: "fail"
+NOTIFY_OK[0] = False        # LINEが送れない状況
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("送れなかったら通知済みにしない",
+      "通知済み" not in (W.attempts[op].get("note") or ""), W.attempts[op].get("note"))
+print("  → LINEが復旧したら、ちゃんと知らせる")
+NOTIFY_OK[0] = True
+NOTIFY.clear()
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("復旧後に通知が届く", len(NOTIFY) >= 1, NOTIFY)
+
+# ── 75. 失敗の原因が変わったら、もう一度知らせる ────────────────────
+print("\n(75) 原因が変わったとき")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    creation_id="C_CH", post_id="P_CH", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED, logged=False)
+W.log_insert_behavior = lambda n: "fail"
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+first_n = len(NOTIFY)
+print("  → 原因がトークン切れに変わる")
+NOTIFY.clear()
+W.me_behavior = lambda n: "401"
+W.status_override = "__401__"
+post_state.set_part(post_state.fetch(op), 0, status=post_state.PART_UNKNOWN)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+W.me_behavior = None
+W.status_override = None
+check("1回目は知らせる", first_n >= 1, first_n)
+check("原因が変わったら改めて知らせる", len(NOTIFY) >= 1, NOTIFY)
+
+# ── 76. 宣伝の使用済み記録が失敗したら完了にしない ──────────────────
+print("\n(76) 宣伝の使用済み記録が失敗")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:evening"
+orig_mark = post_saas.mark_promo_used
+post_saas.mark_promo_used = lambda t: (_ for _ in ()).throw(OSError("書き込めない"))
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "evening")
+row = post_state.update(row, payload={"texts": ["宣伝X"], "original_first": "宣伝X",
+                                      "topic_tag": None, "image_url": "i", "promo": True},
+                        publisher_user_id="USER1")
+post_state.set_part(row, 0, hash=post_state.part_hash("宣伝X"),
+                    original_hash=post_state.part_hash("宣伝X"),
+                    creation_id="C_PX", post_id="P_PX", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED, logged=False)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("完了にしない", W.attempts[op]["status"] != "logged", W.attempts[op]["status"])
+check("回収対象に残る",
+      any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+print("  → 書き込めるようになったら片づく")
+post_saas.mark_promo_used = orig_mark
+marks = []
+post_saas.mark_promo_used = lambda t: marks.append(t)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+post_saas.mark_promo_used = orig_mark
+check("宣伝の使用済みが戻る", marks == ["宣伝X"], marks)
+check("完了になる", W.attempts[op]["status"] == "logged", W.attempts[op]["status"])
+
+
+# ── 77. 通常投稿でも、宣伝の使用済みが残っていれば完了にしない ──────────────
+print("\n(77) 通常投稿＋宣伝の使用済み失敗")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+orig_mark = post_saas.mark_promo_used
+post_saas.mark_promo_used = lambda t: (_ for _ in ()).throw(OSError("書き込めない"))
+orig_promo_time = post_saas.is_promo_time
+orig_pick_promo = post_saas.pick_promo
+post_saas.is_promo_time = lambda name, slot: True
+post_saas.pick_promo = lambda: {"text": "宣伝Z", "image_url": "img"}
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+post_saas.get_used_posts = lambda sid, slot: set()
+post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
+post_saas._enforce_threads_limit = lambda t: t
+post_saas._select_topic = lambda t, n: None
+W.publish_behavior = lambda cid, n: "ok"
+with contextlib.redirect_stdout(io.StringIO()):
+    st, dt = post_saas._run_slot(row, "go", SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
+post_saas.mark_promo_used = orig_mark
+post_saas.is_promo_time = orig_promo_time
+post_saas.pick_promo = orig_pick_promo
+check("投稿はされる", len(W.posts) == 1, len(W.posts))
+check("記録はされる", len(W.post_logs) == 1, len(W.post_logs))
+check("完了にしない", W.attempts[op]["status"] != "logged", W.attempts[op]["status"])
+check("回収対象に残る",
+      any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
