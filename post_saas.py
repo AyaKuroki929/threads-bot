@@ -212,21 +212,52 @@ def pick_post(salon_name, slot, used_texts):
     return chosen if isinstance(chosen, list) else [chosen]
 
 
+# ⚠️ 「BeforeAfterを載せています」「お客様の声を載せています」は、そのアカウントに
+# 実際にあるとは限らない。クライアントの実店舗の投稿なので、確かめていないことは書かない
+# （2026-09-12 Sol指摘）。中身を断定しない言い方だけを使う。
 _INSTAGRAM_CTA_TEMPLATES = [
-    "\ninstagram.com/{handle} に施術写真を載せています。",
-    "\ninstagram.com/{handle} にBeforeAfterを載せています。",
-    "\ninstagram.com/{handle} にお客様の声を載せています。",
-    "\ninstagram.com/{handle} に施術の様子を載せています。",
-    "\ninstagram.com/{handle} にサロンの写真を載せています。",
+    "\ninstagram.com/{handle} でも発信しています。",
+    "\n写真はこちらから → instagram.com/{handle}",
+    "\nふだんの様子は instagram.com/{handle} に載せています。",
+    "\ninstagram.com/{handle} もよかったら見てみてください。",
 ]
+
+# Instagramのユーザー名として成立する形（英数字・ドット・アンダースコア、30字まで）
+_IG_HANDLE_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
+def _instagram_handle(instagram_url):
+    """登録URLからユーザー名を取り出す。取り出せなければ None。
+
+    ⚠️ 「?r=nametag」「?igsh=...」のような付属パラメータが付いた形で登録されていることがある。
+    素朴に最後の「/」で切ると、nico.lymph は `?r=nametag` になり、
+    投稿のリンクが instagram.com のトップに飛んでいた（2026-09-12 実害を確認）。"""
+    if not instagram_url:
+        return None
+    u = str(instagram_url).split("?")[0].split("#")[0].strip().rstrip("/")
+    if not u:
+        return None
+    if "instagram.com" in u:
+        # https://www.instagram.com/<ユーザー名>/... の <ユーザー名> を取る
+        m = re.search(r"instagram\.com/([^/?#]+)", u)
+        handle = m.group(1) if m else ""
+    else:
+        handle = u.split("/")[-1]      # ユーザー名だけで登録されている場合
+    handle = handle.lstrip("@")
+    return handle if _IG_HANDLE_RE.match(handle) else None
 
 
 def _maybe_add_instagram_cta_saas(texts: list, instagram_url: str) -> list:
     """instagram_urlが設定されているサロンのみ、1/4の確率でCTAを末尾に追加。"""
     if not instagram_url or random.random() >= 0.25:
         return texts
-    handle = instagram_url.rstrip("/").split("/")[-1].lstrip("@")
+    handle = _instagram_handle(instagram_url)
     if not handle:
+        # ⚠️ 壊れたリンクを客先の投稿に載せない。気づけるよう知らせる
+        print(f"[cta] Instagramのユーザー名を取り出せません: {instagram_url}")
+        _notify_line("⚠️ とうこさん：Instagram誘導のリンクを作れませんでした。\n"
+                     f"登録内容：{str(instagram_url)[:120]}\n"
+                     "「https://www.instagram.com/ユーザー名」の形で登録し直してください。")
         return texts
     cta = random.choice(_INSTAGRAM_CTA_TEMPLATES).format(handle=handle)
     result = list(texts)

@@ -124,6 +124,7 @@ def reset(**kw):
         setattr(W, k, v)
 
 _real_check_prev = post_saas.check_previous_slot
+_real_ig_cta = post_saas._maybe_add_instagram_cta_saas
 
 SALON_ROW = {"id": SALON, "salon_name": "テストサロン", "access_token": "TOK",
              "threads_user_id": "USER1", "instagram_url": "", "is_active": True}
@@ -3210,6 +3211,39 @@ post_saas._deadline = None
 check("止まる", raised is not None, raised)
 check("通信を1回も始めない", W.calls.get("log_get", 0) == before,
       f'{W.calls.get("log_get", 0) - before}回')
+
+
+# ── 130. Instagram誘導のリンクが壊れない ────────────────────────
+print("\n(130) Instagram誘導のリンク")
+reset()
+cases = [
+    ("https://www.instagram.com/nico.lymph/?r=nametag", "nico.lymph"),
+    ("https://www.instagram.com/familie_suita_hiromi?igsh=abc&utm_source=qr",
+     "familie_suita_hiromi"),
+    ("https://www.instagram.com/tubamenosu_princess", "tubamenosu_princess"),
+    ("https://instagram.com/aya_kuroki_0929/", "aya_kuroki_0929"),
+    ("@handle_only", "handle_only"),
+    ("https://www.instagram.com/", None),      # ユーザー名が無い
+    ("", None),
+]
+ok = all(post_saas._instagram_handle(u) == want for u, want in cases)
+check("登録の書き方がどれでも正しく取れる", ok,
+      [(u, post_saas._instagram_handle(u), want) for u, want in cases
+       if post_saas._instagram_handle(u) != want])
+# 取れないときは誘導を付けない
+orig_rand = post_saas.random.random
+post_saas.random.random = lambda: 0.0          # 必ず付ける確率にする
+post_saas._maybe_add_instagram_cta_saas = _real_ig_cta      # 本物を使う
+out = post_saas._maybe_add_instagram_cta_saas(["本文"], "https://www.instagram.com/")
+check("取れないときは誘導を付けない", out == ["本文"], out)
+check("知らせる", any("Instagram誘導のリンクを作れません" in m for m in NOTIFY), NOTIFY)
+out2 = post_saas._maybe_add_instagram_cta_saas(["本文"],
+                                               "https://www.instagram.com/nico.lymph/?r=nametag")
+post_saas.random.random = orig_rand
+check("正しいリンクが入る", "instagram.com/nico.lymph" in out2[0], out2)
+check("余計なパラメータが入らない", "?r=nametag" not in out2[0], out2)
+check("確かめていない中身を断定しない",
+      not any(w in out2[0] for w in ("BeforeAfter", "お客様の声", "施術写真")), out2)
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
