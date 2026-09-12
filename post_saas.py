@@ -447,11 +447,42 @@ QUICK_RETRY_WAIT = 10                    # その他エラー時の待機秒
 MAX_POST_ATTEMPTS = len(TRANSIENT_RETRY_WAITS) + 1  # 合計4回試行
 
 
+# 一時障害とみなすHTTPステータス（待てば直るもの）
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+
 def _is_transient_error(e):
-    """Meta側の一時障害（リトライで回復しうる）かどうか。"""
+    """Meta側の一時障害（リトライで回復しうる）かどうか。
+
+    ⚠️ 文字列一致だけで判定してはいけない（2026-09-12 実害）。
+    自前で組み立てた "…HTTP 504: …" は拾えても、urllib が投げる生の HTTPError は
+    str() が "HTTP Error 504: Gateway Timeout" で間に Error が入るため一致せず、
+    「待っても直らないエラー」と誤判定して1回で諦めていた
+    （ファミリエさんの昼投稿が504で再試行されず未投稿になった）。
+    保護されていない通信箇所から生の例外が上がる経路があるので、
+    まず例外オブジェクトのステータス番号を見る。"""
+    import re
+    import socket
+
+    # ① 例外そのものがHTTPエラーなら、番号で判定（文字列の書式に依存しない）
+    code = getattr(e, "code", None)
+    if isinstance(code, int) and code in TRANSIENT_STATUS:
+        return True
+
     s = str(e)
-    return any(marker in s for marker in (
-        "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "HTTP 429", "is_transient"))
+    # ② 文字列中のステータス番号を拾う（"HTTP 504" / "HTTP Error 504" のどちらも）
+    m = re.search(r"HTTP\s*(?:Error\s*)?(\d{3})", s)
+    if m and int(m.group(1)) in TRANSIENT_STATUS:
+        return True
+
+    # ③ 通信が切れた・応答が返らない系も待てば直る
+    if isinstance(e, (socket.timeout, TimeoutError)):
+        return True
+    if any(w in s.lower() for w in
+           ("is_transient", "timed out", "timeout", "connection reset",
+            "connection aborted", "temporarily unavailable", "bad gateway")):
+        return True
+    return False
 
 
 def threads_post(user_id, token, texts, topic_tag=None, image_url=""):
