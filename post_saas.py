@@ -998,11 +998,11 @@ def _acquire_with_retry(salon_id, jst_date, slot, attempts=3):
 def _to_human(row, note, message, quiet=False):
     """「人が確認するまで自動では触らない(attention)」へ移す。
 
-    ⚠️ 知らせが送れなかったら attention にしない。attention は回収対象から外れるので、
-    通知が届かないまま誰も気づけなくなる（2026-09-12 Sol指摘#3）。
-    送れるまでは hold_repair（回収対象に残る）で待つ。"""
+    ⚠️ 知らせが**届いてから**でないと attention にしない。attention は回収対象から
+    外れるので、届かないまま移すと誰も気づけない（2026-09-12 Sol指摘#1〜3）。
+    届くまでは hold_repair（回収対象に残る）で待ち、回収のまとめ通知が届いた時点で移す。"""
     if quiet:
-        # 回収中はまとめ通知が担当する。送れるまで hold_repair に残す
+        # 回収中。まとめ通知が届いたら _mark_notified() が attention へ移す
         _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=note)
         return False
     if _notify_line(message):
@@ -1033,12 +1033,10 @@ def _state_finish(row, status, note=None):
             # 取り直さずに同じ行で粘っても永久に通らない
             fresh = _safe_fetch(row.get("op_id"), None)
             if fresh:
-                # ⚠️ 取り直しても無条件に上書きしない。別の実行が「人待ち」や「完了」に
-                # したものを、こちらの古い結末で戻すと停止が破れる（2026-09-12 Sol指摘#1）
-                if fresh.get("status") in (post_state.STATUS_ATTENTION,
-                                           post_state.STATUS_LOGGED) \
-                        and status not in (post_state.STATUS_ATTENTION,
-                                           post_state.STATUS_LOGGED):
+                # ⚠️ 取り直しても無条件に上書きしない。別の実行が状態を変えていたら、
+                # こちらの古い結末で戻すと停止や完了が破れる（2026-09-12 Sol指摘#3）。
+                # 書き直してよいのは「意味が変わっていない（同じ状態のまま）」ときだけ
+                if fresh.get("status") != row.get("status"):
                     print(f"[state] 別の実行が {fresh.get('status')} にしています → 上書きしません")
                     return False
                 row = fresh
@@ -1277,6 +1275,11 @@ def _add_failure(failures, row, op_id, kind, reason):
     failures.append({"op_id": op_id, "kind": kind, "text": f"{op_id}（{reason}）"})
 
 
+# 「人が見ないと先へ進めない」失敗の種類。まとめ通知が届いたら attention へ移す
+HUMAN_KINDS = {"publisher_mismatch", "publisher_unknown", "payload_missing",
+               "original_mismatch", "mismatch", "no_text", "account", "hold"}
+
+
 def _notified_kinds(row):
     """この枠で、これまでに知らせた失敗の種類。"""
     note = row.get("note") or ""
@@ -1297,7 +1300,11 @@ def _mark_notified(failures):
                 continue
             kinds = _notified_kinds(cur) | {f["kind"]}
             base = (cur.get("note") or "").split(RECOVER_NOTE_MARK)[0]
-            post_state.update(cur, note=base + RECOVER_NOTE_MARK + ",".join(sorted(kinds)))
+            fields = {"note": base + RECOVER_NOTE_MARK + ",".join(sorted(kinds))}
+            # 知らせが届いたので、人の確認待ちへ移してよい（届くまでは回収対象に残す）
+            if f["kind"] in HUMAN_KINDS and cur.get("status") == post_state.STATUS_HOLD_REPAIR:
+                fields["status"] = post_state.STATUS_ATTENTION
+            post_state.update(cur, **fields)
         except Exception as e:
             print(f"[state] 通知済み印の保存に失敗（続行）: {str(e)[:60]}")
 
@@ -1410,27 +1417,27 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
         # ⚠️ 公開したのは別の本文。ここで payload の本文を記録すると、
         # 出していない本文が「使用済み」になり、出した本文は使用済みにならない
         # （2026-09-12 Sol指摘#1）
-        _state_finish(row, post_state.STATUS_ATTENTION,
-                      note="公開した本文と台帳の本文が食い違うため記録できません（人の確認が必要）")
-        if not quiet:
-            _notify_line(f"🚨 とうこさん：{salon['salon_name']} の {jst_date} {slot} は、"
-                         "公開した本文と台帳の本文が食い違います。記録を戻せないので確認してください。")
+        _to_human(row, "公開した本文と台帳の本文が食い違うため記録できません（人の確認が必要）",
+                  f"🚨 とうこさん：{salon['salon_name']} の {jst_date} {slot} は、"
+                  "公開した本文と台帳の本文が食い違います。記録を戻せないので確認してください。",
+                  quiet=quiet)
         return "mismatch", "公開した本文と台帳の本文が食い違います（人の確認が必要）"
     if st0 == post_state.PART_PUBLISHED and not text:
         # ⚠️「本文を復元できない」と「公開していない」は別（2026-09-12 Sol指摘#4）。
         # 公開済みなら記録対象から外さず、人に渡す
-        _state_finish(row, post_state.STATUS_ATTENTION,
-                      note="公開済みだが本文を復元できず、記録を戻せません（人の確認が必要）")
+        _to_human(row, "公開済みだが本文を復元できず、記録を戻せません（人の確認が必要）",
+                  f"🚨 とうこさん：{salon['salon_name']} の {jst_date} {slot} は公開済みですが、"
+                  "本文を復元できず記録を戻せません。確認してください。", quiet=quiet)
         return "no_text", "公開済みだが本文を復元できず、記録を戻せません"
     if st0 != post_state.PART_PUBLISHED or not text:
         # 公開していないことが分かっている＝自動でできることは無い。
         # logged を立てて回収対象から外す（毎回この行で枠を使い潰さないため・Sol指摘#6）
         try:
-            post_state.update(row, logged=True, status=post_state.STATUS_ATTENTION,
+            post_state.update(row, logged=True, status=post_state.STATUS_HOLD_REPAIR,
                               note=(row.get("note") or "") + "／記録すべき公開投稿なし（人の確認待ち）")
         except Exception as e:
             print(f"[state] 人待ち印の保存に失敗: {str(e)[:80]}")
-        return
+        return "no_text", "記録すべき公開投稿が見つかりません（人の確認が必要）"
     try:
         log_post_with_retry(salon["id"], slot, text, row["op_id"],
                             posted_at=first.get("published_ts") or first.get("created_ts"))
@@ -1451,12 +1458,17 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
             # 台帳を書き換えたので手元の行は古い。取り直さないと次の更新が弾かれる
             row = post_state.fetch(row["op_id"]) or row
         try:
+            # ⚠️ finish_status が無い＝「投稿は止めたまま記録だけ戻した」ケース。
+            # ここで attention にすると、まだ何も知らせていないのに回収対象から外れる
+            # （2026-09-12 Sol指摘#1）。知らせが届いてから移す（_mark_notified）
             post_state.update(row, logged=True,
-                              status=finish_status or post_state.STATUS_ATTENTION,
+                              status=finish_status or post_state.STATUS_HOLD_REPAIR,
                               note=None if finish_status else
                                    (row.get("note") or "") + "／記録は復旧済み")
         except Exception as e:
             print(f"[state] 記録済み印の保存に失敗: {str(e)[:80]}")
+        if not finish_status:
+            return "hold", "記録は戻しましたが、続きは自動で出せません（人の確認が必要）"
     except Exception as e:
         # ⚠️ 失敗したのに finish_status（logged）を採用しない。採用すると
         # 記録が無いまま完了扱いになり、二度と回収されない（2026-09-12 Sol指摘#2）
@@ -1694,12 +1706,10 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         print(f"[RESUME] {salon_name}: {slot} 前回の続きから（{len(texts)}部）")
     elif action == "resume":
         # 続きのはずなのに本文が残っていない。何を出したか分からないので触らない
-        _state_finish(row, post_state.STATUS_ATTENTION,
-                      note="payload が無く、何を投稿すべきか復元できません")
-        if not quiet:
-            _notify_line(f"🚨 とうこさん：{salon_name} の {slot} が途中で止まっていますが、"
-                         "何を投稿すべきかの記録が残っておらず再開できません。\n"
-                         "二重投稿を避けるため自動での投稿はしません。")
+        _to_human(row, "payload が無く、何を投稿すべきか復元できません",
+                  f"🚨 とうこさん：{salon_name} の {slot} が途中で止まっていますが、"
+                  "何を投稿すべきかの記録が残っておらず再開できません。\n"
+                  "二重投稿を避けるため自動での投稿はしません。", quiet=quiet)
         return "error", "前回の本文が台帳に残っておらず再開できません", "payload_missing"
     else:
         used = get_used_posts(salon_id, slot)
@@ -1751,10 +1761,9 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         bad_original = _original_mismatch(row, original_first)
         if bad_original:
             print(f"[log_post] 記録しません: {bad_original}")
-            _state_finish(row, post_state.STATUS_ATTENTION, note=bad_original)
-            if not quiet:
-                _notify_line(f"🚨 とうこさん：{salon_name} の {slot} は投稿できましたが、"
-                             f"{bad_original}。記録を戻せないので確認してください。")
+            _to_human(row, bad_original,
+                      f"🚨 とうこさん：{salon_name} の {slot} は投稿できましたが、"
+                      f"{bad_original}。記録を戻せないので確認してください。", quiet=quiet)
             return "error", bad_original, "original_mismatch"
         try:
             # CTA付与後の本文を記録すると get_used_posts との突合が永遠に外れ、
@@ -1795,14 +1804,19 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
     detail = (res["note"] or ("宣伝の使用済み記録に失敗（投稿自体は公開済み）"
                               if logged and not promo_ok
                               else "投稿記録の保存に失敗（投稿自体は公開済み）"))
-    _state_finish(row, res["slot_status"], note=detail)
     print(f"[INCOMPLETE] {salon_name}: {detail}")
-    if res["note"] and not quiet:
-        again = ("人が確認するまで自動では触りません。"
-                 if res["slot_status"] == post_state.STATUS_ATTENTION
-                 else "二重投稿を避けるため、次の実行は同じ続きから再開します。")
-        _notify_line(f"⚠️ とうこさん 投稿が途中で止まりました\n\n"
-                     f"アカウント：{account_label}\nスロット：{slot}\n{detail}\n\n{again}")
+    if res["slot_status"] == post_state.STATUS_ATTENTION:
+        # 人の確認が要る停止は、知らせが届いてから attention にする
+        _to_human(row, detail,
+                  f"⚠️ とうこさん 投稿が途中で止まりました\n\n"
+                  f"アカウント：{account_label}\nスロット：{slot}\n{detail}\n\n"
+                  "人が確認するまで自動では触りません。", quiet=quiet)
+    else:
+        _state_finish(row, res["slot_status"], note=detail)
+        if res["note"] and not quiet:
+            _notify_line(f"⚠️ とうこさん 投稿が途中で止まりました\n\n"
+                         f"アカウント：{account_label}\nスロット：{slot}\n{detail}\n\n"
+                         "二重投稿を避けるため、次の実行は同じ続きから再開します。")
     # 記録は済ませたうえで、トークン切れだけは呼び出し側に伝える（専用通知のため）
     if isinstance(res.get("error"), TokenExpiredError):
         raise res["error"]

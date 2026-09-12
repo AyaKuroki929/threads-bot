@@ -2191,5 +2191,42 @@ with contextlib.redirect_stdout(io.StringIO()):
                         "noon", "@testsalon")
 check("送れたら人待ちにする", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
 
+
+# ── 92. 回収で人待ちへ移すのは、まとめ通知が届いてから ──────────────────
+print("\n(92) 回収での人待ち移行")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+# 2部構成で、1部目だけ公開済み（続きが残っている＝投稿処理に入る枠）
+row = post_state.update(row, payload={"texts": TEXTS2, "original_first": TEXTS2[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="ACCOUNT_A", logged=True)   # 別アカウントで始めた枠
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED)
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS2[0]),
+                    original_hash=post_state.part_hash(TEXTS2[0]),
+                    creation_id="C_HM", post_id="P_HM", status=post_state.PART_PUBLISHED)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+NOTIFY_OK[0] = False
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("届かないうちは人待ちにしない",
+      W.attempts[op]["status"] == "hold_repair", W.attempts[op]["status"])
+check("回収対象に残る",
+      any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+print("  → LINEが復旧したら知らせて、人待ちへ移す")
+NOTIFY_OK[0] = True
+NOTIFY.clear()
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("知らせが届く", any("片づけられなかった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+check("人待ちへ移る", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("以後は回収対象から外れる",
+      not any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
