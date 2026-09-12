@@ -442,9 +442,30 @@ def _enforce_threads_limit(texts):
 # Meta(Threads)側の一時障害（HTTP 5xx / 429 / is_transient）は数分続くことがある。
 # その場合は段階的に待ち時間を延ばして粘る（30秒→2分→5分）。待っている間に
 # Metaが復旧すれば投稿成功する。通常エラー（400等の恒久エラー）は短い待ちで済ます。
-TRANSIENT_RETRY_WAITS = [30, 120, 300]  # 一時障害時の待機秒（失敗回数ごと）
+# 一時障害時の待機秒（失敗回数ごと）。合計230秒。
+# ⚠️ 以前は [30,120,300]＝合計450秒で、ジョブ全体の制限10分に対して1サロンで使い切り、
+# 後続サロンが時間切れで投稿できなくなる状態だった（2026-09-12 Sol指摘）。
+# 回数は増やさない（増やすと応答喪失時の二重投稿リスクが上がる）。
+TRANSIENT_RETRY_WAITS = [20, 60, 150]
 QUICK_RETRY_WAIT = 10                    # その他エラー時の待機秒
 MAX_POST_ATTEMPTS = len(TRANSIENT_RETRY_WAITS) + 1  # 合計4回試行
+
+# 実行全体で「待機」に使ってよい上限。これを超えたら待たずに次のサロンへ進む。
+# 障害が長引いたときに、先頭のサロンだけ粘って残り全員が欠ける事態を防ぐ（2026-09-12 Sol指摘）。
+RETRY_BUDGET_SEC = int(os.environ.get("RETRY_BUDGET_SEC", "300"))
+_retry_spent = 0.0
+
+
+def _wait_within_budget(wait: int, label: str) -> bool:
+    """予算内なら待って True。予算切れなら待たずに False（＝このサロンは諦めて次へ）。"""
+    global _retry_spent
+    if _retry_spent + wait > RETRY_BUDGET_SEC:
+        print(f"[api]   → 待機予算切れ（使用{int(_retry_spent)}秒/{RETRY_BUDGET_SEC}秒）。"
+              f"{label}は諦めて次のサロンへ進む（後続を巻き添えにしない）")
+        return False
+    time.sleep(wait)
+    _retry_spent += wait
+    return True
 
 
 # 一時障害とみなすHTTPステータス（待てば直るもの）
@@ -513,7 +534,8 @@ def threads_post(user_id, token, texts, topic_tag=None, image_url=""):
                     else:
                         wait = QUICK_RETRY_WAIT
                         print(f"[api]   → {wait}秒待って再試行")
-                    time.sleep(wait)
+                    if not _wait_within_budget(wait, f"part {i+1}"):
+                        break
         if last_exc:
             raise last_exc
 
