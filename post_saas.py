@@ -953,7 +953,7 @@ def threads_post(row, user_id, token, texts, topic_tag=None, image_url="",
                     root_published = True
                     first_post_id = e.fields.get("post_id")
                 print(f"[state] {label} 公開は成功・台帳保存に失敗 → 記録だけ残します")
-                return _result(False, post_state.STATUS_ATTENTION,
+                return _result(False, post_state.STATUS_HOLD_REPAIR,
                                f"{label}は公開できましたが台帳に保存できませんでした"
                                f"（post_id={e.fields.get('post_id') or '未取得'}）", error=e)
             if not root_published:
@@ -1005,6 +1005,11 @@ def _state_finish(row, status, note=None):
             return True
         except Exception as e:
             print(f"[state] 結末の保存に失敗 {i}/3: {str(e)[:100]}")
+            # ⚠️ 途中で他の更新が入って手元の行が古くなっていることがある。
+            # 取り直さずに同じ行で粘っても永久に通らない
+            fresh = _safe_fetch(row.get("op_id"), None)
+            if fresh:
+                row = fresh
             if i < 3:
                 time.sleep(2 * i)
             else:
@@ -1162,18 +1167,16 @@ def _promo_used_from_db(salon_id, days=180):
         used = {post_state.norm_text(r.get("post_content")) for r in rows}
         # ⚠️ まだ片づいていない枠（公開したかもしれない・記録が未完）で使った宣伝文も外す。
         # 外さないと、翌週その文をもう一度選んで二重投稿になる（2026-09-12 Sol指摘#1）
-        since_date = (datetime.now(JST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        # ⚠️ 未解決の枠は**日付で切らない**。何日前でも、公開したかもしれない本文を
+        # もう一度選んではいけない（2026-09-12 Sol指摘#5）
         pending = supabase_get("post_attempts", {
-            "select": "payload,status,logged", "salon_id": f"eq.{salon_id}",
-            "slot": f"eq.{PROMO_SLOT}", "jst_date": f"gte.{since_date}", "limit": "200"})
+            "select": "payload", "salon_id": f"eq.{salon_id}",
+            "slot": f"eq.{PROMO_SLOT}",
+            "status": "in.(unknown,published,running,hold_repair,attention)", "limit": "500"})
         for r in pending:
             pl = r.get("payload") or {}
-            if not pl.get("promo"):
-                continue
-            if r.get("status") == "logged" and pl.get("promo_used"):
-                continue          # 完全に片づいている（post_logs 側で拾える）
             txt = pl.get("original_first")
-            if txt:
+            if pl.get("promo") and txt and not pl.get("promo_used"):
                 used.add(post_state.norm_text(txt))
         return used
     except Exception as e:
@@ -1559,14 +1562,14 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     _add_failure(failures, row, op_id, "account", msg)
                     continue
                 try:
-                    status, detail = _run_slot(row, "resume", salon, user_id, token, slot, label,
-                                               quiet=True)
+                    status, detail, kind = _run_slot(row, "resume", salon, user_id, token,
+                                                     slot, label, quiet=True)
                     if status == "ok":
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot} を完了しました")
                     else:
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot} は未完のまま: {detail}")
                         _add_failure(failures, _safe_fetch(op_id, row), op_id,
-                                     "incomplete", str(detail)[:60])
+                                     kind or "incomplete", str(detail)[:60])
                 except TokenExpiredError:
                     print(f"[recover] トークン切れ: {op_id}")
                     _state_finish(row, post_state.STATUS_UNKNOWN, note="トークン切れで回収できず")
@@ -1623,7 +1626,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         if not quiet:
             _notify_line(f"🚨 とうこさん：{salon_name} の {slot} を続けようとしましたが、{msg}。\n"
                          "別のアカウントへ投稿しないよう止めました。")
-        return "error", msg
+        return "error", msg, "publisher_mismatch"
     if not owner:
         # ⚠️ すでに公開やコンテナ作成の履歴がある行に、今のアカウントを後付けしない。
         # 後付けすると、再連携後のアカウントで旧枠の続きを出せてしまう（Sol指摘#1）
@@ -1636,7 +1639,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
             if not quiet:
                 _notify_line(f"🚨 とうこさん：{salon_name} の {slot} を続けようとしましたが、{msg}。\n"
                              "別のアカウントへ投稿しないよう止めました。")
-            return "error", msg
+            return "error", msg, "publisher_unknown"
         try:
             row = post_state.update(row, publisher_user_id=str(user_id))
         except Exception as e:
@@ -1661,7 +1664,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
             _notify_line(f"🚨 とうこさん：{salon_name} の {slot} が途中で止まっていますが、"
                          "何を投稿すべきかの記録が残っておらず再開できません。\n"
                          "二重投稿を避けるため自動での投稿はしません。")
-        return "error", "前回の本文が台帳に残っておらず再開できません"
+        return "error", "前回の本文が台帳に残っておらず再開できません", "payload_missing"
     else:
         used = get_used_posts(salon_id, slot)
         promo = None
@@ -1716,7 +1719,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
             if not quiet:
                 _notify_line(f"🚨 とうこさん：{salon_name} の {slot} は投稿できましたが、"
                              f"{bad_original}。記録を戻せないので確認してください。")
-            return "error", bad_original
+            return "error", bad_original, "original_mismatch"
         try:
             # CTA付与後の本文を記録すると get_used_posts との突合が永遠に外れ、
             # 同じ投稿が数日内に再選択されるため、必ず加工前の原文を記録する
@@ -1751,7 +1754,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         _state_finish(row, post_state.STATUS_LOGGED)
         _sync_last_run(salon_name, slot, jst_date=row.get("jst_date"))
         print(f"[OK] {salon_name}: post_id={post_id}")
-        return "ok", None
+        return "ok", None, None
 
     detail = (res["note"] or ("宣伝の使用済み記録に失敗（投稿自体は公開済み）"
                               if logged and not promo_ok
@@ -1767,7 +1770,8 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
     # 記録は済ませたうえで、トークン切れだけは呼び出し側に伝える（専用通知のため）
     if isinstance(res.get("error"), TokenExpiredError):
         raise res["error"]
-    return "error", detail
+    return "error", detail, ("hold" if res["slot_status"] == post_state.STATUS_ATTENTION
+                             else "incomplete")
 
 
 def main():
@@ -1950,7 +1954,8 @@ def main():
                 results["ok"].append(salon_name)
                 continue
 
-            status, detail = _run_slot(row, action, salon, user_id, token, SLOT, account_label)
+            status, detail, _kind = _run_slot(row, action, salon, user_id, token,
+                                              SLOT, account_label)
             if status == "ok":
                 results["ok"].append(salon_name)
             else:

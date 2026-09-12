@@ -178,7 +178,12 @@ def main():
         used_db = post_saas._promo_used_from_db(_promo_salon_id())
         used |= {p for p in posts if post_saas.post_state.norm_text(p) in used_db}
     except Exception as e:
-        print(f"[promo] DBからの使用済み確認に失敗（ファイルのみで判断）: {str(e)[:100]}")
+        # ⚠️「確認できなかった」を「在庫は足りている」にしない。
+        # 投稿側は使用済みとして除外するので、補充が止まって在庫切れになる
+        # （2026-09-12 Sol指摘#1）
+        print(f"::error::[promo] DBからの使用済み確認に失敗しました: {str(e)[:150]}")
+        print("[promo] 在庫の判断ができないので、補充は行わず失敗として終わります")
+        sys.exit(1)
     unused = [p for p in posts if p not in used]
 
     print(f"[promo] 在庫: 未使用{len(unused)}本 / 全{len(posts)}本")

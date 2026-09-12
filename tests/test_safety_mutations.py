@@ -172,8 +172,13 @@ MUTATIONS = [
      "            if not _mark_promo_done(row, text):",
      "            if False and not _mark_promo_done(row, text):"),
     ("未確定の台帳に残る宣伝文も候補から外す",
-     "            txt = pl.get(\"original_first\")\n            if txt:",
-     "            txt = None\n            if txt:"),
+     '            if pl.get("promo") and txt and not pl.get("promo_used"):',
+     "            if False:"),
+    ("公開後の台帳保存失敗は記録の修復を続ける(hold_repair)",
+     "                return _result(False, post_state.STATUS_HOLD_REPAIR,\n"
+     '                               f"{label}は公開できましたが台帳に保存できませんでした"',
+     "                return _result(False, post_state.STATUS_ATTENTION,\n"
+     '                               f"{label}は公開できましたが台帳に保存できませんでした"'),
     ("使用済みを確認できないときの通常投稿への切替",
      "            except PromoCheckFailed as e:",
      "            except KeyError as e:"),

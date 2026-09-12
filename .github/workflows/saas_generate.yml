@@ -96,6 +96,9 @@ jobs:
       - name: Refill promo posts (personal Monday)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 使用済みの正本はDB。渡さないと補充側だけ「未使用」と数えて補充が止まる
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python3 generate_promo_posts.py ${{ inputs.force_promo && '--force' || '' }}
 
       - name: Remove service account file

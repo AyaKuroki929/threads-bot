@@ -114,7 +114,7 @@ def run(texts):
         post_saas._enforce_threads_limit = lambda t: t
         post_saas._select_topic = lambda t, n: None
     try:
-        status, detail = post_saas._run_slot(row, action, SALON_ROW, "USER1", "TOK",
+        status, detail, _k = post_saas._run_slot(row, action, SALON_ROW, "USER1", "TOK",
                                              "noon", "@testsalon")
     except Exception as e:
         return {"action": action, "exc": f"{type(e).__name__}: {e}"}, row, e
@@ -1014,12 +1014,14 @@ part = post_state.get_part(post_state.fetch(op), 0) or {}
 check("持ち越しの『結果不明』は消えない", part.get("lost_response") is True,
       json.dumps(part, ensure_ascii=False))
 print("  → 旧コンテナ400＋EXPIREDで再実行しても作り直さない")
-W.publish_behavior = lambda cid, n: "http400"
-W.status_override = "EXPIRED"
+W.publish_behavior = lambda cid, n: "http400" if cid == "C_P" else "ok"
+W.status_override = lambda cid: "EXPIRED" if cid == "C_P" else W.containers[cid]["status"]
 with contextlib.redirect_stdout(io.StringIO()):
-    post_saas._finalize_part(post_state.fetch(op), 0, "USER1", "TOK", "C_P", "part 1/1",
-                             lost_before=True)
+    # 本物の投稿処理を通す（ここを通さないと「作り直し」の判定を検査できない）
+    post_saas.threads_post(post_state.fetch(op), "USER1", "TOK", TEXTS1,
+                           original_first=TEXTS1[0])
 check("コンテナを作り直さない", W.calls["create"] == 0, W.calls["create"])
+check("投稿もしない", len(W.posts) == 0, len(W.posts))
 W.status_override = None
 
 # ── 44. FINISHED を「公開済み」として記録しない ─────────────────────
@@ -1589,7 +1591,7 @@ pl = dict(cur["payload"]); pl["original_first"] = "出していない原文"
 post_state.update(cur, payload=pl, status=post_state.STATUS_PUBLISHED, logged=False)
 W.publish_behavior = lambda cid, n: "ok"
 with contextlib.redirect_stdout(io.StringIO()):
-    status, detail = post_saas._run_slot(post_state.fetch(op), "resume", SALON_ROW,
+    status, detail, _k = post_saas._run_slot(post_state.fetch(op), "resume", SALON_ROW,
                                          "USER1", "TOK", "noon", "@testsalon")
 check("出していない原文を記録しない",
       not any(l["post_content"] == "出していない原文" for l in W.post_logs), W.post_logs)
@@ -1731,7 +1733,7 @@ W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=1)).isoformat()
 post_saas.pick_post = lambda name, slot, used: ["本文B"]
 a2, row2 = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
 with contextlib.redirect_stdout(io.StringIO()):
-    st2, d2 = post_saas._run_slot(row2, a2, SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
+    st2, d2, _k = post_saas._run_slot(row2, a2, SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
 check("本文Bが公開される", any(p["text"] == "本文B" for p in W.posts), [p["text"] for p in W.posts])
 check("本文Bが記録される", any(l["post_content"] == "本文B" for l in W.post_logs), W.post_logs)
 check("完了になる", W.attempts[op]["status"] == "logged", W.attempts[op]["status"])
@@ -1861,7 +1863,7 @@ post_saas._enforce_threads_limit = lambda t: t
 post_saas._select_topic = lambda t, n: None
 W.publish_behavior = lambda cid, n: "ok"
 with contextlib.redirect_stdout(io.StringIO()):
-    st, dt = post_saas._run_slot(row, "go", SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
+    st, dt, _k = post_saas._run_slot(row, "go", SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
 post_saas.mark_promo_used = orig_mark
 post_saas.is_promo_time = orig_promo_time
 post_saas.pick_promo = orig_pick_promo
@@ -2093,6 +2095,47 @@ post_state.fetch = orig_fetch
 check("例外が外へ出ない", escaped is None, escaped)
 check("まとめ通知は届く", any("片づけられなかった" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
+
+
+# ── 87. 公開後に台帳が書けなくても、記録の修復は自動で続く ────────────────
+print("\n(87) 公開成功→台帳保存失敗→次回に記録が戻る")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{JST_DATE}:noon"
+W.publish_behavior = lambda cid, n: "ok"
+def fail_published_patch2(o, body):
+    parts = (body or {}).get("parts")
+    if parts and any(p.get("status") == "published" for p in parts):
+        return "fail"
+    return "ok"
+W.attempts_patch_behavior = fail_published_patch2
+W.log_insert_behavior = lambda n: "fail"
+(res, row, _), out = quiet(lambda: run(TEXTS1))
+check("投稿は出る", len(W.posts) == 1, len(W.posts))
+check("記録の修復が続く状態で残る",
+      W.attempts[op]["status"] == "hold_repair", W.attempts[op]["status"])
+check("回収対象に残る",
+      any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+
+# ── 88. 人の確認待ち(attention)は、自動処理を一切通さない ──────────────
+print("\n(88) attention は自動で触らない")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人の確認待ち")
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(days=2)).isoformat()
+for allow in (False, True):
+    act, _r = post_state.acquire(SALON, JST_DATE, "noon", allow_attention=allow)
+    check(f"allow_attention={allow} でも hold", act == "hold", act)
+check("回収対象に入らない",
+      not any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+check("状態が変わらない", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("公開要求は0回", W.calls["publish"] == 0, W.calls["publish"])
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
