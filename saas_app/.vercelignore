@@ -1,0 +1,9 @@
+# vercel env pull で作られる控え。Stripe・Supabase・Metaの本番キーが入っているので
+# デプロイの中身に含めない（環境変数はVercel側に登録済みで、ここのファイルは使わない）
+.env*
+
+# GAS（Googleスプレッドシート側のコード）はVercelでは動かない
+*.gs
+.clasp.json
+.claspignore
+appsscript.json
