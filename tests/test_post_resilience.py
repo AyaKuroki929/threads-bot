@@ -2776,5 +2776,126 @@ check("理由を知らせる", any("アカウント不一致" in m for m in NOTI
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
 post_saas.check_previous_slot = lambda salons: 0
 
+
+# ── 113. 夜の実行が、朝と昼の両方の取りこぼしを見る ───────────────────
+print("\n(113) 未解決の過去枠をまとめて見る")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "evening"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+W.salons = [dict(SALON_ROW)]
+by_slot = {"morning": ["朝の本文"], "noon": ["昼の本文"], "evening": ["夜の本文"]}
+post_saas.pick_post = lambda name, slot, used: list(by_slot[slot])
+W.publish_behavior = lambda cid, n: "ok"
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+out = sorted(p["text"] for p in W.posts)
+check("夜・昼・朝の3つとも出る", out == ["夜の本文", "昼の本文", "朝の本文"] or
+      set(out) == {"朝の本文", "昼の本文", "夜の本文"}, out)
+post_saas.check_previous_slot = lambda salons: 0
+
+# ── 114. 昨夜の枠が failed で残っていても、知らせる対象にする ───────────────
+print("\n(114) 既存の failed 行")
+reset()
+W.salons = [SALON_ROW]
+yop = f"{SALON}:{YESTERDAY}:evening"
+W.attempts[yop] = {"op_id": yop, "salon_id": SALON, "jst_date": YESTERDAY, "slot": "evening",
+                   "status": "failed", "parts": [], "rev": 0, "payload": None,
+                   "note": "未公開のまま期限切れ", "logged": False,
+                   "updated_at": (_dt.now(_tz.utc) - _td(hours=10)).isoformat()}
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "morning"
+NOTIFY_OK[0] = False
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.check_previous_slot(W.salons)
+check("知らせる対象に移す", W.attempts[yop]["status"] == "hold_repair",
+      W.attempts[yop]["status"])
+check("回収対象に入る",
+      any(r["op_id"] == yop for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+NOTIFY_OK[0] = True
+post_saas.check_previous_slot = lambda salons: 0
+
+# ── 115. 確認できなかった枠も台帳に残る ──────────────────────────
+print("\n(115) 確認不能を持ち越す")
+reset()
+W.salons = [SALON_ROW]
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "noon"
+orig_apt = post_saas.already_posted_today
+post_saas.already_posted_today = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
+NOTIFY_OK[0] = False
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.check_previous_slot(W.salons)
+post_saas.already_posted_today = orig_apt
+NOTIFY_OK[0] = True
+mop = f"{SALON}:{JST_DATE}:morning"
+check("台帳に残る", mop in W.attempts, list(W.attempts))
+check("回収対象に入る",
+      any(r["op_id"] == mop for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+post_saas.check_previous_slot = lambda salons: 0
+
+# ── 116. 実行中に日付が変わったら、翌日の枠を作らない ───────────────────
+print("\n(116) 日付跨ぎで翌日枠を作らない")
+reset()
+post_saas.SLOT = "evening"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["夜の本文"]
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+_orig_dt = post_saas.datetime
+
+
+class _Rolling:
+    """main() が始まったあとで日付が変わる状況を作る"""
+    def __init__(self):
+        self.calls = 0
+
+    def now(self, tz=None):
+        self.calls += 1
+        d = _orig_dt.now(tz)
+        return d if self.calls <= 1 else d + _td(days=1)
+
+    def __getattr__(self, name):
+        return getattr(_orig_dt, name)
+
+
+post_saas.datetime = _Rolling()
+_orig_rolled = post_saas._date_rolled_over
+post_saas._date_rolled_over = lambda: False   # ← ループ離脱を外し、対象日の固定だけを検査する
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+post_saas._date_rolled_over = _orig_rolled
+post_saas.datetime = _orig_dt
+tomorrow = (_dt.now(_tz(_td(hours=9))) + _td(days=1)).strftime("%Y-%m-%d")
+check("翌日の台帳を作らない", not any(tomorrow in k for k in W.attempts), list(W.attempts))
+print("  → ループ離脱の方も単独で効く")
+reset()
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+post_saas.datetime = _Rolling()
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+post_saas.datetime = _orig_dt
+check("投稿しない", len(W.posts) == 0, [p["text"] for p in W.posts])
+check("知らせる", any("日付が変わった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:150])
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

@@ -193,6 +193,22 @@ MUTATIONS = [
     ("メモの追記で通知済みの印を壊さない",
      "        head, mark = note.split(RECOVER_NOTE_MARK, 1)\n        return head + extra + RECOVER_NOTE_MARK + mark",
      "        pass"),
+    ("日付跨ぎで翌日の枠を作らない（対象日の固定）",
+     '            jst_date = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")\n'
+     "            action, row = _acquire_with_retry(salon_id, jst_date, SLOT)",
+     '            jst_date = datetime.now(JST).strftime("%Y-%m-%d")\n'
+     "            action, row = _acquire_with_retry(salon_id, jst_date, SLOT)"),
+    ("未投稿・確認不能を台帳に残す",
+     '            post_state._req("POST", post_state.TABLE, body={\n'
+     '                "op_id": op_id, "salon_id": salon["id"], "jst_date": jst_date,',
+     '            {} and post_state._req("POST", post_state.TABLE, body={\n'
+     '                "op_id": op_id, "salon_id": salon["id"], "jst_date": jst_date,'),
+    ("failed の行も知らせる対象へ移す",
+     "        if row.get(\"status\") == post_state.STATUS_FAILED:",
+     "        if False:"),
+    ("その日の未解決な過去枠をすべて見る",
+     "    for slot in todo:\n        filled += _check_slot(salons, slot, yesterday_only=False)",
+     "    for slot in todo[-1:]:\n        filled += _check_slot(salons, slot, yesterday_only=False)"),
     ("実行中に日付が変わったら新しい投稿をしない",
      "                        if _date_rolled_over():",
      "                        if False and _date_rolled_over():"),
@@ -201,9 +217,6 @@ MUTATIONS = [
      '                failed.append(salon["salon_name"] + "（アカウント不一致）")',
      '            if False:\n'
      '                failed.append(salon["salon_name"] + "（アカウント不一致）")'),
-    ("昨夜の抜けを台帳に残す",
-     '                post_state._req("POST", post_state.TABLE, body={',
-     '                {} and post_state._req("POST", post_state.TABLE, body={'),
     ("確認できなかったサロンを知らせる",
      "    if unchecked:",
      "    if False:"),

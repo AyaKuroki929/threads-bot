@@ -1960,9 +1960,35 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
 
 
 # 直前のスロット（同じJST日のうちに埋められるもの）
+# その日の、いま実行しているスロットより前にあるスロット（古い順）
+EARLIER_SLOTS = {"morning": [], "noon": ["morning"], "evening": ["morning", "noon"]}
 PREV_SLOT = {"noon": "morning", "evening": "noon"}
 # 取りこぼしの穴埋めに使ってよい実時間。本来の枠を出し切ってから、この範囲で埋める
 GAPFILL_BUDGET_SEC = int(os.environ.get("GAPFILL_BUDGET_SEC", "150"))
+
+
+def _flag_missing(salon, jst_date, slot, note):
+    """「出ていない」「確認できなかった」枠を台帳に残す。
+
+    ⚠️ その場の通知1通で終わらせない。送れなければ二度と知らせる機会が無い。
+    hold_repair にしておけば、回収の仕組みが**届くまで**繰り返し知らせる
+    （2026-09-12 Sol指摘#3・#4）。"""
+    op_id = post_state.make_op_id(salon["id"], jst_date, slot)
+    try:
+        row = post_state.fetch(op_id)
+        if row is None:
+            post_state._req("POST", post_state.TABLE, body={
+                "op_id": op_id, "salon_id": salon["id"], "jst_date": jst_date,
+                "slot": slot, "status": post_state.STATUS_HOLD_REPAIR, "parts": [],
+                "rev": 0, "note": note})
+            return True
+        if row.get("status") == post_state.STATUS_FAILED:
+            # 未公開が確定している行。履歴は残したまま、知らせる対象へ移す
+            post_state.update(row, status=post_state.STATUS_HOLD_REPAIR, note=note)
+            return True
+    except Exception as e:
+        print(f"[gap] 未投稿の印を残せません（{salon['salon_name']}）: {str(e)[:80]}")
+    return False
 
 
 def check_previous_slot(salons):
@@ -1974,16 +2000,24 @@ def check_previous_slot(salons):
     二重投稿にならない（2026-09-12）。
 
     夜→翌朝は日をまたぐので埋めない（知らせるだけ）。返り値は埋めた件数。"""
-    global _deadline
-    prev = PREV_SLOT.get(SLOT)
-    yesterday_only = False
-    if not prev:
-        if SLOT != "morning":
-            return 0
+    # ⚠️ 直前の1枠だけを見ると、本来枠が時間切れで未着手のまま消える
+    # （2026-09-12 Sol指摘#2）。その日のうち、まだ済んでいない過去の枠を全部見る
+    todo = list(EARLIER_SLOTS.get(SLOT, []))
+    if SLOT == "morning":
         # 朝の実行では「昨夜の分」を点検する。日が変わっているので埋めはせず、知らせる
-        prev, yesterday_only = "evening", True
-    jst_date = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d") \
-        if yesterday_only else datetime.now(JST).strftime("%Y-%m-%d")
+        return _check_slot(salons, "evening", yesterday_only=True)
+    filled = 0
+    for slot in todo:
+        filled += _check_slot(salons, slot, yesterday_only=False)
+    return filled
+
+
+def _check_slot(salons, prev, yesterday_only=False):
+    """1つのスロットの取りこぼしを確認し、同じ日のうちなら埋める。"""
+    global _deadline
+    base = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")
+    jst_date = ((datetime.strptime(base, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+                if yesterday_only else base)
     missing, unchecked = [], []
     for salon in salons:
         try:
@@ -1997,11 +2031,16 @@ def check_previous_slot(salons):
             missing.append(salon)
         except Exception as e:
             print(f"[gap] {salon['salon_name']} の{prev}枠を確認できません: {str(e)[:80]}")
-            unchecked.append(salon["salon_name"])
+            unchecked.append(salon)
     if unchecked:
-        # ⚠️「確認できなかった」を「抜けなし」と言わない（2026-09-12 Sol指摘#3）
+        # ⚠️「確認できなかった」を「抜けなし」と言わない。台帳にも残して、
+        # 確認できるまで知らせ続ける（2026-09-12 Sol指摘#3）
+        for salon in unchecked:
+            _flag_missing(salon, jst_date, prev,
+                          "投稿が出ているか確認できませんでした（人の確認が必要）")
         _notify_line(f"⚠️ とうこさん：{prev} の投稿が出ているか確認できませんでした。\n"
-                     + "、".join(unchecked) + "\n次の実行でもう一度確認します。")
+                     + "、".join(s["salon_name"] for s in unchecked)
+                     + "\n台帳に残したので、確認できるまでお知らせします。")
     if not missing:
         if not unchecked:
             print(f"[gap] {prev} の取りこぼしはありません")
@@ -2015,16 +2054,8 @@ def check_previous_slot(salons):
         # 届くまで回収の仕組みが繰り返し知らせる
         print(f"[gap] 昨夜({jst_date}) {prev} の取りこぼし {len(missing)}件: {names}")
         for salon in missing:
-            try:
-                op_id = post_state.make_op_id(salon["id"], jst_date, prev)
-                if post_state.fetch(op_id):
-                    continue
-                post_state._req("POST", post_state.TABLE, body={
-                    "op_id": op_id, "salon_id": salon["id"], "jst_date": jst_date,
-                    "slot": prev, "status": post_state.STATUS_HOLD_REPAIR, "parts": [],
-                    "rev": 0, "note": "この枠は投稿されないまま日をまたぎました（人の確認が必要）"})
-            except Exception as e:
-                print(f"[gap] 未投稿の印を残せません（{salon['salon_name']}）: {str(e)[:80]}")
+            _flag_missing(salon, jst_date, prev,
+                          "この枠は投稿されないまま日をまたぎました（人の確認が必要）")
         _notify_line(f"🚨 とうこさん：昨夜（{jst_date}）の投稿が {len(missing)}件 出ていません。\n"
                      f"{names}\n"
                      "日をまたいだので自動では出しません。必要なら手動で出してください。")
@@ -2132,6 +2163,11 @@ def main():
     results = {"ok": [], "error": [], "token_expired": [], "held": []}
 
     for salon in salons:
+        if _date_rolled_over():
+            print("[date] 日付が変わったので、残りのサロンは次の実行に回します")
+            _notify_line("⚠️ とうこさん：処理の途中で日付が変わったため、"
+                         "残りのサロンは次の実行に回しました。")
+            break
         if _out_of_time("サロンの処理"):
             remaining = [s["salon_name"] for s in salons
                          if s["salon_name"] not in results["ok"]
@@ -2164,7 +2200,9 @@ def main():
             # post_logs だけを見ていた頃は、未確定＝未投稿と誤読して二重投稿していた。
             # ⚠️ /me より先に取る。全パート公開済みで記録だけ足りない枠を、
             # Threads側の障害に巻き込まれず片づけるため（2026-09-12 Sol指摘#4）
-            jst_date = datetime.now(JST).strftime("%Y-%m-%d")
+            # ⚠️ 対象日は実行開始時に固定する。途中で日付が変わってから
+            # 「翌日の枠」を作ると、まだ来ていない正規の投稿機会を潰す（Sol指摘#1）
+            jst_date = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")
             action, row = _acquire_with_retry(salon_id, jst_date, SLOT)
 
             if action == "hold":
