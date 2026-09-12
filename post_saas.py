@@ -1006,6 +1006,13 @@ def _to_human(row, note, message, quiet=False):
         _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=note)
         return False
     if _notify_line(message):
+        # ⚠️ 知らせが届いても、まだ自動で記録を戻せるなら回収対象に残す
+        # （2026-09-12 Sol指摘#1：通常経路だけ抜けていた）
+        fresh = _safe_fetch(row.get("op_id"), row) or row
+        if _repairable(fresh):
+            print("[state] 記録を戻せる余地があるので、人待ちにせず回収対象に残します")
+            _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=note)
+            return False
         _state_finish(row, post_state.STATUS_ATTENTION, note=note)
         return True
     print("[state] 知らせを送れなかったので、人待ちにせず次回へ残します")
@@ -1291,11 +1298,23 @@ def _repairable(row):
     first = post_state.get_part(row, 0) or {}
     if first.get("expired"):
         return False          # コンテナが消えた＝もう確かめようがない
-    if first.get("status") == post_state.PART_PUBLISHED:
-        return True           # 公開済み。記録を戻せる
     if first.get("status") in (post_state.PART_CONTAINER, post_state.PART_UNKNOWN):
         return True           # まだ確かめる余地がある
-    return False
+    if first.get("status") != post_state.PART_PUBLISHED:
+        return False
+    # ⚠️ 公開済みでも、記録に必要な本文がそろっていなければ自動では戻せない。
+    # 「公開済み」だけで判断すると、人の修正が要る行が回収枠を使い続ける
+    # （2026-09-12 Sol指摘#2）
+    payload = row.get("payload") or {}
+    texts = payload.get("texts") or []
+    text = payload.get("original_first") or (texts[0] if texts else None)
+    if not text or not texts:
+        return False
+    if first.get("hash") != post_state.part_hash(texts[0]):
+        return False
+    if _original_mismatch(row, text):
+        return False
+    return True
 
 
 def _notified_kinds(row):
@@ -1583,13 +1602,13 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     if row.get("logged") and _promo_pending(row):
                         # 記録は済んでいるが宣伝の使用済みが残っている
                         pl = row.get("payload") or {}
-                        if _mark_promo_done(row, pl.get("original_first") or ""):
-                            _state_finish(_safe_fetch(op_id, row),
-                                          post_state.STATUS_LOGGED)
+                        if _mark_promo_done(row, pl.get("original_first") or "") \
+                                and _state_finish(_safe_fetch(op_id, row),
+                                                  post_state.STATUS_LOGGED):
                             _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)
                         else:
                             _add_failure(failures, _safe_fetch(op_id, row), op_id,
-                                         "promo", "宣伝の使用済み記録を戻せない")
+                                         "promo", "宣伝の使用済み記録または完了印を残せない")
                         continue
                     if row.get("logged"):
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot}: 全公開・記録済み → 完了")
@@ -1977,13 +1996,14 @@ def main():
                 # 全パート公開済み＝もう投稿することは無い。/me を待たずに片づける
                 if row.get("logged") and _promo_pending(row):
                     pl = row.get("payload") or {}
-                    if _mark_promo_done(row, pl.get("original_first") or ""):
-                        _state_finish(post_state.fetch(row["op_id"]) or row,
-                                      post_state.STATUS_LOGGED)
+                    if _mark_promo_done(row, pl.get("original_first") or "") \
+                            and _state_finish(_safe_fetch(row["op_id"], row),
+                                              post_state.STATUS_LOGGED):
                         _sync_last_run(salon_name, SLOT, jst_date=jst_date)
                         results["ok"].append(salon_name)
                     else:
-                        results["error"].append(f"{salon_name}: 宣伝の使用済み記録を戻せない")
+                        results["error"].append(
+                            f"{salon_name}: 宣伝の使用済み記録または完了印を残せない")
                     continue
                 if row.get("logged"):
                     print(f"[{salon_name}] {SLOT}: 全パート公開・記録済み → 完了にします")

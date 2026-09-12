@@ -100,6 +100,8 @@ class World:
                 raise urllib.error.HTTPError("u", 500, "ISE", {}, io.BytesIO(b'{}'))
             if v == "__401__":
                 raise urllib.error.HTTPError("u", 401, "unauthorized", {}, io.BytesIO(b'{}'))
+            if v == "__403__":
+                raise urllib.error.HTTPError("u", 403, "forbidden", {}, io.BytesIO(b'{}'))
             return {"status": v} if v else {}
         c = self.containers.get(cid)
         return {"status": c["status"]} if c else {}

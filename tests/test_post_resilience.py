@@ -2315,5 +2315,143 @@ check("投稿は出る", len(W.posts) == 1, len(W.posts))
 check("記録も残る", len(W.post_logs) == 1, len(W.post_logs))
 check("成功とは言わない", res.get("status") != "ok", res.get("status"))
 
+
+# ── 96. 通常経路でも、記録が戻せるうちは人待ちにしない ─────────────────
+print("\n(96) 通常経路の人待ち判定")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": TEXTS2, "original_first": TEXTS2[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="ACCOUNT_A", logged=False)
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS2[0]),
+                    original_hash=post_state.part_hash(TEXTS2[0]),
+                    creation_id="C_N1", post_id="P_N1", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED)
+with contextlib.redirect_stdout(io.StringIO()):
+    st, dt, kd = post_saas._run_slot(post_state.fetch(op), "resume", SALON_ROW,
+                                     "USER1", "TOK", "noon", "@testsalon")   # quiet=False
+check("投稿しない", len(W.posts) == 0, len(W.posts))
+check("知らせは出る", len(NOTIFY) >= 1, NOTIFY)
+check("人待ちにしない（記録が戻せる）",
+      W.attempts[op]["status"] == "hold_repair", W.attempts[op]["status"])
+print("  → 続けて回収すると記録が戻る")
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("記録が戻る", len(W.post_logs) == 1, W.post_logs)
+
+# ── 97. 本文がそろわない枠は「戻せる」と判定しない ─────────────────
+print("\n(97) 記録に必要な本文がそろっていない")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": ["いまの本文"], "original_first": "いまの本文",
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash("むかしの本文"),
+                    original_hash=post_state.part_hash("むかしの本文"),
+                    creation_id="C_N2", post_id="P_N2", status=post_state.PART_PUBLISHED)
+check("本文が食い違えば戻せないと判定",
+      not post_saas._repairable(post_state.fetch(op)), "戻せると判定した")
+print("  → 知らせたあとは人待ちへ移り、回り続けない")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"texts": ["いまの本文"], "original_first": "いまの本文",
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash("むかしの本文"),
+                    original_hash=post_state.part_hash("むかしの本文"),
+                    creation_id="C_N3", post_id="P_N3", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="不一致")
+seen = []
+for _ in range(3):
+    W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.recover_open_attempts(W.salons)
+    seen.append(W.attempts[op]["status"])
+check("間違った記録はしない", len(W.post_logs) == 0, W.post_logs)
+check("最後は人待ちになる", seen[-1] == "attention", seen)
+
+# ── 98. 宣伝の復旧でも、完了印を残せなければ成功にしない ────────────────
+print("\n(98) 宣伝の復旧＋完了印の失敗")
+reset()
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+W.salons = [dict(SALON_ROW)]
+op = f"{SALON}:{JST_DATE}:noon"
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": ["宣伝V"], "original_first": "宣伝V",
+                                      "topic_tag": None, "image_url": "i", "promo": True},
+                        publisher_user_id="USER1", logged=True)
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash("宣伝V"),
+                    original_hash=post_state.part_hash("宣伝V"),
+                    creation_id="C_PV", post_id="P_PV", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED)
+def block_logged2(o, body):
+    return "fail" if body.get("status") == "logged" else "ok"
+W.attempts_patch_behavior = block_logged2
+code = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit as e:
+    code = e.code
+W.attempts_patch_behavior = None
+check("成功として終わらない", code == 1, code)
+check("完了になっていない", W.attempts[op]["status"] != "logged", W.attempts[op]["status"])
+
+
+# ── 99. コンテナ照会の403も「連携切れ」として知らせる ────────────────
+print("\n(99) 状態照会が403")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    creation_id="C_403", status=post_state.PART_UNKNOWN, lost_response=True)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="未確定")
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+W.status_override = "__403__"
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+W.status_override = None
+check("再連携が必要だと分かる知らせ",
+      any("連携が切れて" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:250])
+check("記録しない", len(W.post_logs) == 0, len(W.post_logs))
+
+# ── 100. 公開後に台帳が書けなくても、次の実行で記録が戻る ──────────────
+print("\n(100) 公開→台帳保存失敗→回収で記録が戻る")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{JST_DATE}:noon"
+W.publish_behavior = lambda cid, n: "ok"
+def fail_pub_patch(o, body):
+    parts = (body or {}).get("parts")
+    if parts and any(p.get("status") == "published" for p in parts):
+        return "fail"
+    return "ok"
+W.attempts_patch_behavior = fail_pub_patch
+(res, row, _), out = quiet(lambda: run(TEXTS1))
+W.attempts_patch_behavior = None
+check("記録の修復が続く状態", W.attempts[op]["status"] == "hold_repair", W.attempts[op]["status"])
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("投稿は増えない", len(W.posts) == 1, len(W.posts))
+check("記録が戻る", len(W.post_logs) == 1, W.post_logs)
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

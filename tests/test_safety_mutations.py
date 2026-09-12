@@ -175,11 +175,27 @@ MUTATIONS = [
      '            if pl.get("promo") and txt:\n                used.add(post_state.norm_text(txt))',
      "            pass"),
     ("人待ちへ移すのは知らせが送れたときだけ",
-     "    if _notify_line(message):\n        _state_finish(row, post_state.STATUS_ATTENTION, note=note)",
-     "    if True:\n        _state_finish(row, post_state.STATUS_ATTENTION, note=note)"),
+     "    if _notify_line(message):",
+     "    if True or _notify_line(message):"),
     ("別実行が状態を変えた行を上書きしない",
      '                if fresh.get("status") != row.get("status"):',
      "                if False:"),
+    ("通常経路でも記録が戻せるうちは人待ちにしない",
+     "        fresh = _safe_fetch(row.get(\"op_id\"), row) or row\n        if _repairable(fresh):",
+     "        fresh = _safe_fetch(row.get(\"op_id\"), row) or row\n        if False:"),
+    ("記録に必要な本文がそろっているかまで見る",
+     "    payload = row.get(\"payload\") or {}\n"
+     '    texts = payload.get("texts") or []',
+     "    return True\n    payload = row.get(\"payload\") or {}\n"
+     '    texts = payload.get("texts") or []'),
+    ("コンテナ照会の403もトークン切れにする",
+     '        if e.code in (401, 403):\n            raise TokenExpiredError(f"トークン切れ HTTP {e.code}（コンテナ状態の問い合わせ）")',
+     '        if e.code == 401:\n            raise TokenExpiredError(f"トークン切れ HTTP {e.code}（コンテナ状態の問い合わせ）")'),
+    ("宣伝復旧でも完了印の保存を確認する",
+     '                        if _mark_promo_done(row, pl.get("original_first") or "") \\\n'
+     '                                and _state_finish(_safe_fetch(op_id, row),',
+     '                        if _mark_promo_done(row, pl.get("original_first") or "") \\\n'
+     '                                or _state_finish(_safe_fetch(op_id, row),'),
     ("記録が戻せるうちは人待ちにしない",
      "                    and not _repairable(cur):\n"
      '                fields["status"] = post_state.STATUS_ATTENTION',
@@ -199,11 +215,6 @@ MUTATIONS = [
     ("知らせが届いてから人待ちへ移す（まとめ通知側）",
      '            if f["kind"] in HUMAN_KINDS \\',
      "            if False \\"),
-    ("公開後の台帳保存失敗は記録の修復を続ける(hold_repair)",
-     "                return _result(False, post_state.STATUS_HOLD_REPAIR,\n"
-     '                               f"{label}は公開できましたが台帳に保存できませんでした"',
-     "                return _result(False, post_state.STATUS_ATTENTION,\n"
-     '                               f"{label}は公開できましたが台帳に保存できませんでした"'),
     ("使用済みを確認できないときの通常投稿への切替",
      "            except PromoCheckFailed as e:",
      "            except KeyError as e:"),
