@@ -90,11 +90,15 @@ def reset(**kw):
     CLOCK.reset()
     W.on_latency = CLOCK.sleep      # __init__ で消えるので毎回つなぎ直す
     W.now_fn = CLOCK.time
+    # 取りこぼしの穴埋めは (105) で個別に検証する。ほかのシナリオでは邪魔なので止める
+    post_saas.check_previous_slot = lambda salons: 0
     post_state._available = None
     post_state._MEM.clear()
     post_saas._retry_spent = 0.0
     for k, v in kw.items():
         setattr(W, k, v)
+
+_real_check_prev = post_saas.check_previous_slot
 
 SALON_ROW = {"id": SALON, "salon_name": "テストサロン", "access_token": "TOK",
              "threads_user_id": "USER1", "instagram_url": "", "is_active": True}
@@ -2548,6 +2552,113 @@ check("最後は人待ちになって回収から外れる", states[-1] == "atte
 check("回収対象から消える",
       not any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
       [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+
+
+# ── 105. 1つ前のスロットの取りこぼしを埋める ─────────────────────
+print("\n(105) 前のスロットの穴埋め")
+reset()
+post_saas.check_previous_slot = _real_check_prev      # ここだけ本物を使う
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas._sync_last_run = _record_sync_write and (lambda *a, **k: None)
+W.salons = [dict(SALON_ROW)]
+texts_by_slot = {"morning": ["朝の本文"], "noon": ["昼の本文"]}
+post_saas.pick_post = lambda name, slot, used: list(texts_by_slot[slot])
+W.publish_behavior = lambda cid, n: "ok"
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+out = [p["text"] for p in W.posts]
+check("抜けていた朝の分を出す", "朝の本文" in out, out)
+check("今回の昼も出す", "昼の本文" in out, out)
+check("知らせる", any("抜けていた" in m for m in NOTIFY), json.dumps(NOTIFY, ensure_ascii=False)[:160])
+print("  → もう一度回しても増えない")
+before = len(W.posts)
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+check("増えない", len(W.posts) == before, [p["text"] for p in W.posts])
+post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 106. 時間帯を過ぎた実行は「その日の穴埋め」として通す ────────────────
+print("\n(106) 時間帯ガードの向き")
+reset()
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["昼の本文"]
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+post_saas.SLOT_JST_WINDOWS = {"noon": range(11, 17)}
+_now = post_saas.datetime
+
+
+class _FakeNow:
+    """JSTの現在時刻だけ差し替える（時間帯ガードの向きを確かめるため）"""
+    def __init__(self, hour):
+        self.hour = hour
+
+    def now(self, tz=None):
+        real = _now.now(tz)
+        return real.replace(hour=self.hour)
+
+    def __getattr__(self, name):
+        return getattr(_now, name)
+
+
+post_saas.datetime = _FakeNow(17)      # 昼の時間帯を過ぎている
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+check("時間帯を過ぎていても穴を埋める", len(W.posts) == 1, [p["text"] for p in W.posts])
+print("  → まだ時間前なら先出ししない")
+reset()
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+post_saas.datetime = _FakeNow(9)       # 昼の時間前
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+check("時間前は出さない", len(W.posts) == 0, [p["text"] for p in W.posts])
+post_saas.datetime = _now
+post_saas.SLOT_JST_WINDOWS = {}
+
+
+# ── 107. 朝の実行が「昨夜の取りこぼし」を知らせる ─────────────────────
+print("\n(107) 昨夜の取りこぼし")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "morning"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+check("昨夜の抜けを知らせる", any("昨夜" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+check("昨夜の分は勝手に出さない", [p["text"] for p in W.posts] == ["朝の本文"],
+      [p["text"] for p in W.posts])
+post_saas.check_previous_slot = lambda salons: 0
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

@@ -1931,6 +1931,84 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
     return "error", detail, kind
 
 
+# 直前のスロット（同じJST日のうちに埋められるもの）
+PREV_SLOT = {"noon": "morning", "evening": "noon"}
+
+
+def check_previous_slot(salons):
+    """直前のスロットの取りこぼしを確認し、**同じ日のうちなら埋める**。
+
+    ⚠️ GitHubの定期実行は実測で2〜4時間半遅れるため、予備として当てにできない。
+    確実に動くのは cron-job.org の 7:10 / 12:10 / 21:10 の3回だけなので、
+    その各回で「1つ前のスロット」を点検する。台帳があるので、埋め直しても
+    二重投稿にならない（2026-09-12）。
+
+    夜→翌朝は日をまたぐので埋めない（知らせるだけ）。返り値は埋めた件数。"""
+    prev = PREV_SLOT.get(SLOT)
+    yesterday_only = False
+    if not prev:
+        if SLOT != "morning":
+            return 0
+        # 朝の実行では「昨夜の分」を点検する。日が変わっているので埋めはせず、知らせる
+        prev, yesterday_only = "evening", True
+    jst_date = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d") \
+        if yesterday_only else datetime.now(JST).strftime("%Y-%m-%d")
+    missing = []
+    for salon in salons:
+        try:
+            op_id = post_state.make_op_id(salon["id"], jst_date, prev)
+            if already_posted_today(salon["id"], prev, op_id):
+                continue
+            row = post_state.fetch(op_id)
+            if row and row.get("status") in (post_state.STATUS_ATTENTION,
+                                             post_state.STATUS_LOGGED):
+                continue      # 人が見る枠・完了済みは対象外
+            missing.append(salon)
+        except Exception as e:
+            print(f"[gap] {salon['salon_name']} の{prev}枠を確認できません: {str(e)[:80]}")
+    if not missing:
+        print(f"[gap] {prev} の取りこぼしはありません")
+        return 0
+
+    names = "、".join(s["salon_name"] for s in missing)
+    if yesterday_only:
+        # 日をまたいだ分は勝手に出さない（今さら昨夜の投稿は出さない）。知らせるだけ
+        print(f"[gap] 昨夜({jst_date}) {prev} の取りこぼし {len(missing)}件: {names}")
+        _notify_line(f"🚨 とうこさん：昨夜（{jst_date}）の投稿が {len(missing)}件 出ていません。\n"
+                     f"{names}\n"
+                     "日をまたいだので自動では出しません。必要なら手動で出してください。")
+        return 0
+    print(f"[gap] {prev} の取りこぼし {len(missing)}件: {names} → 埋めます")
+    filled, failed = [], []
+    for salon in missing:
+        if _out_of_time("取りこぼしの穴埋め"):
+            failed.append(salon["salon_name"] + "（時間切れ）")
+            break
+        try:
+            action, row = _acquire_with_retry(salon["id"], jst_date, prev)
+            if action in ("hold", "skip"):
+                continue
+            user_id, uname = get_user_id_from_token(salon["access_token"])
+            if salon.get("threads_user_id") and str(salon["threads_user_id"]) != str(user_id):
+                failed.append(salon["salon_name"] + "（アカウント不一致）")
+                continue
+            status, detail, _k = _run_slot(row, action, salon, user_id,
+                                           salon["access_token"], prev,
+                                           f"@{uname}" if uname else salon["salon_name"],
+                                           quiet=True)
+            (filled if status == "ok" else failed).append(
+                salon["salon_name"] + ("" if status == "ok" else f"（{str(detail)[:40]}）"))
+        except Exception as e:
+            failed.append(f"{salon['salon_name']}（{type(e).__name__}: {str(e)[:40]}）")
+    msg = f"⚠️ とうこさん：{prev} の投稿が {len(missing)}件 抜けていたので埋めました。\n"
+    if filled:
+        msg += "出せた：" + "、".join(filled) + "\n"
+    if failed:
+        msg += "出せなかった：" + "、".join(failed) + "\n"
+    _notify_line(msg + "（元の実行が動かなかった可能性があります）")
+    return len(filled)
+
+
 def main():
     global _job_deadline
     _job_deadline = time.time() + JOB_BUDGET_SEC
@@ -1965,22 +2043,37 @@ def main():
         except Exception as e:
             print(f"[recover] 回収処理でエラー（本編は続行）: {str(e)[:150]}")
 
-    # 遅延した予備cron対策（2026-06-18）：スロットの想定JST時間帯から外れて発火したら投稿しない。
-    # GitHub Actionsの大幅遅延で夜枠予備cron(12:30 UTC)が深夜1:09 JSTに発火し、JST日付が翌日に
-    # 跨いだ結果 already_posted_today が前夜の投稿を「昨日分」と誤認→夜枠を重複投稿した事故の再発防止。
-    # cron-job.org(正時)・正常な予備(正時+30分)はすべて窓内。SALON_FILTER(デモ/手動)は対象外。
+    # 時間帯ガード（2026-06-18 → 2026-09-12 改訂）
+    # 元の目的は「深夜に遅れて発火した予備cronが、JST日付を跨いで二重投稿する」ことの防止。
+    # 台帳(op_id = サロン:日付:スロット)ができたので、二重投稿は台帳が防ぐ。
+    # そこでガードは「まだ来ていないスロットを先に出さない」だけに絞り、
+    # **時間帯を過ぎた遅れの発火は、その日の取りこぼしを埋める実行として通す**。
+    # これをしないと、昼・夜は事実上1回しか投稿の機会がない
+    # （GitHubの定期実行は実測で2〜4時間半遅れる）。
     if not SALON_FILTER:
         jst_hour = datetime.now(JST).hour
         win = SLOT_JST_WINDOWS.get(SLOT)
-        if win is not None and jst_hour not in win:
-            print(f"[SKIP-ALL] {SLOT} の想定JST時間帯外（現在 {jst_hour}時JST）→ 遅延した予備cronとみなし投稿しません")
+        if win is not None and jst_hour < win.start:
+            print(f"[SKIP-ALL] {SLOT} はまだ時間前（現在 {jst_hour}時JST／{win.start}時から）"
+                  "→ 先出しはしません")
             return
+        if win is not None and jst_hour not in win:
+            print(f"[LATE] {SLOT} の時間帯を過ぎています（現在 {jst_hour}時JST）"
+                  "→ その日の取りこぼしを埋める実行として続けます")
 
     # ⚠️ 手動指定(ONLY_SALON)でも本番の台帳と既存ログの照合を通す。
     # 障害復旧で手動実行するときこそ二重投稿が起きやすい（2026-09-12 Sol指摘#3/#7）
     if DRY_RUN:
         post_state.force_memory()
         print("[state] DRY_RUNのため、台帳はこの実行内だけ（Supabaseに残しません）")
+
+    # ── 1つ前のスロットの取りこぼしを埋める ────────────────────────
+    # 確実に動く3回（7:10/12:10/21:10）のたびに点検する。台帳があるので埋め直しは安全
+    if not (DRY_RUN or SALON_FILTER):
+        try:
+            check_previous_slot(salons)
+        except Exception as e:
+            print(f"[gap] 取りこぼしの確認でエラー（本編は続行）: {str(e)[:150]}")
 
     results = {"ok": [], "error": [], "token_expired": [], "held": []}
 

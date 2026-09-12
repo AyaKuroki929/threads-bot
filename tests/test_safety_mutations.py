@@ -193,6 +193,18 @@ MUTATIONS = [
     ("メモの追記で通知済みの印を壊さない",
      "        head, mark = note.split(RECOVER_NOTE_MARK, 1)\n        return head + extra + RECOVER_NOTE_MARK + mark",
      "        pass"),
+    ("時間帯を過ぎた実行でも穴を埋める",
+     "        if win is not None and jst_hour not in win:\n"
+     '            print(f"[LATE] {SLOT} の時間帯を過ぎています（現在 {jst_hour}時JST）"',
+     "        if win is not None and jst_hour not in win:\n"
+     "            return\n"
+     '            print(f"[LATE] {SLOT} の時間帯を過ぎています（現在 {jst_hour}時JST）"'),
+    ("まだ来ていないスロットを先出ししない",
+     "        if win is not None and jst_hour < win.start:",
+     "        if False and jst_hour < win.start:"),
+    ("1つ前のスロットの取りこぼしを埋める",
+     "            check_previous_slot(salons)",
+     "            pass"),
     ("記録に必要な本文がそろっているかまで見る",
      "    payload = row.get(\"payload\") or {}\n"
      '    texts = payload.get("texts") or []',
