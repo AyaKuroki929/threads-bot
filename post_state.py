@@ -345,20 +345,25 @@ def open_issues(limit: int = 50, since_days: int = 3, salon_ids=None):
         return sorted(rows, key=lambda r: str(r.get("updated_at") or ""))[:limit]
     params = {
         "select": "op_id,salon_id,jst_date,slot,status,note,parts,payload,logged,rev,updated_at",
-        # attention は「記録未完」または「宣伝の使用済み未完」だけ拾う。
-        # payload の中身はSQLで絞れないので、記録済みかつ宣伝の行はここで広めに取り、
-        # 呼び出し側（_attention_open 相当）で落とす
+        # attention は「記録未完 or 宣伝未完」だけが対象だが、payload の中身は
+        # SQLで絞れない。除外される行が並んでいても後続へ届くようページ送りする
         "or": f"(status.in.({','.join(live)}),"
               f"status.eq.{STATUS_ATTENTION})",
-        # ⚠️ 稼働中サロンで先に絞る。絞らずに件数で切ると、停止済みサロンの古い行だけで
-        # 上限に達して有効なサロンまで届かない（2026-09-12 Sol指摘#9）。
-        # ⚠️ attention は「記録未完 or 宣伝未完」だけが対象だが、payload の中身は
-        # SQLで絞れない。件数で切る前に落とせるよう、多めに取ってから絞る
-        "order": "updated_at.asc", "limit": limit * 4,
+        "order": "updated_at.asc,op_id.asc",
     }
     if salon_ids:
         params["salon_id"] = "in.(" + ",".join(salon_ids) + ")"
-    rows = _req("GET", TABLE, params=params)
-    keep = [r for r in rows
-            if r.get("status") != STATUS_ATTENTION or _attention_open(r)]
+
+    # ⚠️ 1回だけ取って絞ると、除外対象が先頭に並んだときに後続へ永久に届かない
+    # （2026-09-12 Sol指摘#4）。必要件数が集まるまでページを送る
+    page = max(limit * 4, 100)
+    keep, offset = [], 0
+    for _ in range(10):                      # 最大10ページ（＝上限×40件）で打ち切る
+        q = dict(params, limit=page, offset=offset)
+        rows = _req("GET", TABLE, params=q)
+        keep += [r for r in rows
+                 if r.get("status") != STATUS_ATTENTION or _attention_open(r)]
+        if len(keep) >= limit or len(rows) < page:
+            break
+        offset += page
     return keep[:limit]

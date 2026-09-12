@@ -713,7 +713,7 @@ print(f"    （うち{held}通りは「1部目は公開・記録済み、続き�
 # ── 30. 記録済みattentionが50件あっても、後ろの行に届く ────────────────
 print("\n㉚ 人待ちの行で回収枠が埋まる")
 reset()
-for i in range(50):
+for i in range(200):
     op = f"{SALON}:2026-08-{i%28+1:02d}:noon{i}"
     W.attempts[op] = {"op_id": op, "salon_id": SALON, "jst_date": f"2026-08-{i%28+1:02d}",
                       "slot": "noon", "status": "attention", "parts": [], "rev": 0,
@@ -725,7 +725,8 @@ W.attempts[live] = {"op_id": live, "salon_id": SALON, "jst_date": YESTERDAY,
                     "payload": None, "note": None, "logged": False,
                     "updated_at": (_dt.now(_tz.utc) - _td(hours=2)).isoformat()}
 rows = post_state.open_issues(limit=50, salon_ids=[SALON])
-check("50件そろっている（テスト自体の確認）", sum(1 for k in W.attempts if ":noon" in k and k[-1].isdigit()) == 50,
+check("200件そろっている（テスト自体の確認）",
+      sum(1 for k in W.attempts if ":noon" in k and k[-1].isdigit()) == 200,
       sum(1 for k in W.attempts if ":noon" in k and k[-1].isdigit()))
 check("記録済みの人待ちは対象外", all(r.get("status") != "attention" for r in rows), len(rows))
 check("後ろの行に届く", any(r["op_id"] == live for r in rows), [r["op_id"] for r in rows][:3])
@@ -1810,13 +1811,13 @@ check("回収対象に残る",
       [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
 print("  → 書き込めるようになったら片づく")
 post_saas.mark_promo_used = orig_mark
-marks = []
-post_saas.mark_promo_used = lambda t: marks.append(t)
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
-post_saas.mark_promo_used = orig_mark
-check("宣伝の使用済みが戻る", marks == ["宣伝X"], marks)
+check("宣伝の使用済みが戻る（本物のファイル）",
+      _json.load(open(post_saas.PROMO_USED_FILE)) == ["宣伝X"],
+      open(post_saas.PROMO_USED_FILE).read()[:80])
 check("完了になる", W.attempts[op]["status"] == "logged", W.attempts[op]["status"])
 
 
@@ -1871,6 +1872,99 @@ with contextlib.redirect_stdout(io.StringIO()):
 saved = _json.load(open(post_saas.PROMO_USED_FILE))
 check("未投稿の宣伝文を使用済みにしない", "宣伝B（未投稿）" not in saved, saved)
 check("完了にしない", W.attempts[op]["status"] != "logged", W.attempts[op]["status"])
+
+
+# ── 79. 使用済みを確認できないときは、宣伝を出さない ──────────────────
+print("\n(79) 使用済みの確認ができない")
+reset()
+_json.dump({"posts": ["宣伝A", "宣伝B"], "image_url": "img"},
+           open(post_saas.PROMO_POOL_FILE, "w"), ensure_ascii=False)
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
+W.post_logs.append({"salon_id": SALON, "slot": "evening", "post_content": "宣伝A",
+                    "posted_at": _dt.now(_tz.utc).isoformat(), "op_id": "past"})
+got = post_saas.pick_promo(SALON)
+check("DBが見えれば、出した宣伝Aは避ける", got and got["text"] == "宣伝B", got)
+orig_get = post_saas.supabase_get
+post_saas.supabase_get = lambda path, params=None: (_ for _ in ()).throw(TimeoutError("timed out"))
+failed = None
+try:
+    post_saas.pick_promo(SALON)
+except post_saas.PromoCheckFailed as e:
+    failed = str(e)
+post_saas.supabase_get = orig_get
+check("確認できないときは選ばない（例外で止める）", failed is not None, "選んでしまった")
+
+# ── 80. 記録済みの人待ちが200件あっても、後ろの未完行に届く ────────────────
+print("\n(80) 除外対象が大量にある")
+reset()
+for i in range(200):
+    o = f"{SALON}:2026-07-{i%28+1:02d}:noon{i}"
+    W.attempts[o] = {"op_id": o, "salon_id": SALON, "jst_date": f"2026-07-{i%28+1:02d}",
+                     "slot": "noon", "status": "attention", "parts": [], "rev": 0,
+                     "payload": None, "note": "人待ち", "logged": True,
+                     "updated_at": (_dt.now(_tz.utc) - _td(days=40)).isoformat()}
+tail_op = f"{SALON}:{YESTERDAY}:evening"
+W.attempts[tail_op] = {"op_id": tail_op, "salon_id": SALON, "jst_date": YESTERDAY,
+                       "slot": "evening", "status": "unknown", "parts": [], "rev": 0,
+                       "payload": None, "note": None, "logged": False,
+                       "updated_at": (_dt.now(_tz.utc) - _td(hours=1)).isoformat()}
+rows = post_state.open_issues(salon_ids=[SALON])
+check("後ろの未完行に届く", any(r["op_id"] == tail_op for r in rows),
+      f"{len(rows)}件: {[r['op_id'][-18:] for r in rows][:3]}")
+
+# ── 81. 宣伝の使用済みが戻せないときは、必ず知らせる ────────────────────
+print("\n(81) 宣伝の使用済みが戻せない（記録は済んでいる）")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:evening"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "evening")
+row = post_state.update(row, payload={"texts": ["宣伝W"], "original_first": "宣伝W",
+                                      "topic_tag": None, "image_url": "i", "promo": True},
+                        publisher_user_id="USER1", logged=True)
+post_state.set_part(row, 0, hash=post_state.part_hash("宣伝W"),
+                    original_hash=post_state.part_hash("宣伝W"),
+                    creation_id="C_PW", post_id="P_PW", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人待ち")
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+orig_mark = post_saas.mark_promo_used
+post_saas.mark_promo_used = lambda t: (_ for _ in ()).throw(OSError("書き込めない"))
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+post_saas.mark_promo_used = orig_mark
+check("知らせる", any("片づけられなかった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+check("人待ちのまま", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+
+
+# ── 82. 通知に載せていない枠は「通知済み」にしない ────────────────────
+print("\n(82) 6件以上の失敗")
+reset()
+W.salons = [SALON_ROW]
+ops = []
+for i in range(6):
+    o = f"{SALON}:{YESTERDAY}:noon{i}"
+    W.attempts[o] = {"op_id": o, "salon_id": SALON, "jst_date": YESTERDAY,
+                     "slot": f"noon{i}", "status": "published", "parts": [], "rev": 0,
+                     "payload": None, "note": None, "logged": False,
+                     "updated_at": (_dt.now(_tz.utc) - _td(hours=5 - i * 0.1)).isoformat()}
+    ops.append(o)
+post_saas.RECOVER_MAX = 10
+orig_acquire = post_state.acquire
+post_state.acquire = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+post_state.acquire = orig_acquire
+post_saas.RECOVER_MAX = 5
+msg = "\n".join(NOTIFY)
+listed = [o for o in ops if o in msg]
+unlisted = [o for o in ops if o not in msg]
+check("5件だけ本文に載る", len(listed) == 5, len(listed))
+check("載った枠は通知済みになる",
+      all("通知済み" in (W.attempts[o].get("note") or "") for o in listed),
+      [W.attempts[o].get("note") for o in listed])
+check("載らなかった枠は通知済みにしない",
+      all("通知済み" not in (W.attempts[o].get("note") or "") for o in unlisted),
+      [W.attempts[o].get("note") for o in unlisted])
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

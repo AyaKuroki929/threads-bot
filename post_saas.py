@@ -1141,6 +1141,10 @@ def _load_json(path, default):
         return default
 
 
+class PromoCheckFailed(Exception):
+    """使用済みを確認できなかった。「使用済みなし」と混同しない。"""
+
+
 def _promo_used_from_db(salon_id, days=180):
     """すでに出した宣伝文を **DBの投稿記録から** 拾う。
 
@@ -1156,8 +1160,9 @@ def _promo_used_from_db(salon_id, days=180):
             "slot": f"eq.{PROMO_SLOT}", "posted_at": f"gte.{since}", "limit": "500"})
         return {post_state.norm_text(r.get("post_content")) for r in rows}
     except Exception as e:
-        print(f"[promo] 投稿記録からの使用済み確認に失敗（ファイルのみで判断）: {str(e)[:80]}")
-        return set()
+        # ⚠️「確認できなかった」を「使用済みなし」と扱わない。
+        # 扱うと、公開済みの宣伝文をもう一度出す（2026-09-12 Sol指摘#5）
+        raise PromoCheckFailed(str(e)[:120])
 
 
 def pick_promo(salon_id=None):
@@ -1193,6 +1198,16 @@ RECOVER_MAX = int(os.environ.get("RECOVER_MAX", "5"))
 # 回収に使ってよい実時間の上限。ここを設けないと、直らない古い枠の通信待ちだけで
 # ジョブの制限時間を使い切り、当日の通常投稿が出せなくなる（2026-09-12 Sol指摘#9）
 RECOVER_BUDGET_SEC = int(os.environ.get("RECOVER_BUDGET_SEC", "120"))
+
+
+def _safe_fetch(op_id, fallback=None):
+    """台帳の取り直し。失敗しても例外を外へ出さない
+    （例外処理の中で落ちると、まとめ通知まで飛ばしてしまう・2026-09-12 Sol指摘#2）。"""
+    try:
+        return post_state.fetch(op_id) or fallback
+    except Exception as e:
+        print(f"[state] 取り直しに失敗（手元の情報で続行）: {str(e)[:60]}")
+        return fallback
 
 
 def _add_failure(failures, row, op_id, kind, reason):
@@ -1446,9 +1461,11 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     # 停止状態(attention)だが記録だけが無い枠。**投稿は一切しない**で記録だけ戻す
                     done += 1
                     kind, reason = _repair_safe(row, salon, slot, jst_date, quiet=True)
-                    if not (post_state.fetch(row["op_id"]) or {}).get("logged"):
-                        _add_failure(failures, post_state.fetch(op_id) or row, op_id,
-                                     kind or "log", reason or "記録を戻せない")
+                    after = _safe_fetch(op_id, row) or row
+                    if kind or not after.get("logged") or _promo_pending(after):
+                        _add_failure(failures, after, op_id, kind or "log",
+                                     reason or ("宣伝の使用済み記録が残っています"
+                                                if _promo_pending(after) else "記録を戻せない"))
                     continue
                 if action == "resume" and _all_parts_published(row):
                     # 全パート公開済み＝投稿は起きない。/me に巻き込まれないよう先に片づける
@@ -1457,11 +1474,11 @@ def recover_open_attempts(salons, skip_op_ids=()):
                         # 記録は済んでいるが宣伝の使用済みが残っている
                         pl = row.get("payload") or {}
                         if _mark_promo_done(row, pl.get("original_first") or ""):
-                            _state_finish(post_state.fetch(op_id) or row,
+                            _state_finish(_safe_fetch(op_id, row),
                                           post_state.STATUS_LOGGED)
                             _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)
                         else:
-                            _add_failure(failures, post_state.fetch(op_id) or row, op_id,
+                            _add_failure(failures, _safe_fetch(op_id, row), op_id,
                                          "promo", "宣伝の使用済み記録を戻せない")
                         continue
                     if row.get("logged"):
@@ -1472,11 +1489,13 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     print(f"[recover] {salon['salon_name']} {jst_date} {slot}: 記録だけ戻します")
                     kind, reason = _repair_safe(row, salon, slot, jst_date, quiet=True,
                                                 finish_status=post_state.STATUS_LOGGED)
-                    if (post_state.fetch(row["op_id"]) or {}).get("logged"):
+                    after = _safe_fetch(op_id, row) or row
+                    if not kind and after.get("logged") and not _promo_pending(after):
                         _sync_last_run(salon["salon_name"], slot, jst_date=jst_date)
                     else:
-                        _add_failure(failures, post_state.fetch(op_id) or row, op_id,
-                                     kind or "log", reason or "記録を戻せない")
+                        _add_failure(failures, after, op_id, kind or "log",
+                                     reason or ("宣伝の使用済み記録が残っています"
+                                                if _promo_pending(after) else "記録を戻せない"))
                     continue
 
                 done += 1
@@ -1516,7 +1535,7 @@ def recover_open_attempts(salons, skip_op_ids=()):
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot} を完了しました")
                     else:
                         print(f"[recover] {salon['salon_name']} {jst_date} {slot} は未完のまま: {detail}")
-                        _add_failure(failures, post_state.fetch(op_id) or row, op_id,
+                        _add_failure(failures, _safe_fetch(op_id, row), op_id,
                                      "incomplete", str(detail)[:60])
                 except TokenExpiredError:
                     print(f"[recover] トークン切れ: {op_id}")
@@ -1530,7 +1549,7 @@ def recover_open_attempts(salons, skip_op_ids=()):
                                  f"回収に失敗: {str(e)[:60]}")
             except Exception as e:
                 print(f"[recover] {op_id} の処理で想定外のエラー: {str(e)[:150]}")
-                _add_failure(failures, post_state.fetch(op_id) or r, op_id,
+                _add_failure(failures, _safe_fetch(op_id, r), op_id,
                              f"error:{type(e).__name__}",
                              f"想定外のエラー: {type(e).__name__}: {str(e)[:50]}")
                 continue
@@ -1542,12 +1561,16 @@ def recover_open_attempts(salons, skip_op_ids=()):
     # ⚠️ 失敗をログだけに残さない。回収が効いていないことに誰も気づけなくなる
     # （2026-09-12 Sol指摘#3）。1実行1通にまとめる
     if failures:
+        shown = failures[:5]
         sent = _notify_line(
             "⚠️ とうこさん：片づけられなかった投稿枠があります（自動での再投稿はしません）。\n"
-            + "\n".join(f"・{x['text']}" for x in failures[:5])
-            + (f"\nほか{len(failures) - 5}件" if len(failures) > 5 else ""))
+            + "\n".join(f"・{x['text']}" for x in shown)
+            + (f"\nほか{len(failures) - 5}件（次の実行でお知らせします）"
+               if len(failures) > 5 else ""))
         if sent:
-            _mark_notified(failures)
+            # ⚠️ 本文に載せた分だけ通知済みにする。載せていない行まで印を付けると、
+            # その枠の原因を永久に知らせない（2026-09-12 Sol指摘#3）
+            _mark_notified(shown)
         else:
             print("[recover] まとめ通知を送れませんでした → 通知済みにせず次回へ残します")
     return done
@@ -1612,7 +1635,16 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         used = get_used_posts(salon_id, slot)
         promo = None
         if is_promo_time(salon_name, slot):
-            promo = pick_promo(salon_id)
+            try:
+                promo = pick_promo(salon_id)
+            except PromoCheckFailed as e:
+                # 使用済みを確認できない。同じ宣伝を出すより通常投稿に落とす
+                promo = None
+                print(f"[promo] 使用済みを確認できないため通常投稿にします: {e}")
+                if not quiet:
+                    _notify_line("⚠️ 月曜夜の宣伝投稿：どれを出したか確認できなかったので、"
+                                 "同じ文が二度出ないよう通常の投稿にしました。\n"
+                                 f"{str(e)[:120]}")
             if promo:
                 print(f"[promo] {salon_name}: 月曜夜の宣伝枠として画像付きで投稿します")
             else:

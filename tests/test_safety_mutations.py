@@ -12,6 +12,7 @@ import tempfile
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.path.join(BASE, "post_saas.py")
+TARGET_STATE = os.path.join(BASE, "post_state.py")
 SUITE = os.path.join(BASE, "tests", "test_post_resilience.py")
 
 REVERT = (
@@ -33,8 +34,23 @@ REPAIR_PUBLISHED = (
 # もう片方が止めるため、ここには単体では載せない。代わりに、
 # 一番外側の入口（_ledger_consistent / _all_parts_published）を壊して検知させる。
 #
-# (名前, 元のコード, 壊したコード)
+# (名前, 元のコード, 壊したコード[, 対象ファイル])
 MUTATIONS = [
+    ("DBからの宣伝使用済み確認",
+     "    used_db = _promo_used_from_db(salon_id)",
+     "    used_db = set()"),
+    ("使用済みを確認できないときは選ばない",
+     '        raise PromoCheckFailed(str(e)[:120])',
+     "        return set()"),
+    ("通知は本文に載せた分だけ通知済みにする",
+     "            _mark_notified(shown)",
+     "            _mark_notified(failures)"),
+    ("回収対象のページ送り",
+     "        offset += page",
+     "        break", TARGET_STATE),
+    ("attentionでも宣伝未完なら回収する",
+     "        if allow_attention and (not row.get(\"logged\") or promo_pending):",
+     "        if allow_attention and not row.get(\"logged\"):", TARGET_STATE),
     ("送信直前の締切確認",
      'if _out_of_time(f"{label}の公開要求"):',
      'if False and _out_of_time(f"{label}の公開要求"):'),
@@ -142,8 +158,8 @@ MUTATIONS = [
      "        if RECOVER_NOTE_MARK not in note:\n            note = note + mark",
      "        pass"),
     ("通知は送れてから通知済みにする",
-     "        if sent:\n            _mark_notified(failures)",
-     "        _mark_notified(failures)\n        if sent:\n            pass"),
+     "        if sent:\n            # ⚠️ 本文に載せた分だけ通知済みにする",
+     "        if True:\n            # ⚠️ 本文に載せた分だけ通知済みにする"),
     ("失敗の種類で通知を識別する",
      "    mark = RECOVER_NOTE_MARK + kind",
      '    mark = RECOVER_NOTE_MARK + "same"'),
@@ -160,19 +176,23 @@ MUTATIONS = [
 
 
 def main() -> int:
-    original = open(TARGET, encoding="utf-8").read()
-    backup = tempfile.NamedTemporaryFile("w", delete=False, suffix=".py", encoding="utf-8")
-    backup.write(original)
-    backup.close()
+    originals = {f: open(f, encoding="utf-8").read() for f in (TARGET, TARGET_STATE)}
     bad = []
     try:
-        for name, before, after in MUTATIONS:
-            if before not in original:
+        for mut in MUTATIONS:
+            name, before, after = mut[0], mut[1], mut[2]
+            target = mut[3] if len(mut) > 3 else TARGET
+            src = open(target, encoding="utf-8").read()
+            if before not in src:
                 print(f"❌ {name}: 対象のコードが見つかりません（実装が変わった？）")
                 bad.append(name)
                 continue
-            open(TARGET, "w", encoding="utf-8").write(original.replace(before, after, 1))
-            r = subprocess.run([sys.executable, SUITE], capture_output=True, text=True)
+            open(target, "w", encoding="utf-8").write(src.replace(before, after, 1))
+            try:
+                r = subprocess.run([sys.executable, SUITE], capture_output=True, text=True)
+            finally:
+                # ⚠️ 1件ごとに必ず戻す。戻さないと変異が積み重なって結果が読めない
+                open(target, "w", encoding="utf-8").write(originals[target])
             out = r.stdout + r.stderr
             # ⚠️「終了コードが非0」だけでは、構文エラーやimport失敗でも合格になる。
             # 判定(❌)が実際に落ちたことまで確かめる
@@ -187,8 +207,8 @@ def main() -> int:
                 print(f"🚨 {name}: テストは落ちたが判定の失敗ではない（{tail[:80]}）")
                 bad.append(name)
     finally:
-        shutil.copy(backup.name, TARGET)
-        os.unlink(backup.name)
+        for f, text in originals.items():
+            open(f, "w", encoding="utf-8").write(text)
 
     if bad:
         print(f"\n🚨 {len(bad)}件の安全装置がテストで守られていません")
