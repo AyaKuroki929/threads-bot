@@ -91,13 +91,74 @@ def _notify_line(message: str) -> bool:
         return False
 
 
-def get_used_posts(salon_id, slot):
-    rows = supabase_get("post_logs", {
-        "salon_id": f"eq.{salon_id}",
-        "slot": f"eq.{slot}",
-        "select": "post_content",
-    })
-    return {r["post_content"] for r in rows}
+def get_used_posts(salon_id, slot=None):
+    """このサロンで投稿済みの本文をすべて集める。
+
+    ⚠️ スロットで絞らない。同じ本文が朝と昼の両方のプールに居ると、
+    片方で使ったあと取りこぼしの穴埋めでもう一方に出て二重投稿になる
+    （2026-09-13 Sol指摘#6）。
+    ⚠️ PostgRESTは黙って1000件で切る。切られると「まだ使っていない」と誤読して
+    同じ本文をもう一度投稿する。最後まで読み切る（実測は1サロン300件前後）。"""
+    used, page, offset = set(), 1000, 0
+    while True:
+        params = {"salon_id": f"eq.{salon_id}", "select": "post_content",
+                  "order": "id.asc", "limit": str(page), "offset": str(offset)}
+        if slot:
+            params["slot"] = f"eq.{slot}"
+        rows = supabase_get("post_logs", params)
+        used.update(r["post_content"] for r in rows)
+        if len(rows) < page:
+            return used
+        offset += page
+
+
+def get_pending_texts(salon_id):
+    """台帳（post_attempts）のうち、まだ post_logs に載っていない本文を返す。
+
+    ⚠️ 公開できたのに post_logs への記録だけ失敗した本文は、post_logs を見ても
+    「まだ使っていない」ように見える。翌日その本文をもう一度選ぶと二重投稿になる
+    （2026-09-13 Sol指摘#2）。台帳側の本文も必ず除外集合に入れる。
+    ⚠️ 記録済み（logged=true）の行は post_logs 側に必ずあるので取らない。
+    そのおかげで対象がごく少数で済み、期間で切らずに全部見られる（同 3巡目指摘）。
+    読めなかったときは投稿を止めない。3回試して、それでも駄目なら
+    集められた分だけ返し、二重投稿の危険が上がったことをログに残す。"""
+    out, page, offset = set(), 1000, 0
+    for attempt in range(3):
+        try:
+            while True:
+                rows = supabase_get("post_attempts", {
+                    "salon_id": f"eq.{salon_id}", "logged": "not.is.true",
+                    "select": "payload", "order": "op_id.asc",
+                    "limit": str(page), "offset": str(offset)})
+                for r in rows:
+                    payload = r.get("payload") or {}
+                    for t in (payload.get("texts") or []):
+                        if isinstance(t, str) and t:
+                            out.add(t)
+                    first = payload.get("original_first")
+                    if isinstance(first, str) and first:
+                        out.add(first)
+                if len(rows) < page:
+                    return out, True
+                offset += page
+        except Exception as e:
+            print(f"[台帳] 使用済み本文の取得に失敗（{attempt + 1}回目）: {str(e)[:100]}")
+            if attempt < 2:
+                time.sleep(2)
+    print("⚠️ [台帳] 3回とも取得できませんでした。記録できていない公開済み本文を"
+          "もう一度選ぶ可能性があります（投稿自体は止めません）")
+    return out, False
+
+
+def used_texts_for(salon_id):
+    """(このサロンでもう出せない本文, 全部調べ切れたか) を返す。
+
+    投稿側と補充側でこの集合がずれると、片方が枯渇して過去投稿の再利用に入る。
+    generate_saas_posts._get_used_texts と同じ条件をここに1本化する。
+    ⚠️ 調べ切れなかったときは False。判断材料プールは本数が少なく、同じ本文を
+    引き当てる確率が高いので、そのときは使わずに通常プールへ落とす（Sol 5巡目）。"""
+    pending, complete = get_pending_texts(salon_id)
+    return get_used_posts(salon_id) | pending, complete
 
 
 def already_posted_today(salon_id, slot, op_id=None, jst_date=None):
@@ -168,10 +229,65 @@ def _trigger_generate(salon_name):
         return False
 
 
-def pick_post(salon_name, slot, used_texts):
+# 「このサロンを選ぶ判断材料」投稿（場所・料金・初回の流れ・向き不向き・比較との違い）を
+# 出す割合。共感とストーリーだけだと、読んだ人が来店を判断できないまま終わる。
+# プールが無い／使い切ったサロンは通常プールに落ちるだけ＝投稿は止まらない。
+JUDGE_RATE = float(os.environ.get("JUDGE_RATE", "0.33"))
+
+
+def judge_pool_path(salon_name):
+    """判断材料プールの場所。
+
+    ⚠️ `posts_<名前>_judge.json` にすると、`foo` の判断材料と `foo_judge` という名前の
+    サロンの通常プールが同じファイルになり、別の店の住所・料金を投稿してしまう
+    （2026-09-13 Sol指摘#2）。_safe_name は「.」を「_」に変えるので、名前に「.」を含む
+    この形なら他のどのサロンのファイル名とも重ならない。"""
+    return os.path.join(POSTS_DIR, f"posts_{_safe_name(salon_name)}.judge.json")
+
+
+def _judge_candidates(salon_name, slot, used_texts):
+    """判断材料プールから、まだ投稿していない本文を返す。
+
+    ⚠️ 中身が想定と違う形（配列・null・数値・空文字）でも投稿を止めない。
+    少しでも怪しければ空リストを返し、通常プールに落とす（2026-09-13 Sol指摘#3）。"""
+    path = judge_pool_path(salon_name)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        # 読めないだけで投稿を止めない（通常プールに落ちる）。気づけるようログには残す。
+        print(f"[判断材料] {salon_name}: プールを読めません（通常プールを使います）: {e}")
+        return []
+    if not isinstance(data, dict):
+        print(f"[判断材料] {salon_name}: プールの形が違います（通常プールを使います）")
+        return []
+    # ⚠️ 持ち主タグが無いファイルを「たぶん自分の物」と見なさない。
+    # 取り違えたら別の店の住所・料金を客先アカウントで投稿することになる（Sol指摘#5）
+    if data.get("_salon") != salon_name:
+        print(f"[判断材料] {salon_name}: プールの持ち主が違います"
+              f"（{data.get('_salon')!r}）→ 使いません")
+        return []
+    arr = data.get(slot)
+    if not isinstance(arr, list):
+        print(f"[判断材料] {salon_name} {slot}: プールが配列ではありません（通常プールを使います）")
+        return []
+    return [p for p in arr
+            if isinstance(p, str) and p.strip() and p not in used_texts]
+
+
+def pick_post(salon_name, slot, used_texts, allow_judge=True):
     posts_file = os.path.join(POSTS_DIR, f"posts_{_safe_name(salon_name)}.json")
     if not os.path.exists(posts_file):
         raise FileNotFoundError(f"投稿ファイルが見つかりません: {posts_file}")
+
+    if allow_judge and random.random() < JUDGE_RATE:
+        judge = _judge_candidates(salon_name, slot, used_texts)
+        if judge:
+            chosen = random.choice(judge)
+            print(f"[判断材料] {salon_name} {slot}: 判断材料プールから選びました（残{len(judge)}本）")
+            return [chosen]
 
     with open(posts_file) as f:
         data = json.load(f)
@@ -247,9 +363,18 @@ def _instagram_handle(instagram_url):
     return handle if _IG_HANDLE_RE.match(handle) else None
 
 
+# 本文がすでにInstagramに触れているか（二重掲載の検出用）
+_IG_MENTION_RE = re.compile(r"instagram|インスタ", re.I)
+
+
 def _maybe_add_instagram_cta_saas(texts: list, instagram_url: str) -> list:
     """instagram_urlが設定されているサロンのみ、1/4の確率でCTAを末尾に追加。"""
     if not instagram_url or random.random() >= 0.25:
+        return texts
+    # ⚠️ 投稿プールには生成時点でInstagram誘導が入っている本文がある（実測8〜12%）。
+    # そこへさらに足すと1投稿にInstagramの案内が2つ並ぶ。触れている本文には足さない。
+    if any(_IG_MENTION_RE.search(str(t or "")) for t in texts):
+        print("[cta] 本文にすでにInstagramの案内があるため追加しません")
         return texts
     handle = _instagram_handle(instagram_url)
     if not handle:
@@ -1880,7 +2005,9 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
                   "二重投稿を避けるため自動での投稿はしません。", quiet=quiet)
         return "error", "前回の本文が台帳に残っておらず再開できません", "payload_missing"
     else:
-        used = get_used_posts(salon_id, slot)
+        # ⚠️ スロットを渡さない＝このサロンの全スロットの投稿済み本文を除く。
+        # 同じ本文が別スロットのプールにも居ると、取りこぼしの穴埋めで二重投稿になる
+        used, used_complete = used_texts_for(salon_id)
         promo = None
         if is_promo_time(salon_name, slot):
             try:
@@ -1898,7 +2025,8 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
                 print(f"[promo] {salon_name}: 宣伝文の在庫が空 → 通常投稿にフォールバック")
                 promo_fallback = ("文章の在庫が空だったため、通常の投稿を出しました。"
                                   "promo_posts_personal.json を確認してください。")
-        texts = [promo["text"]] if promo else pick_post(salon_name, slot, used)
+        texts = ([promo["text"]] if promo
+                 else pick_post(salon_name, slot, used, allow_judge=used_complete))
         # 使用済み判定はプール原文と突合するため、CTA付与・分割前の原文を控えておく
         original_first = texts[0] if isinstance(texts, list) else texts
         # 宣伝文はCTA（LINE誘導）を本文に含んだ完成品。IG CTAもトピックも付けない
@@ -2331,8 +2459,8 @@ def main():
             if DRY_RUN:
                 # POSTS_DIR からのプール読込が成功したことだけ確認し、投稿・記録・台帳更新はしない。
                 # /me も叩かない（DRY_RUNは本番に一切影響しない）
-                used = get_used_posts(salon_id, SLOT)
-                texts = pick_post(salon_name, SLOT, used)   # DRY_RUNでは補充workflowを起動しない
+                used, used_complete = used_texts_for(salon_id)
+                texts = pick_post(salon_name, SLOT, used, allow_judge=used_complete)   # DRY_RUNでは補充workflowを起動しない
                 n = len(texts) if isinstance(texts, list) else 1
                 print(f"[DRY-RUN] {salon_name}: {SLOT} プール読込OK（{n}部）→ 投稿スキップ / POSTS_DIR={POSTS_DIR}")
                 results["ok"].append(salon_name)

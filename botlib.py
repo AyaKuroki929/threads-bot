@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -157,3 +158,244 @@ def line_push(user_id: str, text: str, token: str, *, timeout: int = 10) -> int:
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status
+
+
+# ── 判断材料投稿の事実照合 ─────────────────────────────────────
+# 「このサロンを選ぶ判断材料」投稿は、場所・料金・営業時間という**確かめられる事実**を
+# 書く。プロンプトで禁じても生成はときどき逸脱するので、ヒアリング内容と機械で
+# 突き合わせて、書いていない数字が客先のアカウントに出ないようにする（2026-09-13 Sol指摘#1）。
+# ⚠️ 判定できない書き方（漢数字の金額・住所・駅名）は「通す」ではなく「落とす」。
+# 落として困るのは在庫が1本減ることだけだが、通して困るのは客先に嘘が出ること。
+
+_ZEN = str.maketrans("０１２３４５６７８９，：．－−‐―〜～", "0123456789,:.----~~")
+# ¥12,000 / 12,000円 / 1万円 / 3千円
+# ⚠️ 「1.5万円」を「5万円」と読むと、登録が5万円のサロンで1.5万円が通ってしまう
+# （2026-09-13 Sol 6巡目）。数字の途中から拾わないよう (?<![0-9.]) を付ける。
+_MONEY_RE = re.compile(
+    r"[¥￥]\s*(?<![0-9.])([0-9][0-9,]*)"
+    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*万\s*([0-9][0-9,]*)?\s*(千)?\s*円?"
+    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*千\s*円?"
+    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*百\s*円"
+    r"|(?<![0-9.])([0-9][0-9,]*)\s*円")
+# 「一万円」「五千円」など、メニュー欄と突き合わせようがない書き方。
+# ⚠️ 先頭を漢数字（一〜九・十・百）に限る。そうしないと「1万円」の「万円」にも当たって
+# 正しい投稿まで落ち、判断材料が永久に空になる（2026-09-13 Sol 3巡目）。
+_KANJI_MONEY_RE = re.compile(
+    r"(?<![0-9])[〇一二三四五六七八九十百][〇一二三四五六七八九十百千万億]{0,7}\s*円")
+# 「徒歩3分」「車で5分」など、距離の言い切り
+_ACCESS_RE = re.compile(r"(徒歩|車で|バスで)\s*(?:約)?\s*([0-9]+)\s*分")
+# 時刻（9:30 / 9時 / 9時30分 / 9時半 / 午後6時）
+_TIME_RE = re.compile(
+    r"(午前|午後)?\s*([0-9]{1,2})\s*(?::\s*([0-9]{2})|時\s*(?:(半)|([0-9]{1,2})\s*分)?)")
+# 営業に触れている本文か
+_HOURS_CONTEXT_RE = re.compile(r"営業|受付|オープン|開店|閉店|定休")
+# 「七時」「十時半」など、営業時間欄（9:30〜18:00）と突き合わせられない書き方
+_KANJI_TIME_RE = re.compile(r"[〇一二三四五六七八九十]{1,3}\s*時")
+# 「9時から18時まで」「9:00〜18:00」のような時間の範囲
+_TIME_PREFIX = r"(?:午前|午後|朝|昼|夕方|夕|夜|深夜)?\s*"
+_TIME_RANGE_RE = re.compile(
+    _TIME_PREFIX + r"[0-9]{1,2}\s*(?::[0-9]{2}|時(?:半|[0-9]{1,2}分)?)"
+    r"\s*(?:から|〜|~|-|–|ー|より)\s*" + _TIME_PREFIX +
+    r"[0-9]{1,2}\s*(?::[0-9]{2}|時(?:半|[0-9]{1,2}分)?)")
+# 住所・駅名など、ヒアリングに無ければ確かめようがない場所の言い切り。
+# ⚠️ 前の文字を丸ごと巻き込むと「当店は渋谷区」で照合が外れ、末尾だけで照合すると
+# 「架空谷区」の「谷区」や「9丁目」の「丁目」で通ってしまう（2026-09-13 Sol 4・5巡目）。
+# そこで、地名の語尾から**助詞・句読点に当たるまで前へ1文字ずつ遡って**地名を1つに切り出す。
+# 「5-12-18」「99-99」のような番地表記も照合対象にする。
+# ⚠️ 「3-5回」「1-2ヶ月」は範囲であって住所ではないので、単位が続く物は除く。
+_PLACE_RE = re.compile(
+    r"[ぁ-んァ-ヶー一-龥々0-9]{1,8}(?:駅|丁目|番地|番[0-9]{1,4}号|[市区町村])"
+    r"|[0-9]{1,4}(?:-[0-9]{1,4}){1,2}")
+# 「3-12回」「10-20分」は範囲であって住所ではない。単位が続く物は住所として見ない
+_RANGE_UNIT_RE = re.compile(
+    r"^\s*(?:回|本|ヶ月|ヵ月|か月|カ月|分|人|日|週|年|度|割|倍|名|kg|cm|mm|%|％|時|:|万|千|円)")
+_HIRAGANA_HEAD_RE = re.compile(r"^[ぁ-ん]+")
+# 地名に見えるが地名ではない普通の言葉（落として在庫を減らすだけなので明示的に除く）
+_PLACE_STOPWORDS = {
+    "都市", "地方都市", "地区", "下町", "市街", "市販", "市場", "区別", "区分",
+    "町内", "町中", "村社会", "繁華街", "各市", "各区",
+    "この町", "その町", "うちの町", "この市", "この村", "この区",
+}
+
+
+def _money_tokens(text: str) -> set:
+    """本文に出てくる金額を、円単位の数字（文字列）の集合で返す。"""
+    out = set()
+    for m in _MONEY_RE.finditer((text or "").translate(_ZEN)):
+        yen, man, man_sub, man_sen, sen, hyaku, plain = m.groups()
+        if yen:
+            out.add(yen.replace(",", ""))
+        elif man:
+            v = float(man) * 10000
+            if man_sub:
+                v += float(man_sub.replace(",", "")) * (1000 if man_sen else 1)
+            out.add(str(int(v)))
+        elif sen:
+            out.add(str(int(float(sen) * 1000)))
+        elif hyaku:
+            out.add(str(int(float(hyaku) * 100)))
+        elif plain:
+            out.add(plain.replace(",", ""))
+    return out
+
+
+def _time_tokens(text: str) -> set:
+    """本文に出てくる時刻を H:MM の形にそろえて返す。
+
+    「午後6時」「9時半」も、営業時間欄の「18:00」「9:30」と同じ形にしてから比べる
+    （そうしないと正しい書き方まで落ちる。2026-09-13 Sol 3巡目）。"""
+    out = set()
+    for m in _TIME_RE.finditer((text or "").translate(_ZEN)):
+        ampm, hh, mm_colon, han, mm_fun = m.groups()
+        hour = int(hh)
+        minute = 30 if han else int(mm_colon or mm_fun or 0)
+        if ampm == "午後" and hour < 12:
+            hour += 12
+        if hour > 24 or minute > 59:
+            continue
+        out.add(f"{hour}:{minute:02d}")
+    return out
+
+
+def _place_matches(text: str) -> list:
+    """本文の地名らしい部分を「そのまま」返す（前の文字も付いたまま）。
+
+    ⚠️ 「3-12回」「10-20分」は範囲表記。正規表現の否定先読みで外すと、数字を短く
+    取り直して「3-1」を住所として拾ってしまう（2026-09-13 Sol 7巡目）。
+    だから拾ってから、後ろに単位が続く物を落とす。"""
+    text = (text or "").translate(_ZEN)
+    out = []
+    for m in _PLACE_RE.finditer(text):
+        token = m.group(0).strip()
+        if token[0].isdigit() and _RANGE_UNIT_RE.match(text[m.end():]):
+            continue        # 数字だけの並び＋単位＝範囲表記
+        out.append(token)
+    return out
+
+
+# 番地（5-12-18 / 99-99）と丁目・番地表記は、末尾一致を許すと
+# 「99-12-18」が登録の「5-12-18」の一部と一致して通ってしまう（2026-09-13 Sol 7巡目）。
+# こういう数字の住所は、丸ごと同じでなければ通さない。
+_ADDR_NUM_RE = re.compile(r"[0-9]{1,4}-[0-9]{1,4}(?:-[0-9]{1,4})?")
+_CHOME_RE = re.compile(r"[0-9]{1,4}\s*(?:丁目|番地|番(?:[0-9]{1,4})号)")
+
+
+def _place_known(match: str, known_place: str) -> bool:
+    """切り出した地名が、ヒアリングの所在地に書かれているか。
+
+    ⚠️ 「当店は渋谷区」のように前の文字が混ざるので末尾から切って照合するが、
+    2文字まで許すと「架空谷区」が「谷区」で通ってしまう。
+    **3文字以上の切り出しだけ**を見る（元が2文字ならその形のまま照合する）。
+    ⚠️ 数字の住所（5-12-18 / 1丁目）は末尾一致を許さず、丸ごと一致だけを通す。"""
+    if _ADDR_NUM_RE.fullmatch(match):
+        return match in set(_ADDR_NUM_RE.findall(known_place))
+    if _CHOME_RE.search(match):
+        # ⚠️ 1つ目だけ見ると「渋谷区1丁目99番99号」の 1丁目 だけで通ってしまう。
+        # 出てくる番地表記は**全部**登録どおりであることを要求する（Sol 7巡目）
+        theirs = {x.replace(" ", "") for x in _CHOME_RE.findall(known_place)}
+        for mine in _CHOME_RE.findall(match):
+            if mine.replace(" ", "") not in theirs:
+                return False
+        # 数字が合っていても、その前の地名までそろっているか見る
+        head = match[:_CHOME_RE.search(match).start()]
+        return not head or any(head[i:] in known_place
+                               for i in range(len(head) - min(3, len(head)) + 1))
+    # ⚠️ 末尾一致を無条件に許すと「東渋谷区」が「渋谷区」で通る（Sol 7巡目）。
+    # 切り出せるのは、直前が助詞（ひらがな）のところだけにする。
+    if match in known_place:
+        return True
+    lowest = min(3, len(match))
+    for i in range(1, len(match) - lowest + 1):
+        if "ぁ" <= match[i - 1] <= "ん" and match[i:] in known_place:
+            return True
+    return False
+
+
+def _ordered_times(text: str) -> list:
+    """本文に出てくる時刻を、出てきた順に分（数値）で返す。前後の逆転を見るため。"""
+    out = []
+    for m in _TIME_RE.finditer((text or "").translate(_ZEN)):
+        ampm, hh, mm_colon, han, mm_fun = m.groups()
+        hour = int(hh)
+        minute = 30 if han else int(mm_colon or mm_fun or 0)
+        if ampm == "午後" and hour < 12:
+            hour += 12
+        if hour > 24 or minute > 59:
+            continue
+        out.append(hour * 60 + minute)
+    return out
+
+
+def _allowed_money(salon: dict) -> set:
+    """このサロンの投稿に書いてよい金額（ヒアリングに実在する数字だけ）。"""
+    price_ok = str(salon.get("価格を投稿に記載してもOKですか？", "")).strip()
+    menu = " ".join([
+        str(salon.get("提供メニューと価格帯（箇条書きでOK）", "")),
+        str(salon.get("一番の売りメニュー・最も結果が出やすい施術", "")),
+    ])
+    if price_ok == "はい（具体的な金額を投稿に出してOK）":
+        return _money_tokens(menu)
+    if price_ok == "体験・初回コースの価格のみOK":
+        # 「初回」「体験」の直後、次の区切りまでに書かれている金額だけを許す。
+        # ⚠️ 単純に「40字以内」にすると「初回8,800円／通常14,850円」の通常価格まで
+        # 許可に入る（2026-09-13 Sol指摘）。区切り記号と「通常」で必ず切る。
+        allowed = set()
+        for m in re.finditer(r"(初回|体験)", menu):
+            window = menu[m.start():m.start() + 40]
+            # ⚠️ 区切りに「,」を入れてはいけない。「8,800円」の中のカンマで切れて
+            # 金額そのものが消える（許可がゼロになり、正しい初回価格まで落ちる）
+            cut = re.search(r"[／/、・\n（(]|通常|定価|回目|以降|以後", window[2:])
+            if cut:
+                window = window[:cut.start() + 2]
+            allowed |= _money_tokens(window)
+        return allowed
+    return set()        # 「いいえ」も、読み取れない回答も、金額は書かせない
+
+
+def judge_fact_violation(text: str, salon: dict):
+    """判断材料投稿が、ヒアリングに無い事実を書いていないか。違反なら理由を返す。"""
+    text = str(text or "")
+
+    if _KANJI_MONEY_RE.search(text):
+        return "漢数字の金額（メニュー欄と突き合わせられない）"
+    allowed = _allowed_money(salon)
+    for money in _money_tokens(text):
+        if money not in allowed:
+            return f"ヒアリングに無い金額（{money}円）"
+
+    location = str(salon.get("所在地（最寄り駅・徒歩時間）", ""))
+    loc_norm = location.translate(_ZEN)
+    loc_access = {(m.group(1), m.group(2))
+                  for m in _ACCESS_RE.finditer(loc_norm)}
+    for m in _ACCESS_RE.finditer(text.translate(_ZEN)):
+        if (m.group(1), m.group(2)) not in loc_access:
+            return f"ヒアリングに無い所要時間（{m.group(0)}）"
+    # 駅名・丁目・市区町村は、所在地欄に同じ書き方が無ければ確かめようがない
+    known_place = loc_norm + " " + str(salon.get("サロン名", ""))
+    for place in _place_matches(text):
+        # 「この地区」のような普通の言い回しは、先頭のひらがなを外した形で除外語を見る
+        stripped = _HIRAGANA_HEAD_RE.sub("", place)
+        if place in _PLACE_STOPWORDS or stripped in _PLACE_STOPWORDS:
+            continue
+        if not _place_known(place, known_place):
+            return f"ヒアリングに無い場所（{place}）"
+
+    # 営業に触れている本文、または時間の範囲を書いている本文は、時刻を照合する。
+    # ⚠️ 「朝7時から夜10時までお待ちしています」は営業の言葉が無くても営業時間の話
+    # （2026-09-13 Sol 7巡目）
+    if _HOURS_CONTEXT_RE.search(text) or _TIME_RANGE_RE.search(text.translate(_ZEN)):
+        if _KANJI_TIME_RE.search(text):
+            return "漢数字の時刻（営業時間欄と突き合わせられない）"
+        allowed_times = _time_tokens(str(salon.get("営業時間", "")))
+        for t in _time_tokens(text):
+            if t not in allowed_times:
+                return f"ヒアリングに無い時刻（{t}）"
+        rng = _TIME_RANGE_RE.search(text.translate(_ZEN))
+        if rng:
+            times = _ordered_times(rng.group(0))
+            if len(times) >= 2 and times[0] >= times[-1]:
+                return f"時間の前後が逆（{rng.group(0)}）"
+
+    if re.search(r"instagram|インスタ", text, re.I):
+        return "本文にInstagram誘導が入っている（投稿時に自動で付くため二重になる）"
+    return None

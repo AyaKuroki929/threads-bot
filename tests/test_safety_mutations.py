@@ -13,6 +13,7 @@ import tempfile
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.path.join(BASE, "post_saas.py")
 TARGET_STATE = os.path.join(BASE, "post_state.py")
+TARGET_BOTLIB = os.path.join(BASE, "botlib.py")
 SUITE = os.path.join(BASE, "tests", "test_post_resilience.py")
 
 REVERT = (
@@ -240,9 +241,16 @@ MUTATIONS = [
      '                failed.append(f"{salon[\'salon_name\']}({slot})（確認できず・次回やり直し）")\n                continue',
      '                _flag_missing(salon, d, slot, "確認できません")\n'
      '                failed.append(f"{salon[\'salon_name\']}({slot})（確認できず・次回やり直し）")\n                continue'),
-    ("ページ送りで全件取る",
-     "        offset += page",
-     "        offset += page * 2"),
+    ("ページ送りで全件取る（取りこぼし点検）",
+     "        offset += page\n        if offset > 20000:",
+     "        offset += page * 2\n        if offset > 20000:"),
+    ("ページ送りで全件取る（使用済み本文）",
+     '        rows = supabase_get("post_logs", params)\n'
+     "        used.update(r[\"post_content\"] for r in rows)\n"
+     "        if len(rows) < page:",
+     '        rows = supabase_get("post_logs", params)\n'
+     "        used.update(r[\"post_content\"] for r in rows)\n"
+     "        if True:"),
     ("過去日の未投稿も点検する",
      "    dates = [(base - timedelta(days=n)).strftime(\"%Y-%m-%d\") for n in range(days)]",
      "    dates = [base.strftime(\"%Y-%m-%d\")]"),
@@ -310,11 +318,74 @@ MUTATIONS = [
     ("記録復旧でFINISHEDを公開済み扱いしない",
      REPAIR_PUBLISHED,
      REPAIR_PUBLISHED.replace('if st == "PUBLISHED":', 'if st in ("PUBLISHED", "FINISHED"):')),
+    # 判断材料プールが読めない・使い切っていても投稿は止まらない
+    ("判断材料プールが空でも通常プールに落ちる",
+     "        judge = _judge_candidates(salon_name, slot, used_texts)\n        if judge:",
+     "        judge = _judge_candidates(salon_name, slot, used_texts)\n        if True:"),
+    ("判断材料プールが壊れていても投稿を止めない",
+     "    except (OSError, ValueError) as e:",
+     "    except OSError as e:"),
+    # 判断材料の事実照合（金額・距離・営業時間）
+    ("ヒアリングに無い金額を止める",
+     "        if money not in allowed:",
+     "        if False:", TARGET_BOTLIB),
+    ("ヒアリングに無い所要時間を止める",
+     "        if (m.group(1), m.group(2)) not in loc_access:",
+     "        if False:", TARGET_BOTLIB),
+    ("ヒアリングに無い場所（駅名・住所）を止める",
+     "        if not _place_known(place, known_place):",
+     "        if False:", TARGET_BOTLIB),
+    # 「数字の住所は丸ごと一致」「末尾3文字以上」の2つは、下の
+    # 「地名の切り出しは助詞の後ろだけ」で同じケースが止まるため、単独では検知できない
+    # （二重の守りとして残しているが、変異テストの項目には入れない）。
+    ("地名の切り出しは助詞の後ろだけ",
+     '        if "ぁ" <= match[i - 1] <= "ん" and match[i:] in known_place:',
+     "        if match[i:] in known_place:", TARGET_BOTLIB),
+    ("時間の範囲は営業と書いていなくても照合する",
+     "    if _HOURS_CONTEXT_RE.search(text) or _TIME_RANGE_RE.search(text.translate(_ZEN)):",
+     "    if _HOURS_CONTEXT_RE.search(text):", TARGET_BOTLIB),
+    ("時間の前後が逆なら止める",
+     "            if len(times) >= 2 and times[0] >= times[-1]:",
+     "            if False:", TARGET_BOTLIB),
+    ("漢数字の営業時間を止める",
+     "        if _KANJI_TIME_RE.search(text):",
+     "        if False:", TARGET_BOTLIB),
+    ("漢数字の金額を止める",
+     "    if _KANJI_MONEY_RE.search(text):",
+     "    if False:", TARGET_BOTLIB),
+    ("ヒアリングに無い営業時間を止める",
+     "            if t not in allowed_times:",
+     "            if False:", TARGET_BOTLIB),
+    ("金額禁止のサロンで金額を許さない",
+     '    return set()        # 「いいえ」も、読み取れない回答も、金額は書かせない',
+     "    return _money_tokens(menu)", TARGET_BOTLIB),
+    # 台帳にだけ残る本文も除外集合に入れる（記録漏れの本文を二度出さない）
+    ("台帳の本文も使用済みに数える",
+     "    pending, complete = get_pending_texts(salon_id)\n"
+     "    return get_used_posts(salon_id) | pending, complete",
+     "    pending, complete = get_pending_texts(salon_id)\n"
+     "    return get_used_posts(salon_id), complete"),
+    ("読み切れないときは判断材料プールを使わない",
+     "    if allow_judge and random.random() < JUDGE_RATE:",
+     "    if random.random() < JUDGE_RATE:"),
+    ("台帳が読めないとき1回で諦めない",
+     "    for attempt in range(3):",
+     "    for attempt in range(1):"),
+    # プールの持ち主を照合する（取り違え防止）
+    ("判断材料プールの持ち主を照合する",
+     '    if data.get("_salon") != salon_name:',
+     "    if False:"),
+    # Instagram誘導が1投稿に2つ並ばない
+    ("Instagram誘導を二重に付けない",
+     "    if any(_IG_MENTION_RE.search(str(t or \"\")) for t in texts):",
+     "    if False:"),
 ]
 
 
 def main() -> int:
-    originals = {f: open(f, encoding="utf-8").read() for f in (TARGET, TARGET_STATE)}
+    # 変異先のファイルを全部控える（1件でも漏れると壊れたまま残る）
+    targets = {TARGET, TARGET_STATE} | {m[3] for m in MUTATIONS if len(m) > 3}
+    originals = {f: open(f, encoding="utf-8").read() for f in sorted(targets)}
     bad = []
     try:
         for mut in MUTATIONS:

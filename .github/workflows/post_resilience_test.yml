@@ -7,6 +7,9 @@ on:
     paths:
       - "post_saas.py"
       - "post_state.py"
+      # 判断材料投稿の事実照合（金額・場所・営業時間）はここに入っている
+      - "botlib.py"
+      - "generate_saas_posts.py"
       - "tests/**"
       - "sql/**"
       - ".github/workflows/post_resilience_test.yml"

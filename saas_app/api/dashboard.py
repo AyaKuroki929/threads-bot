@@ -5,11 +5,13 @@ Purpose: demonstrate the end-to-end use of the requested permissions *inside the
   - threads_basic          : show the connected Threads account (GET /me)
   - threads_content_publish : publish a post and view the result in the app
   - threads_manage_replies  : create a reply to that post and view it in the app
+  - threads_manage_insights : show views / likes / replies for the account and its posts
 
 Routes (see vercel.json):
   GET  /dashboard?account=<salon_name|customer_id>            -> English HTML page
   GET  /dashboard?action=account&account=<...>                -> JSON {username, posts:[...]}
   POST /dashboard?action=publish&account=<...>                -> JSON {post, reply}
+  GET  /dashboard?action=insights&account=<...>               -> JSON {account:{...}, posts:[...]}
 
 Safety: live publishing is restricted to the demo account only (DEMO_SALON,
 default "aya_0929_private") so a real client account is never posted to from here.
@@ -154,6 +156,54 @@ def _account_payload(salon):
     }
 
 
+def _insights_payload(salon):
+    """アカウント全体と直近の投稿ごとの反応数を返す（threads_manage_insights）。
+
+    権限が未承認のうちは Threads API が 403 を返す。数字が出ない理由を
+    画面にそのまま出したいので、例外にせず error として返す。"""
+    token = salon["access_token"]
+    me = _graph_get("me", token, {"fields": "id,username"})
+    user_id = me.get("id", "")
+
+    account = {}
+    try:
+        data = _graph_get(f"{user_id}/threads_insights", token,
+                          {"metric": "views,likes,replies,reposts,quotes,followers_count"})
+        for row in data.get("data", []):
+            name = row.get("name", "")
+            if row.get("total_value") is not None:
+                account[name] = row["total_value"].get("value")
+            else:
+                vals = row.get("values") or []
+                account[name] = sum(v.get("value", 0) for v in vals)
+    except urllib.error.HTTPError as e:
+        account = {"error": f"HTTP {e.code}: {e.read().decode()[:200]}"}
+    except Exception as e:      # noqa: BLE001 画面に理由を出したい
+        account = {"error": str(e)[:200]}
+
+    posts = []
+    try:
+        recent = _graph_get("me/threads", token,
+                            {"fields": "id,text,permalink,timestamp", "limit": "5"}).get("data", [])
+    except Exception:
+        recent = []
+    for post in recent:
+        item = {"id": post.get("id"), "text": post.get("text", ""),
+                "permalink": post.get("permalink", ""), "timestamp": post.get("timestamp", "")}
+        try:
+            data = _graph_get(f'{post["id"]}/insights', token,
+                              {"metric": "views,likes,replies,reposts,quotes"})
+            for row in data.get("data", []):
+                tv = row.get("total_value") or {}
+                item[row.get("name", "")] = tv.get("value")
+        except urllib.error.HTTPError as e:
+            item["error"] = f"HTTP {e.code}"
+        except Exception as e:  # noqa: BLE001
+            item["error"] = str(e)[:80]
+        posts.append(item)
+    return {"username": me.get("username", ""), "account": account, "posts": posts}
+
+
 PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -192,6 +242,7 @@ PAGE_HTML = """<!DOCTYPE html>
       <span class="perm">threads_basic</span>
       <span class="perm">threads_content_publish</span>
       <span class="perm">threads_manage_replies</span>
+      <span class="perm">threads_manage_insights</span>
     </div>
   </div>
 
@@ -207,6 +258,15 @@ PAGE_HTML = """<!DOCTYPE html>
   <div class="card">
     <div class="label">Recent posts on this account</div>
     <div id="posts">Loading…</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Post performance (insights)</div>
+    <div class="hint">Our app reads views, likes, replies, reposts and quotes with the
+      <b>threads_manage_insights</b> permission, and shows them here so the salon owner can see
+      which of their scheduled posts actually reached people.</div>
+    <p><button id="ins" onclick="loadInsights()">Load insights</button></p>
+    <div id="insights"></div>
   </div>
 
 <script>
@@ -256,6 +316,41 @@ async function publish() {{
   }} catch (e) {{
     st.textContent = 'Error while publishing.'; btn.disabled = false;
   }}
+}}
+
+async function loadInsights() {{
+  const btn = document.getElementById('ins');
+  const box = document.getElementById('insights');
+  btn.disabled = true; box.textContent = 'Loading insights…';
+  try {{
+    const r = await fetch('/dashboard?action=insights&account=' + encodeURIComponent(ACCOUNT));
+    const d = await r.json();
+    if (d.error) {{ box.textContent = 'Error: ' + d.error; btn.disabled = false; return; }}
+    const esc = s => (s||'').replace(/</g,'&lt;');
+    const num = v => (v === undefined || v === null) ? '—' : v;
+    let html = '';
+    if (d.account && d.account.error) {{
+      html += '<div class="post">Account totals unavailable: ' + esc(d.account.error) + '</div>';
+    }} else {{
+      const a = d.account || {{}};
+      html += '<div class="post"><b>Account totals</b><br>'
+            + 'Views ' + num(a.views) + ' · Likes ' + num(a.likes)
+            + ' · Replies ' + num(a.replies) + ' · Reposts ' + num(a.reposts)
+            + ' · Quotes ' + num(a.quotes) + ' · Followers ' + num(a.followers_count) + '</div>';
+    }}
+    (d.posts || []).forEach(p => {{
+      const link = p.permalink ? ' — <a href="'+p.permalink+'" target="_blank">View on Threads</a>' : '';
+      const nums = p.error ? ('unavailable: ' + esc(p.error))
+        : ('Views ' + num(p.views) + ' · Likes ' + num(p.likes) + ' · Replies ' + num(p.replies)
+           + ' · Reposts ' + num(p.reposts) + ' · Quotes ' + num(p.quotes));
+      html += '<div class="post">' + esc((p.text||'').slice(0,90)) + link
+            + '<br><span class="label">' + nums + '</span></div>';
+    }});
+    box.innerHTML = html;
+  }} catch (e) {{
+    box.textContent = 'Error loading insights.';
+  }}
+  btn.disabled = false;
 }}
 
 loadAccount();
@@ -310,6 +405,17 @@ class handler(BaseHTTPRequestHandler):
                 return _send_json(self, 404, {"error": "account not found"})
             try:
                 return _send_json(self, 200, _account_payload(salon))
+            except urllib.error.HTTPError as e:
+                return _send_json(self, 502, {"error": f"Threads API HTTP {e.code}: {e.read().decode()[:200]}"})
+            except Exception as e:
+                return _send_json(self, 500, {"error": str(e)})
+
+        if action == "insights":
+            salon = _get_salon(account)
+            if not salon:
+                return _send_json(self, 404, {"error": "account not found"})
+            try:
+                return _send_json(self, 200, _insights_payload(salon))
             except urllib.error.HTTPError as e:
                 return _send_json(self, 502, {"error": f"Threads API HTTP {e.code}: {e.read().decode()[:200]}"})
             except Exception as e:

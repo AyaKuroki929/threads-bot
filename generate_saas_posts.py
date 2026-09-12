@@ -192,6 +192,37 @@ def load_local_salons():
     return data if isinstance(data, list) else []
 
 
+# ヒアリングの「価格を投稿に記載してもOKですか？」→ 生成AIへの具体的な指示。
+# 生の文字列のまま渡すとAIの解釈頼みになる。未知の回答は安全側（書かない）に倒す。
+_PRICE_RULES = {
+    "はい（具体的な金額を投稿に出してOK）":
+        "メニュー欄に書かれている金額はそのまま書いてよい。書かれていない金額は書かない",
+    "体験・初回コースの価格のみOK":
+        "初回体験・体験コースの金額だけ書いてよい。通常コースの金額は書かない",
+    "いいえ（詳しくはDMまたはHPへ誘導する）":
+        "金額は一切書かない。料金に触れるときは「詳しくはDMまたはプロフィールのリンクから」に誘導する",
+}
+_PRICE_RULE_DEFAULT = "金額は一切書かない（クライアントの指定が読み取れないため安全側に倒す）"
+
+# 「このサロンを選ぶ判断材料」投稿（別プール posts_<name>.judge.json）
+# 1回の補充で作る本数と、補充を始める残数のしきい値。
+# 通常プールは200本以上あるため、混ぜると数ヶ月先まで出番が来ない。だから別プールにする。
+JUDGE_COUNT = 5
+JUDGE_THRESHOLD = 3
+# 使用済みを数え切れないときは「安全側＝補充」に倒すが、無制限にはしない。
+# 障害が続くと毎回15本ずつ積み上がり、モデル呼び出しも増え続ける（2026-09-13 Sol 5巡目）。
+# ファイル内の本数がこの上限を超えていたら、数え切れないまま足すのはやめて人を呼ぶ。
+BLIND_REFILL_MAX = THRESHOLD * 3
+JUDGE_BLIND_REFILL_MAX = JUDGE_THRESHOLD * 3
+
+# 時間帯ごとの読まれ方（通常プールと判断材料プールで共有する）
+_SLOT_HINTS = {
+    "morning": "朝投稿（7〜8時頃）。1日の始まりに読む人向け。前向きな気づき・軽い問いかけ・背中を押す内容。",
+    "noon": "昼投稿（12時頃）。休憩中にサクッと読む人向け。共感・保存したくなる知識・具体的なTips。",
+    "evening": "夜投稿（21時頃）。1日の終わりに読む人向け。内省・本音・今日の気づき・静かな共感。",
+}
+
+
 def salon_to_rules(salon: dict) -> str:
     """スプレッドシートの1行をGENERATE_RULES形式のテキストに変換する"""
 
@@ -226,6 +257,7 @@ def salon_to_rules(salon: dict) -> str:
     new_visitor_concern = salon.get("新規のお客様が最初に来る一番多い理由・悩みは何ですか？", "")
     menu = salon.get("提供メニューと価格帯（箇条書きでOK）", "")
     price_ok = salon.get("価格を投稿に記載してもOKですか？", "")
+    price_rule = _PRICE_RULES.get(str(price_ok).strip(), _PRICE_RULE_DEFAULT)
     best_menu = salon.get("一番の売りメニュー・最も結果が出やすい施術", "")
     diff = salon.get("他サロンとの違い・このサロンならではの施術やこだわり", "")
     results = salon.get("お客様の具体的な変化・実績（数字があれば）", "")
@@ -367,7 +399,43 @@ def salon_to_rules(salon: dict) -> str:
 {f"予約受付：{reservation_source}" if reservation_source else ""}
 {booking_url if booking_url else "プロフィールのリンクから"}
 
-{f"## Instagram誘導（20本に3〜4本の割合で末尾に自然に入れる）{chr(10)}「{instagram_id} では施術写真・ビフォーアフターを載せています。」など自然な形で添える。{chr(10)}「フォローしてください」と直接書かない。" if instagram_id else ""}
+## 「このサロンを選ぶ判断材料」投稿の作り方
+共感とストーリーだけの投稿は、読んだ人が「良い話だった」で終わってしまう。
+判断材料投稿では、読んだ人が来店を判断できる具体的な事実を必ず1つ以上入れる。
+事実は下の情報から**そのまま**使い、書かれていないことは一切足さない。
+
+使ってよい事実：
+- 場所：{location}
+- 営業時間：{hours}／定休日：{holiday}
+- メニューと価格帯：{menu}
+- 一番の売り：{best_menu}
+- 変化までの目安：{result_timeline if result_timeline else "（記載なし。目安には触れない）"}
+- 予約：{reservation_source if reservation_source else "（記載なし）"}／{booking_url if booking_url else "プロフィールのリンクから"}
+- よく比較されるもの：{competitor_diff if competitor_diff else "（記載なし）"}
+
+切り口は次の5つ。1本につき1つだけ選ぶ：
+① 通いやすさ（上に書かれた場所の表現・営業時間・定休日のどれかに触れる。駅名や距離を勝手に足さない）
+② 料金の考え方（{price_rule}）
+③ はじめての人が受ける流れ（何をする時間か・所要時間・何回目で変化を感じる人が多いか）
+④ 向いている人／向いていない人（はっきり書く。他店・他の方法を否定はしない）
+⑤ {f"よく比較される「{competitor_diff}」との違い（否定ではなく役割の違いとして書く）" if competitor_diff else "このサロンが一番結果を出せる悩み（一番の売りメニューの対象）"}
+
+判断材料の書き方（守らないと店舗情報の貼り付けになる）：
+- 事実を並べない。1つのエピソード・お客様の言葉・問いかけの中に事実を溶かす
+- 「営業時間9:00〜17:00　定休日月曜」のような表記そのままの列挙は禁止
+- 所在地・営業時間・定休日・メニュー名・金額は、上の情報にある内容以外を書かない
+- 料金ルール（絶対）：{price_rule}
+- 最後は予約先（{booking_url if booking_url else "プロフィールのリンク"}）へ自然につなぐ
+
+保存前に機械で照合します。次の書き方は自動で捨てられるので使わないこと：
+- 上のメニュー欄に無い金額（「一万円」など漢数字の金額も不可。数字でそのまま書く）
+- 上の場所に無い駅名・市区町村名・丁目・番地
+- 上の営業時間に無い時刻（「◯時まで営業」「◯時から受付」の形で書くとき）
+- 上の所在地に無い「徒歩◯分」「車で◯分」
+
+## Instagram誘導（本文には書かない）
+Instagramへの案内は投稿時に自動で付ける（登録済みURLから機械的に組み立てるので、リンク切れも二重掲載も起きない）。
+本文の中でInstagramに触れない。「Instagramに載せています」「インスタもご覧ください」などは書かないこと。
 
 {f"## LINE誘導（月2〜3本の割合で末尾に入れる）{chr(10)}{line_url} への誘導を自然に入れる。" if line_url else ""}
 
@@ -986,33 +1054,67 @@ def napori_to_rules(napori: dict) -> str:
     return rules
 
 
-def _get_used_texts(salon_name: str, slot: str) -> set:
-    """Supabaseのpost_logsから、実際に投稿済みの本文集合を取得する。"""
+def _get_used_texts(salon_name: str, slot: str = ""):
+    """そのサロンで**もう使えない**本文を集める。(集合, 全部読めたか) を返す。
+
+    ⚠️ 投稿側（post_saas.used_texts_for）と同じ集合でないと、
+    補充側は「残11本」、投稿側は「未使用0本」という食い違いが起き、
+    補充されないまま過去投稿の再利用が続く（2026-09-13 Sol指摘#3）。
+    そのため ①スロットで絞らない ②ページ送りで全部読む ③台帳の未記録分も入れる、
+    の3点を投稿側とそろえる。slot は互換のため残すが使わない。
+    ⚠️ 途中で失敗したときに「全部読めた」と答えてはいけない。読めた分だけで
+    残数を数えると、実際は0本なのに「残5本→補充不要」と誤判定する（同 4巡目）。"""
     if not SUPABASE_URL or not SUPABASE_KEY:
-        return set()
+        return set(), False
+
+    def _get(path, params):
+        url = f"{SUPABASE_URL}/rest/v1/{path}?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        })
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read())
+
+    used, page, offset = set(), 1000, 0
     try:
-        url = (f"{SUPABASE_URL}/rest/v1/salons"
-               f"?salon_name=eq.{urllib.parse.quote(salon_name)}&select=id&limit=1")
-        req = urllib.request.Request(url, headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-        })
-        with urllib.request.urlopen(req, timeout=10) as r:
-            rows = json.loads(r.read())
+        rows = _get("salons", {"salon_name": f"eq.{salon_name}", "select": "id", "limit": "1"})
         if not rows:
-            return set()
+            return set(), False
         salon_id = rows[0]["id"]
-        url = (f"{SUPABASE_URL}/rest/v1/post_logs"
-               f"?salon_id=eq.{salon_id}&slot=eq.{slot}&select=post_content&limit=2000")
-        req = urllib.request.Request(url, headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-        })
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return {x.get("post_content") or "" for x in json.loads(r.read())}
+
+        while True:
+            chunk = _get("post_logs", {"salon_id": f"eq.{salon_id}", "select": "post_content",
+                                       "order": "id.asc", "limit": str(page),
+                                       "offset": str(offset)})
+            used.update(x.get("post_content") or "" for x in chunk)
+            if len(chunk) < page:
+                break
+            offset += page
+
+        offset = 0
+        while True:
+            # ⚠️ 記録済み(logged=true)は post_logs 側にあるので取らない。投稿側と同じ条件
+            chunk = _get("post_attempts", {"salon_id": f"eq.{salon_id}",
+                                           "logged": "not.is.true", "select": "payload",
+                                           "order": "op_id.asc", "limit": str(page),
+                                           "offset": str(offset)})
+            for x in chunk:
+                payload = x.get("payload") or {}
+                used.update(t for t in (payload.get("texts") or []) if isinstance(t, str) and t)
+                first = payload.get("original_first")
+                if isinstance(first, str) and first:
+                    used.add(first)
+            if len(chunk) < page:
+                break
+            offset += page
+        return used, True
     except Exception as e:
-        print(f"[saas] Supabase使用済み取得エラー ({salon_name}/{slot}): {e}")
-        return set()
+        # ⚠️ 途中で失敗しても、それまでに取れた分は捨てない。捨てると残数を多く数えて
+        # 「補充不要」と誤判定し、投稿側は枯渇して過去投稿の再利用に入る
+        # （2026-09-13 Sol 3巡目 指摘#3）。あわせて「不完全」と申告する（同 4巡目）
+        print(f"[saas] Supabase使用済み取得エラー ({salon_name}／取れた分だけ使います): {e}")
+        return used, False
 
 
 def _is_deactivated(salon_name: str) -> bool:
@@ -1035,12 +1137,111 @@ def _is_deactivated(salon_name: str) -> bool:
 
 
 def _remaining(posts, salon_name, slot):
-    """本当に未使用の本数（＝ファイル内の投稿のうち、まだ投稿されていないもの）。
-    旧「総数−投稿回数」方式は、ファイルを作り直したサロンで永久にマイナスになる欠陥があった（2026-07-13修正）。"""
-    used = _get_used_texts(salon_name, slot)
+    """(本当に未使用の本数, 使用済みを数え切れたか) を返す。
+
+    未使用＝ファイル内の投稿のうち、まだ投稿されていないもの。
+    旧「総数−投稿回数」方式は、ファイルを作り直したサロンで永久にマイナスになる欠陥があった（2026-07-13修正）。
+    2つ目の値がFalseのときは数え切れていない＝この本数を信じて「補充不要」と決めてはいけない。"""
+    used, complete = _get_used_texts(salon_name, slot)
+
     def _key(p):
         return p if isinstance(p, str) else (p[0] if p else "")
-    return len([p for p in posts.get(slot, []) if _key(p) not in used])
+
+    count = len([p for p in posts.get(slot, []) if _key(p) not in used])
+    return count, complete
+
+
+def _save_pool(path: str, pool: dict) -> None:
+    """プールを安全に保存する。
+
+    ⚠️ 直接 "w" で開くと、書いている途中で失敗したときに、既存の在庫が
+    途中までのJSONに置き換わって読めなくなる（2026-09-13 Sol指摘#5）。
+    同じ場所に一時ファイルを書き、読み直せることを確かめてから差し替える。"""
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(pool, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        with open(tmp, encoding="utf-8") as f:  # 読み直せない物は本番に置かない
+            json.load(f)
+        os.replace(tmp, path)
+    finally:
+        # 失敗した書きかけを残さない（次回の読み込みや git add で拾われないように）
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _ask_model(client, system_prompt: str, user_prompt: str, label: str):
+    """モデルにJSON配列を書かせる。3回まで試し、(投稿リスト or None, 最後のエラー) を返す。"""
+    new_posts = None
+    last_error = None
+    for attempt in range(3):
+        try:
+            resp = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=8000,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}]
+            )
+            raw = resp.content[0].text.strip()
+            start = raw.find("[")
+            end = raw.rfind("]") + 1
+            if start == -1 or end == 0:
+                last_error = "JSONが見つからない"
+                print(f"[saas] {label} (試行{attempt+1}): {last_error}")
+                continue
+            candidate = raw[start:end]
+            try:
+                new_posts = json.loads(candidate)
+            except json.JSONDecodeError:
+                import re as _re
+                candidate = _re.sub(r'(?<!\\)\n', r'\\n', candidate)
+                new_posts = json.loads(candidate)
+            if not isinstance(new_posts, list):
+                last_error = "list以外が返された"
+                new_posts = None
+                continue
+            break
+        except json.JSONDecodeError as e:
+            last_error = str(e)
+            print(f"[saas] {label} (試行{attempt+1}): JSONパースエラー → {e}")
+            new_posts = None
+        except Exception as e:
+            last_error = str(e)
+            print(f"[saas] {label} (試行{attempt+1}): エラー → {e}")
+            new_posts = None
+            break
+    return new_posts, last_error
+
+
+def _validate_batch(new_posts: list, label: str) -> list:
+    """長さと内容を検査し、保存してよい投稿だけ返す。
+
+    クライアントのアカウントで公開されるため、コード側の防波堤は必須
+    （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。"""
+    def _within_length(p):
+        if isinstance(p, list):
+            return all(len(str(x)) <= 400 for x in p)
+        return len(str(p)) <= 350
+
+    kept = [p for p in new_posts if _within_length(p)]
+    dropped = len(new_posts) - len(kept)
+    if dropped:
+        print(f"[saas] {label}: 長すぎる投稿 {dropped}本を除外（基準: 単発350字/ツリー各部400字）")
+
+    from botlib import validate_post_content
+    checked = []
+    for p in kept:
+        reason = validate_post_content(p)
+        if reason:
+            print(f"[saas] {label}: 検証NGで除外 → {reason}: {str(p)[:60]}")
+        else:
+            checked.append(p)
+    return checked
 
 
 def generate_for_salon(salon: dict):
@@ -1097,19 +1298,26 @@ def generate_for_salon(salon: dict):
         raise RuntimeError(f"Anthropic APIキーが取得できません（全サロン生成不能）: {e}")
     generated_any = False
 
+    blind_slots = []
     for slot in ["morning", "noon", "evening"]:
-        remaining = _remaining(posts, file_key, slot)
-        if remaining > THRESHOLD:
+        remaining, counted = _remaining(posts, file_key, slot)
+        # ⚠️ 数え切れていないときに「足りている」と判断しない。実際は0本でも
+        # 「残5本→補充不要」になり、投稿側が枯渇して過去投稿の再利用に入る
+        if counted and remaining > THRESHOLD:
             print(f"[saas] {file_key} {slot}: 残{remaining}本 → 生成不要")
             continue
+        if not counted:
+            if len(posts.get(slot, [])) > BLIND_REFILL_MAX:
+                # 在庫の実数は多い。数え切れないまま足し続けても解決しないので人を呼ぶ
+                print(f"[saas] {file_key} {slot}: 使用済みを数え切れず、在庫は"
+                      f"{len(posts.get(slot, []))}本あるので補充を見送ります")
+                blind_slots.append(slot)
+                continue
+            print(f"[saas] {file_key} {slot}: 使用済みを数え切れないため安全側に倒して補充します")
 
         print(f"[saas] {file_key} {slot}: 残{remaining}本 → {GENERATE_COUNT}本生成開始")
 
-        slot_hint = {
-            "morning": "朝投稿（7〜8時頃）。1日の始まりに読む人向け。前向きな気づき・軽い問いかけ・背中を押す内容。",
-            "noon": "昼投稿（12時頃）。休憩中にサクッと読む人向け。共感・保存したくなる知識・具体的なTips。",
-            "evening": "夜投稿（21時頃）。1日の終わりに読む人向け。内省・本音・今日の気づき・静かな共感。",
-        }[slot]
+        slot_hint = _SLOT_HINTS[slot]
 
         existing = "\n".join([str(posts[slot][i])[:80] for i in range(min(3, len(posts[slot])))])
 
@@ -1174,44 +1382,8 @@ JSON配列以外の文字は一切出力しないでください。"""
 既存投稿（この角度は避ける）：
 {existing if existing else "（まだなし）"}"""
 
-        new_posts = None
-        last_error = None
-        for attempt in range(3):
-            try:
-                resp = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=8000,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_prompt}]
-                )
-                raw = resp.content[0].text.strip()
-                start = raw.find("[")
-                end = raw.rfind("]") + 1
-                if start == -1 or end == 0:
-                    last_error = "JSONが見つからない"
-                    print(f"[saas] {salon_name} {slot} (試行{attempt+1}): {last_error}")
-                    continue
-                candidate = raw[start:end]
-                try:
-                    new_posts = json.loads(candidate)
-                except json.JSONDecodeError:
-                    import re as _re
-                    candidate = _re.sub(r'(?<!\\)\n', r'\\n', candidate)
-                    new_posts = json.loads(candidate)
-                if not isinstance(new_posts, list):
-                    last_error = "list以外が返された"
-                    new_posts = None
-                    continue
-                break
-            except json.JSONDecodeError as e:
-                last_error = str(e)
-                print(f"[saas] {salon_name} {slot} (試行{attempt+1}): JSONパースエラー → {e}")
-                new_posts = None
-            except Exception as e:
-                last_error = str(e)
-                print(f"[saas] {salon_name} {slot} (試行{attempt+1}): エラー → {e}")
-                new_posts = None
-                break
+        new_posts, last_error = _ask_model(client, system_prompt, user_prompt,
+                                           f"{salon_name} {slot}")
 
         if new_posts is None:
             print(f"[saas] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
@@ -1227,28 +1399,7 @@ JSON配列以外の文字は一切出力しないでください。"""
             )
             continue
 
-        # 長さ検証：基準を超える投稿は保存しない（単発350字・ツリー各部400字まで）
-        def _within_length(p):
-            if isinstance(p, list):
-                return all(len(str(x)) <= 400 for x in p)
-            return len(str(p)) <= 350
-        kept = [p for p in new_posts if _within_length(p)]
-        dropped = len(new_posts) - len(kept)
-        if dropped:
-            print(f"[saas] {salon_name} {slot}: 長すぎる投稿 {dropped}本を除外（基準: 単発350字/ツリー各部400字）")
-        new_posts = kept
-
-        # 内容の最終バリデーション（空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。
-        # クライアントのアカウントで公開されるため、コード側の防波堤は必須。
-        from botlib import validate_post_content
-        checked = []
-        for p in new_posts:
-            reason = validate_post_content(p)
-            if reason:
-                print(f"[saas] {salon_name} {slot}: 検証NGで除外 → {reason}: {str(p)[:60]}")
-            else:
-                checked.append(p)
-        new_posts = checked
+        new_posts = _validate_batch(new_posts, f"{salon_name} {slot}")
         if not new_posts:
             print(f"[saas] {salon_name} {slot}: 全件検証NG → 追加なし")
             continue
@@ -1257,10 +1408,37 @@ JSON配列以外の文字は一切出力しないでください。"""
         print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
         generated_any = True
 
+    if blind_slots:
+        _notify_admin(f"⚠️ 投稿の使用済み判定ができていません（Supabase側の不調の疑い）\n\n"
+                      f"サロン: {salon_name}\n"
+                      f"枠: {', '.join(blind_slots)}\n\n"
+                      f"在庫は残っているので投稿は続きますが、数え切れない状態が続くと"
+                      f"同じ本文を出す危険があります。")
+
+    # ⚠️ 通常プールは判断材料より先に保存し切る。あとで判断材料が失敗しても、
+    # せっかく作った通常分が保存されないまま消えることが無いようにする（Sol指摘#4）。
     if generated_any:
-        with open(posts_path, "w", encoding="utf-8") as f:
-            json.dump(posts, f, ensure_ascii=False, indent=2)
+        _save_pool(posts_path, posts)
         print(f"[saas] {posts_path} を更新しました")
+
+    # ── 「このサロンを選ぶ判断材料」プール ─────────────────────────
+    # 通常プールは200本以上あるので、通常プールに混ぜると数ヶ月先まで出番が来ない。
+    # 別ファイルにして post_saas 側が JUDGE_RATE の割合でここから選ぶ。
+    # 対象はサロン（来店してもらう店舗）のみ。B2B・スクール・ナポリ・カスタムは導線が違う。
+    # ⚠️ ここでの失敗は投稿を止めない（通常プールがある）。他のサロンの生成も止めない。
+    judge_added = False
+    if stype in (None, "", "salon") and not is_custom:
+        try:
+            judge_added = _generate_judge_pool(client, rules, salon, salon_name,
+                                               file_key, safe_name)
+        except Exception as e:      # noqa: BLE001 判断材料の故障で全体を止めない
+            print(f"[判断材料] {salon_name}: 中断しました（通常投稿は続きます）: {e}")
+            _notify_admin(f"⚠️ 判断材料プールの補充が中断しました\n\n"
+                          f"サロン: {salon_name}\n"
+                          f"理由: {str(e)[:200]}\n\n"
+                          f"通常の投稿は止まりません。")
+
+    if generated_any or judge_added:
         # 完了LINEは「新規クライアントの初回生成」のときだけ（オンボーディングの節目）。
         # 既存サロンの補充では送らない＝LINE配信数の節約（彩さんの方針 2026-07-12）。
         if not file_existed:
@@ -1270,7 +1448,150 @@ JSON配列以外の文字は一切出力しないでください。"""
                 f"本日から自動配信が開始されます。"
             )
 
-    return generated_any
+    return generated_any or judge_added
+
+
+def _generate_judge_pool(client, rules: str, salon: dict, salon_name: str,
+                         file_key: str, safe_name: str) -> bool:
+    """「このサロンを選ぶ判断材料」投稿の専用プールを補充する。
+
+    通常プールと同じ {morning, noon, evening} 構造の別ファイル
+    posts_<name>.judge.json に貯める。切り口①〜⑤を1本ずつ作る。
+
+    ⚠️ ファイル名を `_judge` にすると `<他サロン>_judge` の通常プールと衝突する。
+    `_safe_name` は「.」を「_」に変えるので、「.judge」なら絶対に重ならない（Sol指摘#2）。"""
+    path = os.path.join(POSTS_DIR, f"posts_{safe_name}.judge.json")
+    pool = {}
+    pool_existed = os.path.exists(path)
+    if pool_existed:
+        try:
+            pool = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            # 読めないファイルを上書きすると、中身が何だったか分からなくなる。触らず知らせる
+            print(f"[判断材料] {salon_name}: 既存プールを読めません → 触りません: {e}")
+            _notify_admin(f"⚠️ 判断材料プールが読めません\n\n"
+                          f"サロン: {salon_name}\nファイル: {os.path.basename(path)}\n"
+                          f"理由: {str(e)[:150]}\n\n通常の投稿は止まりません。")
+            return False
+    if not isinstance(pool, dict):
+        print(f"[判断材料] {salon_name}: 既存プールの形が違います → 触りません")
+        return False
+    # ⚠️ 持ち主が書かれていない既存ファイルに、いまの顧客名を付けて自分の物にしない。
+    # 取り違えたら別の店の情報を客先で投稿することになる（2026-09-13 Sol 2巡目 指摘#5）
+    if pool_existed and pool.get("_salon") != file_key:
+        print(f"[判断材料] {salon_name}: プールの持ち主が違います（{pool.get('_salon')!r}）→ 触りません")
+        _notify_admin(f"⚠️ 判断材料プールの持ち主が一致しません\n\n"
+                      f"サロン: {salon_name}\n"
+                      f"ファイル: {os.path.basename(path)}\n"
+                      f"中の持ち主: {pool.get('_salon')!r}\n\n"
+                      f"通常の投稿は止まりません。")
+        return False
+    pool["_salon"] = file_key
+    for slot in ("morning", "noon", "evening"):
+        if not isinstance(pool.get(slot), list):
+            pool[slot] = []
+
+    added = False
+    empty_slots = []        # 「補充不要」と「作ろうとして作れなかった」を区別する
+    blind_slots = []        # 使用済みを数え切れず、補充を見送った枠
+    for slot in ("morning", "noon", "evening"):
+        remaining, counted = _remaining(pool, file_key, slot)
+        if counted and remaining > JUDGE_THRESHOLD:
+            print(f"[判断材料] {file_key} {slot}: 残{remaining}本 → 生成不要")
+            continue
+        if not counted:
+            if len(pool.get(slot, [])) > JUDGE_BLIND_REFILL_MAX:
+                # ⚠️ ログだけで止めない。数え切れない状態が続くと判断材料が使われないまま
+                # 補充もされず、誰も気づかない（2026-09-13 Sol 6巡目）
+                print(f"[判断材料] {file_key} {slot}: 使用済みを数え切れず、在庫は"
+                      f"{len(pool.get(slot, []))}本あるので補充を見送ります")
+                blind_slots.append(slot)
+                continue
+            print(f"[判断材料] {file_key} {slot}: 使用済みを数え切れないため安全側に倒して補充します")
+        print(f"[判断材料] {file_key} {slot}: 残{remaining}本 → {JUDGE_COUNT}本生成開始")
+
+        system_prompt = f"""あなたはSNS投稿の専門家です。
+以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
+
+=== サロン情報・投稿ルール ===
+{rules}
+
+=== 時間帯の特性 ===
+{_SLOT_HINTS[slot]}
+
+=== 今回だけの最優先指示 ===
+今回作るのは全て「このサロンを選ぶ判断材料」投稿です。
+ルール内の「## 「このサロンを選ぶ判断材料」投稿の作り方」に完全に従ってください。
+サロン情報に書かれていない事実（住所・時間・金額・回数・所要時間）は絶対に創作しないこと。
+
+=== 出力形式（厳守）===
+JSON配列だけを返してください。各要素は単発投稿の文字列。改行は\\nで表現。
+JSON配列以外の文字は一切出力しないでください。"""
+
+        user_prompt = f"""{JUDGE_COUNT}本の判断材料投稿を生成してください。
+
+- 切り口①〜⑤を1本ずつ、順番に1本ずつ作る（同じ切り口を2本作らない）
+- 1行目は読み手の状況から入る（店舗情報の見出しから始めない）
+- 事実を並べず、エピソード・お客様の言葉・問いかけの中に事実を溶かす
+- 各投稿200〜300字、最長350字
+- ハッシュタグ禁止
+- 本文の中でInstagramに触れない
+- {JUDGE_COUNT}本すべてJSON配列に含める
+
+既存の判断材料投稿（同じ書き出し・同じ例えを避ける）：
+{chr(10).join(str(p)[:60] for p in pool[slot][-5:]) if pool[slot] else "（まだなし）"}"""
+
+        new_posts, last_error = _ask_model(client, system_prompt, user_prompt,
+                                           f"{salon_name} 判断材料/{slot}")
+        if new_posts is None:
+            # 判断材料プールが空でも通常プールで投稿は続く＝止まらない。
+            # ただし黙って空のままだと機能が死んだことに誰も気づかないので知らせる。
+            print(f"[判断材料] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
+            empty_slots.append(f"{slot}（{str(last_error)[:60]}）")
+            continue
+
+        new_posts = [p for p in new_posts if isinstance(p, str) and p.strip()]
+        new_posts = _validate_batch(new_posts, f"{salon_name} 判断材料/{slot}")
+
+        # ヒアリングに無い金額・距離・営業時間を書いていないか、機械で突き合わせる
+        from botlib import judge_fact_violation as _judge_fact_violation
+        kept = []
+        for post in new_posts:
+            reason = _judge_fact_violation(post, salon)
+            if reason:
+                print(f"[判断材料] {salon_name} {slot}: 事実照合NGで除外 → {reason}: {post[:50]}")
+            else:
+                kept.append(post)
+        new_posts = kept
+
+        if not new_posts:
+            print(f"[判断材料] {salon_name} {slot}: 全件除外 → 追加なし")
+            empty_slots.append(f"{slot}（作った分が全部ルール違反で落ちた）")
+            continue
+
+        pool[slot].extend(new_posts)
+        print(f"[判断材料] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(pool[slot])}本）")
+        added = True
+
+    if added:
+        _save_pool(path, pool)
+        print(f"[判断材料] {path} を更新しました")
+    if blind_slots:
+        _notify_admin(f"⚠️ 判断材料の使用済み判定ができていません（Supabase側の不調の疑い）\n\n"
+                      f"サロン: {salon_name}\n"
+                      f"枠: {', '.join(blind_slots)}\n\n"
+                      f"通常の投稿は止まりませんが、この間は判断材料投稿が出ません。")
+    if empty_slots:
+        # 「足りているから作らなかった」と「作ろうとして1本も残らなかった」は別物。
+        # ⚠️ 1枠でも成功していると見逃す作りにしない。枠ごとに数えて必ず知らせる
+        # （2026-09-13 Sol 2巡目 指摘#6）。
+        print(f"[判断材料] {salon_name}: 補充できなかった枠 {', '.join(empty_slots)}")
+        _notify_admin(f"⚠️ 判断材料投稿を作れなかった枠があります\n\n"
+                      f"サロン: {salon_name}\n"
+                      f"枠: {', '.join(empty_slots)}\n\n"
+                      f"通常の投稿は止まりません（判断材料の割合だけ下がります）。\n"
+                      f"ヒアリング内容と生成ルールの噛み合わせを見直してください。")
+    return added
 
 
 def main():
@@ -1295,6 +1616,7 @@ def main():
     print(f"[saas] {len(salons)}件のサロンを検出")
 
     processed_ids = set()  # シートとローカル定義に同じアカウントがいても二重生成しない
+    failed_salons = []
 
     for salon in salons:
         salon_name = salon.get("サロン名", "")
@@ -1309,9 +1631,23 @@ def main():
         if threads_id:
             processed_ids.add(threads_id)
         print(f"\n[saas] === {salon_name} (@{threads_id}) の処理開始 ===")
-        generate_for_salon(salon)
+        # ⚠️ 1件の失敗で後続クライアントを未処理のまま終わらせない（2026-09-13 Sol指摘#4）。
+        # 黙って飛ばすと翌週プールが枯渇するので、必ず通知して最後に失敗で終える。
+        try:
+            generate_for_salon(salon)
+        except Exception as e:      # noqa: BLE001
+            failed_salons.append(salon_name)
+            print(f"[saas] {salon_name}: 生成中に失敗しました（他のサロンは続けます）: {e}")
+            _notify_admin(f"🚨 SaaS投稿生成 失敗（このサロンだけ）\n\n"
+                          f"サロン: {salon_name}\n"
+                          f"エラー: {str(e)[:200]}\n\n"
+                          f"他のサロンの生成は続行しました。\n"
+                          f"再実行: saas_generate.yml を salon_name={threads_id or salon_name} で手動実行")
 
     print("\n[saas] 全処理完了")
+    if failed_salons:
+        print(f"[saas] ⚠️ 生成できなかったサロン: {', '.join(failed_salons)}（exit 3）")
+        sys.exit(3)
     if sheet_failed:
         print("[saas] ⚠️ シート読み込み失敗によりシート由来のクライアントを未処理のまま終了（exit 2）")
         sys.exit(2)

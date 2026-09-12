@@ -1,4 +1,4 @@
-import os, sys, json, importlib, io, contextlib, urllib.error
+import os, sys, json, importlib, io, contextlib, urllib.error, shutil
 from datetime import datetime as _dt0, timezone as _tz0, timedelta as _td0
 from datetime import datetime, timezone, timedelta
 os.environ.setdefault("SUPABASE_URL", "https://fake.supabase.co")
@@ -125,6 +125,8 @@ def reset(**kw):
 
 _real_check_prev = post_saas.check_previous_slot
 _real_ig_cta = post_saas._maybe_add_instagram_cta_saas
+_real_pick_post = post_saas.pick_post
+_real_get_used = post_saas.get_used_posts
 
 SALON_ROW = {"id": SALON, "salon_name": "テストサロン", "access_token": "TOK",
              "threads_user_id": "USER1", "instagram_url": "", "is_active": True}
@@ -137,9 +139,9 @@ def run(texts):
     if action in ("hold", "skip"):
         return {"action": action, "complete": action == "skip"}, row, None
     if action == "go":
-        post_saas.pick_post = lambda name, slot, used: list(texts)
+        post_saas.pick_post = lambda name, slot, used, **kw: list(texts)
         post_saas.is_promo_time = lambda name, slot: False
-        post_saas.get_used_posts = lambda sid, slot: set()
+        post_saas.get_used_posts = lambda sid, slot=None: set()
         post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
         post_saas._enforce_threads_limit = lambda t: t
         post_saas._select_topic = lambda t, n: None
@@ -495,7 +497,7 @@ post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 W.salons = [{"id": SALON, "salon_name": "テストサロン", "access_token": "TOK",
              "threads_user_id": "USER1", "instagram_url": "", "is_active": True}]
-post_saas.pick_post = lambda name, slot, used: ["本日の投稿本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["本日の投稿本文"]
 post_saas.is_promo_time = lambda name, slot: False
 # 前日の noon を「公開済み・記録未完」にしておく
 yday = YESTERDAY
@@ -633,7 +635,7 @@ post_saas.SLOT_JST_WINDOWS = {}
 post_saas.SLOT = "noon"
 post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = True
-post_saas.pick_post = lambda name, slot, used: ["DRY本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["DRY本文"]
 post_saas.is_promo_time = lambda name, slot: False
 try:
     with contextlib.redirect_stdout(io.StringIO()):
@@ -823,7 +825,7 @@ post_saas.SLOT_JST_WINDOWS = {}
 post_saas.SLOT = "noon"
 post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
-post_saas.pick_post = lambda name, slot, used: ["不一致テスト本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["不一致テスト本文"]
 post_saas.is_promo_time = lambda name, slot: False
 W.salons = [{"id": SALON, "salon_name": "テストサロン", "access_token": "TOK",
              "threads_user_id": "BETSU_NO_ID", "instagram_url": "", "is_active": True}]
@@ -843,7 +845,7 @@ post_saas.JOB_BUDGET_SEC = 30
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.SLOT = "noon"
 post_saas.DRY_RUN = False
-post_saas.pick_post = lambda name, slot, used: ["時間切れテスト"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["時間切れテスト"]
 post_saas.is_promo_time = lambda name, slot: False
 W.salons = [{"id": SALON, "salon_name": f"サロン{i}", "access_token": "TOK",
              "threads_user_id": "USER1", "instagram_url": "", "is_active": True}
@@ -1005,7 +1007,7 @@ post_saas.SLOT_JST_WINDOWS = {}
 post_saas.SLOT = "noon"
 post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
-post_saas.pick_post = lambda name, slot, used: ["me失敗テスト"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["me失敗テスト"]
 post_saas.is_promo_time = lambda name, slot: False
 W.salons = [dict(SALON_ROW)]
 W.me_behavior = lambda n: "timeout"
@@ -1106,7 +1108,7 @@ post_saas.SLOT_JST_WINDOWS = {}
 post_saas.SLOT = "noon"
 post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
-post_saas.pick_post = lambda name, slot, used: ["一時障害テスト"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["一時障害テスト"]
 post_saas.is_promo_time = lambda name, slot: False
 W.salons = [dict(SALON_ROW)]
 W.me_behavior = lambda n: "timeout" if n == 1 else "ok"
@@ -1241,7 +1243,7 @@ reset()
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.SLOT = "noon"
 post_saas.DRY_RUN = False
-post_saas.pick_post = lambda name, slot, used: ["401テスト"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["401テスト"]
 post_saas.is_promo_time = lambda name, slot: False
 W.salons = [dict(SALON_ROW)]
 W.me_behavior = lambda n: "401"
@@ -1744,9 +1746,9 @@ op = f"{SALON}:{JST_DATE}:noon"
 a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
 W.publish_behavior = lambda cid, n: "http400"
 W.status_override = "ERROR"
-post_saas.pick_post = lambda name, slot, used: ["本文A"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["本文A"]
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.get_used_posts = lambda sid, slot: set()
+post_saas.get_used_posts = lambda sid, slot=None: set()
 post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
 post_saas._enforce_threads_limit = lambda t: t
 post_saas._select_topic = lambda t, n: None
@@ -1760,7 +1762,7 @@ print("  → 次の実行で別の本文Bを選び直す")
 W.publish_behavior = lambda cid, n: "ok"
 W.status_override = None
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=1)).isoformat()
-post_saas.pick_post = lambda name, slot, used: ["本文B"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["本文B"]
 a2, row2 = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
 with contextlib.redirect_stdout(io.StringIO()):
     st2, d2, _k = post_saas._run_slot(row2, a2, SALON_ROW, "USER1", "TOK", "noon", "@testsalon")
@@ -1887,7 +1889,7 @@ orig_pick_promo = post_saas.pick_promo
 post_saas.is_promo_time = lambda name, slot: True
 post_saas.pick_promo = lambda sid=None: {"text": "宣伝Z", "image_url": "img"}
 a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
-post_saas.get_used_posts = lambda sid, slot: set()
+post_saas.get_used_posts = lambda sid, slot=None: set()
 post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
 post_saas._enforce_threads_limit = lambda t: t
 post_saas._select_topic = lambda t, n: None
@@ -2071,7 +2073,7 @@ _json.dump({"posts": ["宣伝A"], "image_url": "img"},
 open(post_saas.PROMO_USED_FILE, "w").write("[]")
 orig_promo_time = post_saas.is_promo_time
 post_saas.is_promo_time = lambda name, slot: True
-post_saas.pick_post = lambda name, slot, used: ["通常の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["通常の本文"]
 orig_get = post_saas.supabase_get
 def flaky_get(path, params=None):
     if path == "post_attempts" and (params or {}).get("select", "").startswith("payload"):
@@ -2592,7 +2594,7 @@ post_saas.is_promo_time = lambda name, slot: False
 post_saas._sync_last_run = _record_sync_write and (lambda *a, **k: None)
 W.salons = [dict(SALON_ROW)]
 texts_by_slot = {"morning": ["朝の本文"], "noon": ["昼の本文"]}
-post_saas.pick_post = lambda name, slot, used: list(texts_by_slot[slot])
+post_saas.pick_post = lambda name, slot, used, **kw: list(texts_by_slot[slot])
 W.publish_behavior = lambda cid, n: "ok"
 try:
     with contextlib.redirect_stdout(io.StringIO()):
@@ -2622,7 +2624,7 @@ post_saas.SLOT = "noon"
 post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["昼の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["昼の本文"]
 W.salons = [dict(SALON_ROW)]
 W.publish_behavior = lambda cid, n: "ok"
 post_saas.SLOT_JST_WINDOWS = {"noon": range(11, 17)}
@@ -2673,7 +2675,7 @@ post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["朝の本文"]
 W.salons = [dict(SALON_ROW)]
 W.publish_behavior = lambda cid, n: "ok"
 try:
@@ -2719,7 +2721,7 @@ post_saas.GAPFILL_BUDGET_SEC = 30
 W.salons = [dict(SALON_ROW, id=f"{i}1111111-1111-1111-1111-111111111111",
                  salon_name=f"サロン{i}") for i in range(1, 4)]
 texts_by_slot = {"morning": ["朝の本文"], "noon": ["昼の本文"]}
-post_saas.pick_post = lambda name, slot, used: list(texts_by_slot[slot])
+post_saas.pick_post = lambda name, slot, used, **kw: list(texts_by_slot[slot])
 W.publish_behavior = lambda cid, n: "ok"
 W.latency = 6          # 通信1回6秒（穴埋めの持ち時間をすぐ使い切る）
 try:
@@ -2743,7 +2745,7 @@ post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["朝の本文"]
 W.salons = [dict(SALON_ROW)]
 W.publish_behavior = lambda cid, n: "ok"
 seed_history(days=3)
@@ -2801,7 +2803,7 @@ post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["朝の本文"]
 W.salons = [dict(SALON_ROW, threads_user_id="BETSU_NO_ID")]
 W.publish_behavior = lambda cid, n: "ok"
 with contextlib.redirect_stdout(io.StringIO()):
@@ -2823,7 +2825,7 @@ post_saas.SLOT_JST_WINDOWS = {}
 post_saas.is_promo_time = lambda name, slot: False
 W.salons = [dict(SALON_ROW)]
 by_slot = {"morning": ["朝の本文"], "noon": ["昼の本文"], "evening": ["夜の本文"]}
-post_saas.pick_post = lambda name, slot, used: list(by_slot[slot])
+post_saas.pick_post = lambda name, slot, used, **kw: list(by_slot[slot])
 W.publish_behavior = lambda cid, n: "ok"
 try:
     with contextlib.redirect_stdout(io.StringIO()):
@@ -2889,7 +2891,7 @@ post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["夜の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["夜の本文"]
 W.salons = [dict(SALON_ROW)]
 W.publish_behavior = lambda cid, n: "ok"
 _orig_dt = post_saas.datetime
@@ -2962,7 +2964,7 @@ post_saas.GAPFILL_BUDGET_SEC = 30
 W.salons = [dict(SALON_ROW, id=f"{i:02d}111111-1111-1111-1111-111111111111",
                  salon_name=f"サロン{i}") for i in range(1, 11)]
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["穴埋め本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["穴埋め本文"]
 W.publish_behavior = lambda cid, n: "ok"
 W.latency = 4
 before = CLOCK.slept
@@ -3059,7 +3061,7 @@ post_saas.SALON_FILTER = ""
 post_saas.DRY_RUN = False
 post_saas.SLOT_JST_WINDOWS = {}
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["昼の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["昼の本文"]
 W.salons = [dict(SALON_ROW)]
 W.publish_behavior = lambda cid, n: "ok"
 code = None
@@ -3108,9 +3110,9 @@ W.attempts[op] = {"op_id": op, "salon_id": SALON, "jst_date": JST_DATE, "slot": 
                              "post_id": "P_DIRTY", "lost_response": True,
                              "hash": post_state.part_hash("むかしの本文")}],
                   "updated_at": (_dt.now(_tz.utc) - _td(hours=3)).isoformat()}
-post_saas.pick_post = lambda name, slot, used: ["あたらしい本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["あたらしい本文"]
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.get_used_posts = lambda sid, slot: set()
+post_saas.get_used_posts = lambda sid, slot=None: set()
 post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
 post_saas._enforce_threads_limit = lambda t: t
 post_saas._select_topic = lambda t, n: None
@@ -3168,7 +3170,7 @@ check("投稿を止める印は作らない（一時障害でその日を止め�
 print("  → 通信が戻れば、その日のうちに埋められる")
 W.publish_behavior = lambda cid, n: "ok"
 post_saas.is_promo_time = lambda name, slot: False
-post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
+post_saas.pick_post = lambda name, slot, used, **kw: ["朝の本文"]
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.check_previous_slot(W.salons)
 check("復旧後に埋められる", any(p["text"] == "朝の本文" for p in W.posts),
@@ -3244,6 +3246,330 @@ check("正しいリンクが入る", "instagram.com/nico.lymph" in out2[0], out2
 check("余計なパラメータが入らない", "?r=nametag" not in out2[0], out2)
 check("確かめていない中身を断定しない",
       not any(w in out2[0] for w in ("BeforeAfter", "お客様の声", "施術写真")), out2)
+
+# ── 131. 「このサロンを選ぶ判断材料」プール ─────────────────────
+print("\n(131) 判断材料プール")
+reset()
+import tempfile as _tf
+_tmp = _tf.mkdtemp()
+_orig_dir = post_saas.POSTS_DIR
+_orig_rate = post_saas.JUDGE_RATE
+post_saas.POSTS_DIR = _tmp
+name = "テストサロン"
+safe = post_saas._safe_name(name)
+json.dump({"morning": ["通常A"], "noon": ["通常B"], "evening": ["通常C"]},
+          open(os.path.join(_tmp, f"posts_{safe}.json"), "w", encoding="utf-8"),
+          ensure_ascii=False)
+
+def _pick(used=None):
+    """例外も結果として返す（壊れたときに落ちるのではなく❌で見えるようにする）"""
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return _real_pick_post(name, "noon", set() if used is None else used)
+    except Exception as e:      # noqa: BLE001 投稿が止まること自体が不合格
+        return f"例外:{type(e).__name__}"
+
+# プールが無いときは今までどおり通常プールから選ぶ
+post_saas.JUDGE_RATE = 1.0
+got = _pick()
+check("判断材料プールが無くても投稿できる", got == ["通常B"], got)
+
+# プールがあれば判断材料から選ぶ
+judge_path = post_saas.judge_pool_path(name)
+json.dump({"_salon": name, "morning": [], "noon": ["判断材料1", "判断材料2"], "evening": []},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+got = _pick()
+check("プールがあれば判断材料から選ぶ",
+      isinstance(got, list) and got[0].startswith("判断材料"), got)
+
+# ファイル名が他のサロンの通常プールと重ならない
+check("判断材料のファイル名が通常プールと重ならない",
+      os.path.basename(judge_path) == f"posts_{safe}.judge.json"
+      and "." not in safe, os.path.basename(judge_path))
+
+# 中身の持ち主が違うファイルは使わない
+json.dump({"_salon": "よそのサロン", "noon": ["よその判断材料"]},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+check("持ち主が違うプールは使わない", _pick() == ["通常B"], _pick())
+
+# 持ち主が書かれていないファイルも使わない（誰の物か確かめられない）
+for label, doc in [("_salonなし", {"noon": ["持ち主不明の本文"]}),
+                   ("_salonがnull", {"_salon": None, "noon": ["持ち主不明の本文"]})]:
+    json.dump(doc, open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+    check(f"持ち主不明のプールは使わない（{label}）", _pick() == ["通常B"], _pick())
+
+# 形が壊れていても通常プールに落ちる（構文だけでなく型も）
+for label, content in [("配列", "[]"), ("null", "null"), ("数値", "5"),
+                       ("スロットがnull", '{"noon": null}'),
+                       ("スロットが数値", '{"noon": 42}'),
+                       ("スロットが文字列", '{"noon": "abc"}'),
+                       ("空文字だけ", '{"noon": [""]}'),
+                       ("要素が数値", '{"noon": [123]}')]:
+    open(judge_path, "w", encoding="utf-8").write(content)
+    check(f"形が壊れていても投稿できる（{label}）", _pick() == ["通常B"], _pick())
+
+json.dump({"_salon": name, "morning": [], "noon": ["判断材料1", "判断材料2"], "evening": []},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+
+# 使い切っていたら通常プールに落ちる（投稿を止めない）
+got = _pick({"判断材料1", "判断材料2"})
+check("使い切ったら通常プールに落ちる", got == ["通常B"], got)
+
+# 壊れていても止まらない
+open(judge_path, "w", encoding="utf-8").write("{壊れたJSON")
+got = _pick()
+check("壊れていても投稿は止まらない", got == ["通常B"], got)
+
+# 割合0なら一度も選ばれない
+json.dump({"morning": [], "noon": ["判断材料1"], "evening": []},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+post_saas.JUDGE_RATE = 0.0
+picks = [_pick() for _ in range(20)]
+check("割合0なら判断材料は出ない", all(p == ["通常B"] for p in picks),
+      [p for p in picks if p != ["通常B"]][:3])
+
+post_saas.POSTS_DIR = _orig_dir
+post_saas.JUDGE_RATE = _orig_rate
+shutil.rmtree(_tmp, ignore_errors=True)
+
+
+# ── 132. Instagram誘導を二重に付けない ──────────────────────────
+print("\n(132) Instagram誘導の二重掲載")
+reset()
+post_saas._maybe_add_instagram_cta_saas = _real_ig_cta
+_orig_rand = post_saas.random.random
+post_saas.random.random = lambda: 0.0        # 必ず付ける確率
+for body in ("本文\nInstagramにも載せています。",
+             "本文\nインスタもご覧ください。",
+             "本文\nhttps://www.instagram.com/nico.lymph"):
+    with contextlib.redirect_stdout(io.StringIO()):
+        out = post_saas._maybe_add_instagram_cta_saas([body], "https://www.instagram.com/nico.lymph/")
+    check(f"本文に案内があれば足さない（{body[3:12]}）", out == [body], out)
+with contextlib.redirect_stdout(io.StringIO()):
+    out = post_saas._maybe_add_instagram_cta_saas(["本文だけ"], "https://www.instagram.com/nico.lymph/")
+post_saas.random.random = _orig_rand
+check("案内が無い本文には付く", "instagram.com/nico.lymph" in out[0], out)
+# ツリー投稿は1部目に案内があっても二重にしない
+post_saas.random.random = lambda: 0.0
+with contextlib.redirect_stdout(io.StringIO()):
+    out = post_saas._maybe_add_instagram_cta_saas(["1部目 Instagramに載せています", "2部目"],
+                                                  "https://www.instagram.com/nico.lymph/")
+post_saas.random.random = _orig_rand
+check("ツリーでも二重にしない", out == ["1部目 Instagramに載せています", "2部目"], out)
+
+
+# ── 133. 判断材料投稿の事実照合（金額・距離・営業時間）─────────────
+print("\n(133) 判断材料の事実照合")
+reset()
+from botlib import judge_fact_violation
+
+_PICCOLO = {"サロン名": "ピッコロ",
+            "価格を投稿に記載してもOKですか？": "はい（具体的な金額を投稿に出してOK）",
+            "提供メニューと価格帯（箇条書きでOK）":
+                "生コラーゲンシェービング¥22,000（初回体験9,900円）"
+                "プラズマ幹細胞美肌再生フェイシャル¥38,500（初回体験¥8,800）",
+            "一番の売りメニュー・最も結果が出やすい施術": "お顔そりからフェイシャルへ",
+            "所在地（最寄り駅・徒歩時間）": "アピタ長津田店より車で3分",
+            "営業時間": "9:00〜17:00"}
+_IRIS = {"サロン名": "アイリス",
+         "価格を投稿に記載してもOKですか？": "体験・初回コースの価格のみOK",
+         "提供メニューと価格帯（箇条書きでOK）":
+             "生コラーゲンシェービング　90分¥14,850/初回体験価格¥8,800",
+         "一番の売りメニュー・最も結果が出やすい施術": "プラズマ幹細胞フェイシャル",
+         "所在地（最寄り駅・徒歩時間）": "服部天神徒歩3分", "営業時間": "10:00〜17:00"}
+_NICO = {"サロン名": "nico",
+         "価格を投稿に記載してもOKですか？": "いいえ（詳しくはDMまたはHPへ誘導する）",
+         "提供メニューと価格帯（箇条書きでOK）": "フェイシャル¥15,000〜/全身リンパ¥6,500円〜",
+         "一番の売りメニュー・最も結果が出やすい施術": "肌の土台再生",
+         "所在地（最寄り駅・徒歩時間）": "大分駅　徒歩3分", "営業時間": "9:30〜16:00"}
+_MAN = {"サロン名": "テスト", "価格を投稿に記載してもOKですか？": "はい（具体的な金額を投稿に出してOK）",
+        "提供メニューと価格帯（箇条書きでOK）": "初回10,000円",
+        "一番の売りメニュー・最も結果が出やすい施術": "",
+        "所在地（最寄り駅・徒歩時間）": "東京都渋谷区", "営業時間": "9:30〜18:00"}
+_IRIS2 = {"サロン名": "アイリス", "価格を投稿に記載してもOKですか？": "体験・初回コースの価格のみOK",
+          "提供メニューと価格帯（箇条書きでOK）": "初回8,800円（2回目以降14,850円）",
+          "一番の売りメニュー・最も結果が出やすい施術": "",
+          "所在地（最寄り駅・徒歩時間）": "服部天神徒歩3分", "営業時間": "10:00〜17:00"}
+_MAN2 = {"サロン名": "テスト", "価格を投稿に記載してもOKですか？": "はい（具体的な金額を投稿に出してOK）",
+         "提供メニューと価格帯（箇条書きでOK）": "施術50,000円",
+         "一番の売りメニュー・最も結果が出やすい施術": "",
+         "所在地（最寄り駅・徒歩時間）": "東京都渋谷区1丁目", "営業時間": "9:00〜18:00"}
+_ADDR = {"サロン名": "ピッコロ", "価格を投稿に記載してもOKですか？": "いいえ（詳しくはDMまたはHPへ誘導する）",
+         "提供メニューと価格帯（箇条書きでOK）": "",
+         "一番の売りメニュー・最も結果が出やすい施術": "",
+         "所在地（最寄り駅・徒歩時間）": "緑区霧が丘5-12-18", "営業時間": "9:00〜17:00"}
+_FACT_CASES = [
+    ("金額禁止のサロンに金額を書かせない", _NICO, "料金は初回8,800円です。", False),
+    ("金額禁止ならメニューに在る金額も書かせない", _NICO, "フェイシャルは15,000円です。", False),
+    ("架空の営業時間を通さない", _NICO, "毎日23時まで営業しています。", False),
+    ("金額に触れない本文は通す", _NICO, "料金はDMでお伝えしています。", True),
+    ("許可サロンのメニューにある金額は通す", _PICCOLO, "初回体験は8,800円です。", True),
+    ("メニューに無い金額は通さない", _PICCOLO, "初回体験は7,700円です。", False),
+    ("ヒアリング通りの所要時間は通す", _PICCOLO, "アピタ長津田店より車で3分です。", True),
+    ("書いていない徒歩分数は通さない", _PICCOLO, "駅から徒歩3分です。", False),
+    ("体験のみ許可＝初回価格は通す", _IRIS, "初回体験価格は8,800円です。", True),
+    ("体験のみ許可＝通常価格は通さない", _IRIS, "通常は¥14,850です。", False),
+    ("営業時間内の時刻は通す", _IRIS, "17時まで営業しています。", True),
+    ("営業時間外の時刻は通さない", _IRIS, "20時まで営業しています。", False),
+    ("本文のInstagram誘導は通さない", _IRIS, "Instagramにも載せています。", False),
+    ("回数の話を金額と誤判定しない", _IRIS, "3回目で変化を感じる方が多いです。", True),
+    ("暮らしの時刻を営業時間と誤判定しない", _NICO, "朝7時に起きて白湯を飲みます。", True),
+    # 2026-09-13 Sol 2巡目の反例（どれも「通ってしまっていた」書き方）
+    ("「1万円」も金額として止める", _NICO, "初回料金は1万円です。", False),
+    ("漢数字の金額も止める", _NICO, "初回料金は一万円です。", False),
+    ("時間の範囲表記も照合する", _NICO, "営業時間は9:30〜23:00です。", False),
+    ("分まで照合する", _NICO, "毎日15:59まで営業しています。", False),
+    ("ヒアリング通りの営業時間は通す", _NICO, "営業は9:30から16:00までです。", True),
+    ("架空の住所を止める", _NICO, "東京都渋谷区神宮前9丁目99番地にあります。", False),
+    ("ヒアリングに無い駅名を止める", _NICO, "新宿駅から徒歩3分です。", False),
+    ("体験のみ許可でも通常価格は止める", _IRIS, "通常コースは14,850円です。", False),
+    ("地名に見える普通の言葉は落とさない", _NICO, "都市部の方からもご相談をいただきます。", True),
+    ("「この地区」を地名と誤判定しない", _NICO, "この地区のお客様が多いです。", True),
+    ("市販という言葉を地名と誤判定しない", _NICO, "市販のスキンケアでは届きません。", True),
+    ("ヒアリングに無い市名は止める", _NICO, "大阪市内から通ってくださる方もいます。", False),
+    # 2026-09-13 Sol 3巡目の反例（厳しすぎて正しい投稿まで落ちていた／抜けていた）
+    ("許可サロンの「1万円」は通す", _MAN, "初回は1万円です。", True),
+    ("漢数字の「一万円」は止める", _MAN, "初回は一万円です。", False),
+    ("「午後6時まで営業」は通す", _MAN, "午後6時まで営業しています。", True),
+    ("「9時半から営業」は通す", _MAN, "9時半から営業しています。", True),
+    ("営業時間外の「午後8時」は止める", _MAN, "午後8時まで営業しています。", False),
+    ("ひらがなの市名も止める", _MAN, "つくば市のサロンです。", False),
+    ("所在地に在る区名は通す", _MAN, "渋谷区のサロンです。", True),
+    ("「2回目以降」の価格は止める", _IRIS2, "2回目以降は14,850円です。", False),
+    ("括弧の外の初回価格は通す", _IRIS2, "初回体験は8,800円です。", True),
+    # 2026-09-13 Sol 4巡目：前置きが付いた正しい地名まで落としていた
+    ("前置き付きの正しい地名は通す", _MAN, "当店は渋谷区にあります。", True),
+    ("文の途中の正しい地名も通す", _MAN, "仕事帰りに渋谷区でケアしませんか。", True),
+    ("前置きが付いても架空の地名は止める", _MAN, "当店はつくば市にあります。", False),
+    # 2026-09-13 Sol 6巡目：数字と地名の一部だけで通っていた
+    ("小数の万円を誤読しない", _MAN2, "施術は1.5万円です。", False),
+    ("メニュー通りの万円は通す", _MAN2, "施術は5万円です。", True),
+    ("ひらがな地名も止める", _MAN2, "ほのか市にあります。", False),
+    ("ヒアリングに無い番地を止める", _MAN2, "渋谷区1丁目99-99にあります。", False),
+    ("回数の範囲を番地と誤判定しない", _MAN2, "3-5回通うと変化を感じます。", True),
+    ("期間の範囲を番地と誤判定しない", _MAN2, "1-2ヶ月で実感される方が多いです。", True),
+    ("漢数字の営業時間を止める", _MAN2, "営業時間は朝七時から夜十時です。", False),
+    ("所在地に在る丁目は通す", _MAN2, "渋谷区1丁目にあります。", True),
+    ("地名の一部だけの一致で通さない", _MAN2, "架空谷区にあります。", False),
+    ("前置き付きの正しい区名は通す", _MAN2, "当店は渋谷区にあります。", True),
+    # 数字の住所は末尾一致を許さない（登録の一部と重なるだけで通さない）
+    ("丁目の数字が違えば止める", _MAN2, "渋谷区11丁目にあります。", False),
+    ("丁目の前の地名が違えば止める", _MAN2, "架空区1丁目にあります。", False),
+    ("番地の一部が重なるだけでは通さない", _ADDR, "霧が丘99-12-18です。", False),
+    ("登録どおりの番地は通す", _ADDR, "緑区霧が丘5-12-18です。", True),
+    # 2026-09-13 Sol 7巡目
+    ("全角の小数点も読む", _MAN2, "施術は１．５万円です。", False),
+    ("円が付かない万も読む", _MAN2, "施術は1.5万です。", False),
+    ("百円も読む", _MAN2, "施術は5百円です。", False),
+    ("地名の頭が違えば止める", _MAN2, "東渋谷区にあります。", False),
+    ("番地が続く住所も全部照合する", _MAN2, "渋谷区1丁目99番99号です。", False),
+    ("営業と書かなくても時間の範囲は照合する", _MAN2, "朝7時から夜10時までお待ちしています。", False),
+    ("営業時間内の範囲は通す", _MAN2, "朝9時から夜18時までお待ちしています。", True),
+    ("時間の前後が逆なら止める", _MAN2, "営業時間は18時から9時です。", False),
+    ("回数の範囲を住所と誤判定しない", _MAN2, "3-12回が目安です。", True),
+    ("時間の範囲を住所と誤判定しない", _MAN2, "10-20分です。", True),
+]
+_bad = [(nm, judge_fact_violation(t, sal))
+        for nm, sal, t, ok in _FACT_CASES
+        if (judge_fact_violation(t, sal) is None) != ok]
+check("金額・距離・営業時間の照合が全件正しい", not _bad, _bad)
+
+
+# ── 134. 投稿済み本文を1000件で打ち切らない ────────────────────
+print("\n(134) 投稿済み本文の取り切り")
+reset()
+W.post_logs = [{"salon_id": SALON, "slot": "noon", "id": i,
+                "post_content": f"過去本文{i:05d}", "posted_at": "2026-01-01T00:00:00+00:00"}
+               for i in range(1200)]
+# 別スロットの本文も同じサロンなら「使用済み」に入る（取りこぼし穴埋めでの二重投稿を防ぐ）
+W.post_logs.append({"salon_id": SALON, "slot": "morning", "id": 9999,
+                    "post_content": "朝で使った本文", "posted_at": "2026-01-01T00:00:00+00:00"})
+with contextlib.redirect_stdout(io.StringIO()):
+    used = _real_get_used(SALON)
+check("1000件を超えても全部そろう", len(used) >= 1201, len(used))
+check("2ページ目の本文も入っている", "過去本文01100" in used, None)
+check("別スロットの本文も使用済みに入る", "朝で使った本文" in used, None)
+
+
+# ── 135. 台帳にだけ残る本文をもう一度選ばない ───────────────────
+print("\n(135) 台帳にだけ残る本文")
+reset()
+W.post_logs = []          # 記録は残っていない
+W.attempts["OLD:2026-09-12:noon"] = {
+    "op_id": "OLD:2026-09-12:noon", "salon_id": SALON, "jst_date": "2026-09-12",
+    "slot": "noon", "status": "published", "rev": 1, "parts": [], "logged": False,
+    "payload": {"texts": ["公開できたのに記録できなかった本文"],
+                "original_first": "公開できたのに記録できなかった本文"}}
+with contextlib.redirect_stdout(io.StringIO()):
+    pending, complete = post_saas.get_pending_texts(SALON)
+check("台帳の本文を拾う", "公開できたのに記録できなかった本文" in pending, pending)
+check("読み切れたと分かる", complete is True, complete)
+with contextlib.redirect_stdout(io.StringIO()):
+    used_all, used_ok = post_saas.used_texts_for(SALON)
+check("投稿で使う除外集合にも入る",
+      "公開できたのに記録できなかった本文" in used_all, used_all)
+
+# 記録済み（logged=true）の行は取らない＝post_logs側にあるので二重に持たない
+W.attempts["DONE:2026-09-12:noon"] = {
+    "op_id": "DONE:2026-09-12:noon", "salon_id": SALON, "jst_date": "2026-09-12",
+    "slot": "noon", "status": "logged", "rev": 1, "parts": [], "logged": True,
+    "payload": {"texts": ["記録まで終わった本文"], "original_first": "記録まで終わった本文"}}
+with contextlib.redirect_stdout(io.StringIO()):
+    pending, _ = post_saas.get_pending_texts(SALON)
+check("記録済みの本文は台帳から取らない", "記録まで終わった本文" not in pending, pending)
+
+# 読めないときは3回試す（1回で諦めない）
+_orig_sg = post_saas.supabase_get
+_tries = [0]
+
+
+def _always_fail(path, params=None):
+    _tries[0] += 1
+    raise TimeoutError("timed out")
+
+
+post_saas.supabase_get = _always_fail
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.get_pending_texts(SALON)
+post_saas.supabase_get = _orig_sg
+check("読めないときは3回試す", _tries[0] == 3, _tries[0])
+
+# 台帳が読めなくても投稿は止めない
+_orig_sg = post_saas.supabase_get
+post_saas.supabase_get = lambda p, params=None: (_ for _ in ()).throw(TimeoutError("timed out"))
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        got, complete = post_saas.get_pending_texts(SALON)
+    err = None
+except Exception as e:      # noqa: BLE001
+    got, complete, err = None, None, type(e).__name__
+post_saas.supabase_get = _orig_sg
+check("台帳が読めなくても落ちない", err is None and got == set(), err or got)
+check("読み切れなかったと申告する", complete is False, complete)
+
+# 読み切れないときは判断材料プールを使わない（少ない在庫ほど引き当てやすい）
+import tempfile as _tf2
+_tmp2 = _tf2.mkdtemp()
+_od = post_saas.POSTS_DIR
+post_saas.POSTS_DIR = _tmp2
+_nm = "テストサロン"
+_sf = post_saas._safe_name(_nm)
+json.dump({"morning": ["通常A"], "noon": ["通常B"], "evening": ["通常C"]},
+          open(os.path.join(_tmp2, f"posts_{_sf}.json"), "w", encoding="utf-8"),
+          ensure_ascii=False)
+json.dump({"_salon": _nm, "morning": [], "noon": ["判断材料X"], "evening": []},
+          open(post_saas.judge_pool_path(_nm), "w", encoding="utf-8"), ensure_ascii=False)
+_or = post_saas.JUDGE_RATE
+post_saas.JUDGE_RATE = 1.0
+with contextlib.redirect_stdout(io.StringIO()):
+    got_ng = _real_pick_post(_nm, "noon", set(), allow_judge=False)
+    got_ok = _real_pick_post(_nm, "noon", set(), allow_judge=True)
+post_saas.JUDGE_RATE = _or
+post_saas.POSTS_DIR = _od
+shutil.rmtree(_tmp2, ignore_errors=True)
+check("読み切れないときは判断材料を使わない", got_ng == ["通常B"], got_ng)
+check("読み切れたときは判断材料を使う", got_ok == ["判断材料X"], got_ok)
+
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

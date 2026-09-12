@@ -118,7 +118,22 @@ jobs:
               [ -e "$f" ] || continue
               b=$(basename "$f"); keep=0
               for k in $PUBLIC_KEEP; do [ "$b" = "$k" ] && keep=1; done
-              if [ "$keep" = "0" ]; then cp "$f" .saas_posts_private/ && rm "$f" && moved=$((moved+1)); fi
+              if [ "$keep" = "0" ]; then
+                # ⚠️ private側へ直接 cp すると、コピー先を切り詰めてから失敗することがあり、
+                # 既存の在庫が壊れたままコミットされる（2026-09-13 Sol指摘）。
+                # 一時ファイルへコピー → JSONとして読めるか確認 → 置換 の順にする。
+                # どこかで失敗しても、private の既存ファイルはそのまま残る。
+                # 公開ツリーからは必ず消す（顧客ファイルを公開リポに残さないことが最優先）。
+                if cp "$f" ".saas_posts_private/$b.tmp" \
+                   && python3 -c "import json,sys; json.load(open(sys.argv[1]))" ".saas_posts_private/$b.tmp"; then
+                  mv ".saas_posts_private/$b.tmp" ".saas_posts_private/$b"
+                  rm "$f"; moved=$((moved+1))
+                else
+                  rm -f ".saas_posts_private/$b.tmp"
+                  echo "::warning::privateへ安全にコピーできませんでした（private側の既存在庫はそのまま）: $b"
+                  rm -f "$f"
+                fi
+              fi
             done
             echo "クライアント $moved 件を private へ隔離"
             if [ -d .saas_posts_private/.git ]; then
@@ -148,7 +163,26 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 保存に失敗したときの書きかけ（.tmp）が残っていたら消してからstageする
+          rm -f posts_saas/*.tmp
           git add -A posts_saas/ promo_posts_personal.json
+          # ⚠️ 隔離ステップの cp が失敗するとクライアントのファイルが公開リポに残る。
+          # 隔離の成功だけに頼らず、コミット直前に独立して確認する（2026-09-13 Sol指摘#8）。
+          # 自社アカ（判断材料プール posts_<name>.judge.json を含む）以外が居たら止める。
+          # ⚠️ core.quotePath=false を付けないと、日本語名が
+          #    "posts_saas/posts_\343\201\246.json" の形で出て、許可済みでも弾かれる（Sol指摘）
+          PUBLIC_OK="^posts_saas/posts_(bemolle_diet|aya_kuroki_0929|urakata_san_official|toko_test|て|テスト)(\.judge)?\.json$"
+          leaked=$(git -c core.quotePath=false diff --cached --name-only -- posts_saas/ \
+                   | grep -Ev "$PUBLIC_OK" || true)
+          if [ -n "$leaked" ]; then
+            echo "::error::クライアントの投稿ファイルが公開リポに載ろうとしています:"
+            echo "$leaked"
+            # ファイル名に空白があっても壊れないよう1行ずつ戻す
+            printf '%s\n' "$leaked" | while IFS= read -r bad; do
+              [ -n "$bad" ] && git reset -q -- "$bad"
+            done
+            exit 1
+          fi
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0

@@ -231,6 +231,16 @@ class World:
                 if sid_in and sid_in.startswith("in."):
                     allowed = set(sid_in[4:-1].split(","))
                     rows = [r for r in rows if r.get("salon_id") in allowed]
+                elif sid_in and sid_in.startswith("eq."):
+                    rows = [r for r in rows if r.get("salon_id") == sid_in[3:]]
+                # logged=not.is.true / logged=eq.false / logged=is.null を本物どおり効かせる
+                lg = q.get("logged", [None])[0]
+                if lg == "not.is.true":
+                    rows = [r for r in rows if r.get("logged") is not True]
+                elif lg == "eq.false":
+                    rows = [r for r in rows if r.get("logged") is False]
+                elif lg == "is.null":
+                    rows = [r for r in rows if r.get("logged") is None]
                 order = q.get("order", [None])[0]
                 if order:
                     key = order.split(".")[0]
