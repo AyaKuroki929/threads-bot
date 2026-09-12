@@ -154,6 +154,14 @@ class World:
                 gte = q.get("posted_at", [None])[0]
                 if gte and gte.startswith("gte."):
                     rows = [r for r in rows if str(r.get("posted_at", "")) >= gte[4:]]
+                order = q.get("order", [None])[0]
+                if order:
+                    key = order.split(".")[0]
+                    rows.sort(key=lambda r: str(r.get(key) or ""),
+                              reverse=order.endswith(".desc"))
+                off = q.get("offset", [None])[0]
+                if off:
+                    rows = rows[int(off):]
                 lim = q.get("limit", [None])[0]
                 if lim:
                     rows = rows[: int(lim)]

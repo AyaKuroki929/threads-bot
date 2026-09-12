@@ -3039,10 +3039,14 @@ reset()
 import tempfile as _tf2
 post_saas.GAP_MARK_FILE = os.path.join(_tf2.mkdtemp(), "gap_checked.json")
 post_saas._run_jst_date = JST_DATE
-check("記録が無ければ既定の日数", post_saas._gap_days_to_scan() == post_saas.GAP_SCAN_DAYS,
+# 記録ファイルは実行のたびに消えるので、無いときは最大日数まで見る
+check("記録が無ければ最大日数まで見る",
+      post_saas._gap_days_to_scan() == post_saas.GAP_SCAN_MAX_DAYS,
       post_saas._gap_days_to_scan())
-post_saas._mark_gap_checked((_d9.strptime(JST_DATE, "%Y-%m-%d") - _t9(days=4)).strftime("%Y-%m-%d"))
-check("やり残しがあれば遡る", post_saas._gap_days_to_scan() >= 5, post_saas._gap_days_to_scan())
+post_saas._mark_gap_checked((_d9.strptime(JST_DATE, "%Y-%m-%d") - _t9(days=1)).strftime("%Y-%m-%d"))
+check("直近まで終わっていれば短くて済む",
+      post_saas._gap_days_to_scan() <= post_saas.GAP_SCAN_MAX_DAYS,
+      post_saas._gap_days_to_scan())
 post_saas._run_jst_date = None
 
 # ── 123. 点検・記録に失敗したら、ジョブも失敗にする ───────────────────
@@ -3089,6 +3093,75 @@ with contextlib.redirect_stdout(io.StringIO()):
     post_saas.check_previous_slot(W.salons)
 post_saas.supabase_get = orig_scan_get
 check("再確認して出し直さない", len(W.posts) == 0, [p["text"] for p in W.posts])
+post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 125. 状態が巻き戻った台帳から、入口経由でも出し直さない ─────────────────
+print("\n(125) 壊れた台帳からの入口")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+W.attempts[op] = {"op_id": op, "salon_id": SALON, "jst_date": JST_DATE, "slot": "noon",
+                  "status": "running", "rev": 0, "logged": False, "payload": None,
+                  "note": None,
+                  "parts": [{"i": 0, "status": "pending", "creation_id": "C_DIRTY",
+                             "post_id": "P_DIRTY", "lost_response": True,
+                             "hash": post_state.part_hash("むかしの本文")}],
+                  "updated_at": (_dt.now(_tz.utc) - _td(hours=3)).isoformat()}
+post_saas.pick_post = lambda name, slot, used: ["あたらしい本文"]
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.get_used_posts = lambda sid, slot: set()
+post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
+post_saas._enforce_threads_limit = lambda t: t
+post_saas._select_topic = lambda t, n: None
+W.publish_behavior = lambda cid, n: "ok"
+action, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+check("『まだ何もしていない』とは扱わない", action != "go", action)
+if action not in ("hold", "skip"):
+    with contextlib.redirect_stdout(io.StringIO()):
+        st, dt, kd = post_saas._run_slot(row, action, SALON_ROW, "USER1", "TOK",
+                                         "noon", "@testsalon")
+check("出し直さない", len(W.posts) == 0, [p["text"] for p in W.posts])
+check("公開の記録を消さない",
+      (post_state.get_part(post_state.fetch(op), 0) or {}).get("post_id") == "P_DIRTY",
+      post_state.get_part(post_state.fetch(op), 0))
+
+# ── 126. 2ページ目にしかない実績も「出ている」と数える ────────────────
+print("\n(126) ページ送りの取り切り")
+reset()
+post_saas.SLOT = "evening"
+W.salons = [dict(SALON_ROW)]
+seed_history(days=2)
+# 1ページ目を埋める古いログを1000件入れて、実績を2ページ目へ押し出す
+from datetime import datetime as _dA, timezone as _zA, timedelta as _tA
+oldest = _dA.now(_zA.utc) - _tA(days=1, hours=20)
+for i in range(1000):
+    W.post_logs.insert(0, {"salon_id": SALON, "slot": "noon", "post_content": "古い",
+                           "posted_at": (oldest + _tA(seconds=i)).isoformat(),
+                           "op_id": f"{SALON}:pad{i}"})
+with contextlib.redirect_stdout(io.StringIO()):
+    gaps = post_saas._scan_gaps(W.salons, 2)
+check("2ページ目の実績も数える", gaps == [], [(g[1], g[2]) for g in gaps])
+
+# ── 127. 当日枠の再確認が失敗したら、点検済みにしない ───────────────────
+print("\n(127) 再確認が失敗")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "noon"
+W.salons = [dict(SALON_ROW)]
+seed_history(days=2, include_today_earlier=False)
+import tempfile as _tf3
+post_saas.GAP_MARK_FILE = os.path.join(_tf3.mkdtemp(), "gap_checked.json")
+orig_apt2 = post_saas.already_posted_today
+post_saas.already_posted_today = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        post_saas.check_previous_slot(W.salons)
+    except Exception:
+        pass
+post_saas.already_posted_today = orig_apt2
+check("投稿しない", len(W.posts) == 0, [p["text"] for p in W.posts])
+check("点検済みにしない", not os.path.exists(post_saas.GAP_MARK_FILE),
+      open(post_saas.GAP_MARK_FILE).read() if os.path.exists(post_saas.GAP_MARK_FILE) else "")
 post_saas.check_previous_slot = lambda salons: 0
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))

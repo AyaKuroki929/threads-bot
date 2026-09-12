@@ -236,7 +236,13 @@ def acquire(salon_id: str, jst_date: str, slot: str, *, stale_sec: int = None,
         print(f"[state] {op_id}: 最終更新時刻が読めない → 触りません")
         return ("hold", row)
     parts = row.get("parts") or []
-    if any(p.get("status") in (PART_CONTAINER, PART_UNKNOWN, PART_PUBLISHED) for p in parts):
+    # ⚠️ 状態名だけを見ると、状態が巻き戻った台帳（pending なのに creation_id や
+    # post_id が残っている）を「まだ何もしていない」と誤読して出し直してしまう
+    def _has_history(p):
+        return bool(p.get("creation_id") or p.get("post_id") or p.get("lost_response")) \
+            or p.get("status") in (PART_CONTAINER, PART_UNKNOWN, PART_PUBLISHED)
+
+    if any(_has_history(p) for p in parts):
         # ⚠️ 途中まで進んでいても、古さの確認を飛ばさない。飛ばすと2つの実行が
         # 同じ行を同時に resume して両方が公開要求へ進む（2026-09-12 Sol指摘#3）
         if age < RESUME_STALE_SEC:
