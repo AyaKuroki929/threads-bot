@@ -81,6 +81,29 @@ YESTERDAY = (_dt0.now(_tz0(_td0(hours=9))) - _td0(days=1)).strftime("%Y-%m-%d")
 TEXTS1 = ["これはテスト本文の1部目です。"]
 TEXTS2 = ["これはテスト本文の1部目です。", "これは2部目の返信本文です。"]
 
+def seed_history(salons=None, days=3, include_today_earlier=True):
+    """過去の投稿実績を偽DBに入れる（本番の post_logs には履歴があるため）。
+    これが無いと、点検が過去日を全部「未投稿」と判定してしまう。"""
+    from datetime import datetime as _d, timezone as _z, timedelta as _t
+    JSTz = _z(_t(hours=9))
+    earlier = {"morning": [], "noon": ["morning"], "evening": ["morning", "noon"]}
+    for s_ in (salons or [{"id": SALON}]):
+        if include_today_earlier:
+            today = _d.now(JSTz)
+            for slot in earlier.get(post_saas.SLOT, []):
+                W.post_logs.append({
+                    "salon_id": s_["id"], "slot": slot, "post_content": f"今日の{slot}",
+                    "posted_at": today.replace(hour=7).astimezone(_z.utc).isoformat(),
+                    "op_id": f'{s_["id"]}:{today:%Y-%m-%d}:{slot}'})
+        for n in range(1, days + 1):
+            day = _d.now(JSTz) - _t(days=n)
+            for slot, hour in (("morning", 7), ("noon", 12), ("evening", 21)):
+                W.post_logs.append({
+                    "salon_id": s_["id"], "slot": slot, "post_content": f"過去{n}{slot}",
+                    "posted_at": day.replace(hour=hour).astimezone(_z.utc).isoformat(),
+                    "op_id": f'{s_["id"]}:{day:%Y-%m-%d}:{slot}'})
+
+
 def reset(**kw):
     global NOTIFY
     NOTIFY = []
@@ -92,6 +115,8 @@ def reset(**kw):
     W.now_fn = CLOCK.time
     # 取りこぼしの穴埋めは (105) で個別に検証する。ほかのシナリオでは邪魔なので止める
     post_saas.check_previous_slot = lambda salons: 0
+    post_saas._run_jst_date = None
+    post_saas._deadline = None
     post_state._available = None
     post_state._MEM.clear()
     post_saas._retry_spent = 0.0
@@ -2576,7 +2601,8 @@ except SystemExit:
 out = [p["text"] for p in W.posts]
 check("抜けていた朝の分を出す", "朝の本文" in out, out)
 check("今回の昼も出す", "昼の本文" in out, out)
-check("知らせる", any("抜けていた" in m for m in NOTIFY), json.dumps(NOTIFY, ensure_ascii=False)[:160])
+check("知らせる", any("出ていない投稿がありました" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:160])
 print("  → もう一度回しても増えない")
 before = len(W.posts)
 try:
@@ -2654,7 +2680,7 @@ try:
         post_saas.main()
 except SystemExit:
     pass
-check("昨夜の抜けを知らせる", any("昨夜" in m for m in NOTIFY),
+check("昨夜の抜けを知らせる", any("日をまたいだ未投稿" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
 check("昨夜の分は勝手に出さない", [p["text"] for p in W.posts] == ["朝の本文"],
       [p["text"] for p in W.posts])
@@ -2719,6 +2745,9 @@ post_saas.is_promo_time = lambda name, slot: False
 post_saas.pick_post = lambda name, slot, used: ["朝の本文"]
 W.salons = [dict(SALON_ROW)]
 W.publish_behavior = lambda cid, n: "ok"
+seed_history(days=3)
+W.post_logs[:] = [l for l in W.post_logs
+                  if not l["op_id"].endswith(f"{YESTERDAY}:evening")]   # 昨夜だけ抜けた状態
 NOTIFY_OK[0] = False       # LINEが送れない
 try:
     with contextlib.redirect_stdout(io.StringIO()):
@@ -2747,12 +2776,12 @@ reset()
 post_saas.check_previous_slot = _real_check_prev
 post_saas.SLOT = "noon"
 W.salons = [dict(SALON_ROW)]
-orig_apt = post_saas.already_posted_today
-post_saas.already_posted_today = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
+orig_scan = post_saas._scan_gaps
+post_saas._scan_gaps = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.check_previous_slot(W.salons)
-post_saas.already_posted_today = orig_apt
-check("確認できなかったと知らせる", any("確認できませんでした" in m for m in NOTIFY),
+post_saas._scan_gaps = orig_scan
+check("確認できなかったと知らせる", any("調べられませんでした" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
 post_saas.check_previous_slot = lambda salons: 0
 
@@ -2822,24 +2851,28 @@ check("回収対象に入る",
 NOTIFY_OK[0] = True
 post_saas.check_previous_slot = lambda salons: 0
 
-# ── 115. 確認できなかった枠も台帳に残る ──────────────────────────
-print("\n(115) 確認不能を持ち越す")
+# ── 115. 台帳にも残せなかったら、成功として終わらせない ──────────────────
+print("\n(115) 台帳にも残せない")
 reset()
 W.salons = [SALON_ROW]
 post_saas.check_previous_slot = _real_check_prev
-post_saas.SLOT = "noon"
-orig_apt = post_saas.already_posted_today
-post_saas.already_posted_today = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
-NOTIFY_OK[0] = False
-with contextlib.redirect_stdout(io.StringIO()):
-    post_saas.check_previous_slot(W.salons)
-post_saas.already_posted_today = orig_apt
-NOTIFY_OK[0] = True
-mop = f"{SALON}:{JST_DATE}:morning"
-check("台帳に残る", mop in W.attempts, list(W.attempts))
-check("回収対象に入る",
-      any(r["op_id"] == mop for r in post_state.open_issues(salon_ids=[SALON])),
-      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+post_saas.SLOT = "morning"
+seed_history(days=3)
+W.post_logs[:] = [l for l in W.post_logs
+                  if not l["op_id"].endswith(f"{YESTERDAY}:evening")]   # 昨夜だけ抜けた
+orig_flag = post_saas._flag_missing
+post_saas._flag_missing = lambda *a, **k: False        # 台帳にも書けない
+raised = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.check_previous_slot(W.salons)
+except Exception as e:
+    raised = f"{type(e).__name__}"
+post_saas._flag_missing = orig_flag
+check("失敗として返す", raised is not None, raised)
+check("台帳にも残せないことを知らせる",
+      any("台帳にも残せませんでした" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:220])
 post_saas.check_previous_slot = lambda salons: 0
 
 # ── 116. 実行中に日付が変わったら、翌日の枠を作らない ───────────────────
@@ -2896,6 +2929,50 @@ post_saas.datetime = _orig_dt
 check("投稿しない", len(W.posts) == 0, [p["text"] for p in W.posts])
 check("知らせる", any("日付が変わった" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:150])
+
+
+# ── 117. 取りこぼしの点検は、まとめて1回ずつの問い合わせで済ませる ────────────
+print("\n(117) 点検の重さ")
+reset()
+W.salons = [dict(SALON_ROW, id=f"{i:02d}111111-1111-1111-1111-111111111111",
+                 salon_name=f"サロン{i}") for i in range(1, 51)]   # 50サロン
+post_saas.SLOT = "evening"
+seed_history(W.salons, days=3)
+W.latency = 1          # 通信1回につき1秒
+before = CLOCK.slept
+with contextlib.redirect_stdout(io.StringIO()):
+    gaps = post_saas._scan_gaps(W.salons, 2)
+spent = CLOCK.slept - before
+W.latency = 0
+check("50サロンでも問い合わせは数回で済む", spent <= 5, f"{spent}秒（通信{spent}回相当）")
+check("抜けが無ければ0件", gaps == [], gaps[:3])
+
+# ── 118. 点検・穴埋め全体が持ち時間を守る ────────────────────────
+print("\n(118) 点検の持ち時間")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "evening"
+post_saas.GAPFILL_BUDGET_SEC = 30
+W.salons = [dict(SALON_ROW, id=f"{i:02d}111111-1111-1111-1111-111111111111",
+                 salon_name=f"サロン{i}") for i in range(1, 11)]
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["穴埋め本文"]
+W.publish_behavior = lambda cid, n: "ok"
+W.latency = 4
+before = CLOCK.slept
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        post_saas.check_previous_slot(W.salons)
+    except Exception:
+        pass          # 持ち時間切れで台帳に残せないのは想定内（通知は出る）
+spent = CLOCK.slept - before
+W.latency = 0
+post_saas.GAPFILL_BUDGET_SEC = 150
+# 締切の確認はサロン単位なので、最後の1件ぶん（通信数回）は超える。
+# ジョブ全体10分に対して十分小さいことを見る
+check("持ち時間＋1サロンぶんに収まる", spent <= 30 + 40, f"{spent}秒")
+check("締切は元に戻る", post_saas._deadline is None, post_saas._deadline)
+post_saas.check_previous_slot = lambda salons: 0
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

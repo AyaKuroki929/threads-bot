@@ -135,10 +135,16 @@ class World:
             return self.salons
         if table == "post_logs":
             if method == "GET":
-                sid = eqval("salon_id"); slot = eqval("slot")
-                rows = [r for r in self.post_logs
-                        if (sid is None or r.get("salon_id") == sid)
-                        and (slot is None or r.get("slot") == slot)]
+                sid_raw = q.get("salon_id", [None])[0]
+                slot = eqval("slot")
+                if sid_raw and sid_raw.startswith("in."):
+                    allowed = set(sid_raw[4:-1].split(","))
+                    rows = [r for r in self.post_logs if r.get("salon_id") in allowed]
+                else:
+                    sid = eqval("salon_id")
+                    rows = [r for r in self.post_logs
+                            if sid is None or r.get("salon_id") == sid]
+                rows = [r for r in rows if slot is None or r.get("slot") == slot]
                 # op_id=eq.X / op_id=is.null を本物どおり効かせる
                 opq = q.get("op_id", [None])[0]
                 if opq == "is.null":

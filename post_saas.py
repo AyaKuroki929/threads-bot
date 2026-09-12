@@ -1959,20 +1959,21 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
     return "error", detail, kind
 
 
-# 直前のスロット（同じJST日のうちに埋められるもの）
+# 取りこぼしの点検で見る日数（今日を含む）。1回のまとめ問い合わせで調べる
+GAP_SCAN_DAYS = int(os.environ.get("GAP_SCAN_DAYS", "2"))
+# 取りこぼしの点検＋穴埋めに使ってよい実時間
+GAPFILL_BUDGET_SEC = int(os.environ.get("GAPFILL_BUDGET_SEC", "150"))
+ALL_SLOTS = ("morning", "noon", "evening")
 # その日の、いま実行しているスロットより前にあるスロット（古い順）
 EARLIER_SLOTS = {"morning": [], "noon": ["morning"], "evening": ["morning", "noon"]}
-PREV_SLOT = {"noon": "morning", "evening": "noon"}
-# 取りこぼしの穴埋めに使ってよい実時間。本来の枠を出し切ってから、この範囲で埋める
-GAPFILL_BUDGET_SEC = int(os.environ.get("GAPFILL_BUDGET_SEC", "150"))
 
 
 def _flag_missing(salon, jst_date, slot, note):
-    """「出ていない」「確認できなかった」枠を台帳に残す。
+    """「出ていない」「確認できなかった」枠を台帳に残す。成功したら True。
 
     ⚠️ その場の通知1通で終わらせない。送れなければ二度と知らせる機会が無い。
-    hold_repair にしておけば、回収の仕組みが**届くまで**繰り返し知らせる
-    （2026-09-12 Sol指摘#3・#4）。"""
+    hold_repair にしておけば、回収の仕組みが**届くまで**繰り返し知らせる。
+    ⚠️ 元のメモ（過去の失敗理由・通知済みの印）は消さずに残す。"""
     op_id = post_state.make_op_id(salon["id"], jst_date, slot)
     try:
         row = post_state.fetch(op_id)
@@ -1983,122 +1984,147 @@ def _flag_missing(salon, jst_date, slot, note):
                 "rev": 0, "note": note})
             return True
         if row.get("status") == post_state.STATUS_FAILED:
-            # 未公開が確定している行。履歴は残したまま、知らせる対象へ移す
-            post_state.update(row, status=post_state.STATUS_HOLD_REPAIR, note=note)
+            # 未公開が確定している行。履歴も過去の理由も残したまま、知らせる対象へ移す
+            post_state.update(row, status=post_state.STATUS_HOLD_REPAIR,
+                              note=_append_note(row.get("note"), "／" + note))
             return True
+        return True     # すでに回収対象（unknown / published / hold_repair など）
     except Exception as e:
-        print(f"[gap] 未投稿の印を残せません（{salon['salon_name']}）: {str(e)[:80]}")
-    return False
+        print(f"[gap] 未投稿の印を残せません（{salon['salon_name']} {jst_date} {slot}）: {str(e)[:80]}")
+        return False
+
+
+def _scan_gaps(salons, days):
+    """過去 days 日分の「出ていない枠」を **まとめて1回ずつの問い合わせ**で洗い出す。
+
+    ⚠️ サロン×スロットごとに問い合わせると、件数が増えたときに
+    ジョブの制限時間を食い破る（2026-09-12 Sol指摘#2）。
+    返り値は [(salon, jst_date, slot)]。調べられなければ例外を投げる（＝黙って「なし」にしない）。"""
+    base = datetime.strptime(_run_jst_date or datetime.now(JST).strftime("%Y-%m-%d"), "%Y-%m-%d")
+    dates = [(base - timedelta(days=n)).strftime("%Y-%m-%d") for n in range(days)]
+    since_utc = (base - timedelta(days=days)).replace(tzinfo=JST).astimezone(
+        timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ids = [s["id"] for s in salons]
+
+    logs = supabase_get("post_logs", {
+        "select": "salon_id,slot,posted_at,op_id",
+        "salon_id": "in.(" + ",".join(ids) + ")",
+        "posted_at": f"gte.{since_utc}", "limit": "2000"})
+    done = set()
+    for r in logs:
+        if r.get("op_id"):
+            done.add(r["op_id"])
+            continue
+        d = _parse_ts(r.get("posted_at"))          # 旧形式のログは日付から割り出す
+        if d is not None:
+            done.add(post_state.make_op_id(r["salon_id"],
+                                           d.astimezone(JST).strftime("%Y-%m-%d"), r["slot"]))
+
+    rows = supabase_get("post_attempts", {
+        "select": "op_id,status", "salon_id": "in.(" + ",".join(ids) + ")",
+        "jst_date": f"gte.{dates[-1]}", "limit": "2000"})
+    settled = {r["op_id"] for r in rows
+               if r.get("status") in (post_state.STATUS_LOGGED, post_state.STATUS_ATTENTION)}
+    known = {r["op_id"] for r in rows}
+
+    today = base.strftime("%Y-%m-%d")
+    gaps = []
+    for salon in salons:
+        for d in dates:
+            for slot in ALL_SLOTS:
+                if d == today and slot not in EARLIER_SLOTS.get(SLOT, []) and slot != SLOT:
+                    continue        # 今日のまだ来ていない枠は対象外
+                if d == today and slot == SLOT:
+                    continue        # 今回の枠は本編が担当
+                op_id = post_state.make_op_id(salon["id"], d, slot)
+                if op_id in done or op_id in settled:
+                    continue
+                gaps.append((salon, d, slot, op_id in known))
+    return gaps
 
 
 def check_previous_slot(salons):
-    """直前のスロットの取りこぼしを確認し、**同じ日のうちなら埋める**。
+    """出ていない枠を洗い出し、**その日のうちなら埋める・過ぎていれば知らせる**。
 
-    ⚠️ GitHubの定期実行は実測で2〜4時間半遅れるため、予備として当てにできない。
-    確実に動くのは cron-job.org の 7:10 / 12:10 / 21:10 の3回だけなので、
-    その各回で「1つ前のスロット」を点検する。台帳があるので、埋め直しても
-    二重投稿にならない（2026-09-12）。
-
-    夜→翌朝は日をまたぐので埋めない（知らせるだけ）。返り値は埋めた件数。"""
-    # ⚠️ 直前の1枠だけを見ると、本来枠が時間切れで未着手のまま消える
-    # （2026-09-12 Sol指摘#2）。その日のうち、まだ済んでいない過去の枠を全部見る
-    todo = list(EARLIER_SLOTS.get(SLOT, []))
-    if SLOT == "morning":
-        # 朝の実行では「昨夜の分」を点検する。日が変わっているので埋めはせず、知らせる
-        return _check_slot(salons, "evening", yesterday_only=True)
-    filled = 0
-    for slot in todo:
-        filled += _check_slot(salons, slot, yesterday_only=False)
-    return filled
-
-
-def _check_slot(salons, prev, yesterday_only=False):
-    """1つのスロットの取りこぼしを確認し、同じ日のうちなら埋める。"""
+    確実に動くのは cron-job.org の 7:10 / 12:10 / 21:10 の3回だけ
+    （GitHubの定期実行は実測で2〜4時間半遅れる）。その各回で点検する。
+    台帳があるので、埋め直しても二重投稿にならない。"""
     global _deadline
-    base = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")
-    jst_date = ((datetime.strptime(base, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-                if yesterday_only else base)
-    missing, unchecked = [], []
-    for salon in salons:
-        try:
-            op_id = post_state.make_op_id(salon["id"], jst_date, prev)
-            if already_posted_today(salon["id"], prev, op_id, jst_date=jst_date):
-                continue
-            row = post_state.fetch(op_id)
-            if row and row.get("status") in (post_state.STATUS_ATTENTION,
-                                             post_state.STATUS_LOGGED):
-                continue      # 人が見る枠・完了済みは対象外
-            missing.append(salon)
-        except Exception as e:
-            print(f"[gap] {salon['salon_name']} の{prev}枠を確認できません: {str(e)[:80]}")
-            unchecked.append(salon)
-    if unchecked:
-        # ⚠️「確認できなかった」を「抜けなし」と言わない。台帳にも残して、
-        # 確認できるまで知らせ続ける（2026-09-12 Sol指摘#3）
-        for salon in unchecked:
-            _flag_missing(salon, jst_date, prev,
-                          "投稿が出ているか確認できませんでした（人の確認が必要）")
-        _notify_line(f"⚠️ とうこさん：{prev} の投稿が出ているか確認できませんでした。\n"
-                     + "、".join(s["salon_name"] for s in unchecked)
-                     + "\n台帳に残したので、確認できるまでお知らせします。")
-    if not missing:
-        if not unchecked:
-            print(f"[gap] {prev} の取りこぼしはありません")
-        return 0
-
-    names = "、".join(s["salon_name"] for s in missing)
-    if yesterday_only:
-        # 日をまたいだ分は勝手に出さない（今さら昨夜の投稿は出さない）。
-        # ⚠️ ただし「知らせるだけ」をその場の1通で終わらせない。送信に失敗したら
-        # 二度と知らせる機会が無くなる（2026-09-12 Sol指摘#3）。台帳に印を残し、
-        # 届くまで回収の仕組みが繰り返し知らせる
-        print(f"[gap] 昨夜({jst_date}) {prev} の取りこぼし {len(missing)}件: {names}")
-        for salon in missing:
-            _flag_missing(salon, jst_date, prev,
-                          "この枠は投稿されないまま日をまたぎました（人の確認が必要）")
-        _notify_line(f"🚨 とうこさん：昨夜（{jst_date}）の投稿が {len(missing)}件 出ていません。\n"
-                     f"{names}\n"
-                     "日をまたいだので自動では出しません。必要なら手動で出してください。")
-        return 0
-    print(f"[gap] {prev} の取りこぼし {len(missing)}件: {names} → 埋めます")
-    filled, failed = [], []
     saved_deadline = _deadline
     _deadline = time.time() + GAPFILL_BUDGET_SEC
     try:
-        filled, failed = _fill_missing(missing, prev, jst_date, filled, failed)
+        return _check_gaps(salons)
     finally:
         _deadline = saved_deadline
-    msg = f"⚠️ とうこさん：{prev} の投稿が {len(missing)}件 抜けていたので埋めました。\n"
-    if filled:
-        msg += "出せた：" + "、".join(filled) + "\n"
-    if failed:
-        msg += "出せなかった：" + "、".join(failed) + "\n"
-    _notify_line(msg + "（元の実行が動かなかった可能性があります）")
-    return len(filled)
 
 
-def _fill_missing(missing, prev, jst_date, filled, failed):
-    for salon in missing:
+def _check_gaps(salons):
+    today = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")
+    try:
+        gaps = _scan_gaps(salons, GAP_SCAN_DAYS)
+    except Exception as e:
+        # ⚠️「調べられなかった」を「抜けなし」と言わない
+        print(f"[gap] 取りこぼしを調べられません: {str(e)[:120]}")
+        _notify_line("⚠️ とうこさん：投稿の取りこぼしを調べられませんでした。\n"
+                     f"{type(e).__name__}: {str(e)[:150]}\n次の実行でもう一度調べます。")
+        return 0
+    if not gaps:
+        print("[gap] 取りこぼしはありません")
+        return 0
+
+    fillable = [g for g in gaps if g[1] == today]
+    old = [g for g in gaps if g[1] != today]
+    filled, failed, unflagged = [], [], []
+
+    # 今日の抜けは埋める（同じ日のうちなら出してよい）
+    for salon, d, slot, _known in fillable:
         if _out_of_time("取りこぼしの穴埋め") or _date_rolled_over():
-            failed.append(salon["salon_name"] + "（時間切れ）")
-            break
+            failed.append(f"{salon['salon_name']}({slot})（時間切れ）")
+            if not _flag_missing(salon, d, slot, "時間切れで埋められませんでした"):
+                unflagged.append(f"{salon['salon_name']}({d} {slot})")
+            continue
         try:
-            action, row = _acquire_with_retry(salon["id"], jst_date, prev)
+            action, row = _acquire_with_retry(salon["id"], d, slot)
             if action in ("hold", "skip"):
                 continue
             user_id, uname = get_user_id_from_token(salon["access_token"])
             if salon.get("threads_user_id") and str(salon["threads_user_id"]) != str(user_id):
-                failed.append(salon["salon_name"] + "（アカウント不一致）")
+                failed.append(f"{salon['salon_name']}({slot})（アカウント不一致）")
                 continue
             status, detail, _k = _run_slot(row, action, salon, user_id,
-                                           salon["access_token"], prev,
+                                           salon["access_token"], slot,
                                            f"@{uname}" if uname else salon["salon_name"],
                                            quiet=True)
             (filled if status == "ok" else failed).append(
-                salon["salon_name"] + ("" if status == "ok" else f"（{str(detail)[:40]}）"))
+                f"{salon['salon_name']}({slot})"
+                + ("" if status == "ok" else f"（{str(detail)[:40]}）"))
         except Exception as e:
-            failed.append(f"{salon['salon_name']}（{type(e).__name__}: {str(e)[:40]}）")
-    return filled, failed
+            failed.append(f"{salon['salon_name']}({slot})（{type(e).__name__}: {str(e)[:30]}）")
+
+    # 日をまたいだ抜けは出さない。台帳に残して、届くまで知らせ続ける
+    for salon, d, slot, _known in old:
+        if _out_of_time("取りこぼしの記録"):
+            unflagged.append(f"{salon['salon_name']}({d} {slot})（時間切れ）")
+            continue
+        if not _flag_missing(salon, d, slot, f"{d} の {slot} は投稿されていません（人の確認が必要）"):
+            unflagged.append(f"{salon['salon_name']}({d} {slot})")
+
+    lines = []
+    if filled:
+        lines.append("埋めた：" + "、".join(filled))
+    if failed:
+        lines.append("埋められなかった：" + "、".join(failed))
+    if old:
+        lines.append(f"日をまたいだ未投稿 {len(old)}件："
+                     + "、".join(f"{s['salon_name']}({d} {sl})" for s, d, sl, _ in old[:5])
+                     + ("ほか" if len(old) > 5 else ""))
+    if unflagged:
+        lines.append("⚠️ 台帳にも残せませんでした（次の実行でやり直します）："
+                     + "、".join(unflagged[:5]))
+    _notify_line("⚠️ とうこさん：出ていない投稿がありました。\n" + "\n".join(lines))
+    if unflagged:
+        raise RuntimeError(f"取りこぼしを台帳に残せませんでした（{len(unflagged)}件）")
+    return len(filled)
 
 
 def main():
