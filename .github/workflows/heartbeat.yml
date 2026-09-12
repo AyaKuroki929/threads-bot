@@ -75,7 +75,7 @@ jobs:
             echo "reason=last $SLOT recorded: '$LAST', expected today=$TODAY" >> $GITHUB_OUTPUT
           fi
 
-      - name: Auto-recovery - trigger post.yml if missing
+      - name: Auto-recovery - trigger post_saas.yml if missing
         if: steps.slot.outputs.skip != 'true' && steps.verify.outputs.ok != 'true'
         id: recovery
         uses: actions/github-script@v7
@@ -86,11 +86,11 @@ jobs:
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                workflow_id: 'post.yml',
+                workflow_id: 'post_saas.yml',
                 ref: 'main',
-                inputs: { slot: slot, dry_run: 'false' }
+                inputs: { slot: slot, only_salon: 'bemolle_diet', dry_run: 'false' }
               })
-              console.log(`[recovery] post.yml triggered for ${slot}`)
+              console.log(`[recovery] post_saas.yml (bemolle_diet) triggered for ${slot}`)
               core.setOutput('triggered', 'true')
             } catch (e) {
               console.log(`[recovery] trigger failed: ${e.message}`)
@@ -132,7 +132,7 @@ jobs:
               title: `🚨 [${today}] ${slot} 投稿未確認 + 自動リカバリ失敗 (heartbeat at ${now})`,
               body: [
                 `Heartbeatが本日の **${slot}** 投稿の成功記録を見つけられず、`,
-                `自動リカバリ（post.yml の workflow_dispatch トリガー）も失敗しました。`,
+                `自動リカバリ（post_saas.yml の workflow_dispatch トリガー）も失敗しました。`,
                 ``,
                 `- 確認時刻: ${now}`,
                 `- 期待スロット: ${slot}`,
@@ -142,7 +142,7 @@ jobs:
                 `## 対応`,
                 `下記コマンドで手動投稿できます（Macのターミナルで実行）:`,
                 `\`\`\``,
-                `gh workflow run post.yml -f slot=${slot} -f dry_run=false`,
+                `gh workflow run post_saas.yml -f slot=${slot} -f only_salon=bemolle_diet -f dry_run=false`,
                 `\`\`\``,
                 ``,
                 `投稿が出たことを確認したら、このIssueをcloseしてください。`,
@@ -170,7 +170,7 @@ jobs:
             echo "reason=last personal $SLOT recorded: '$LAST', expected today=$TODAY" >> $GITHUB_OUTPUT
           fi
 
-      - name: Auto-recovery (personal) - trigger post_personal.yml if missing
+      - name: Auto-recovery (personal) - trigger post_saas.yml if missing
         if: steps.slot.outputs.skip != 'true' && steps.verify_personal.outputs.ok != 'true'
         id: recovery_personal
         uses: actions/github-script@v7
@@ -181,11 +181,11 @@ jobs:
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                workflow_id: 'post_personal.yml',
+                workflow_id: 'post_saas.yml',
                 ref: 'main',
-                inputs: { slot: slot, dry_run: 'false' }
+                inputs: { slot: slot, only_salon: 'aya_kuroki_0929', dry_run: 'false' }
               })
-              console.log(`[recovery personal] post_personal.yml triggered for ${slot}`)
+              console.log(`[recovery personal] post_saas.yml (aya_kuroki_0929) triggered for ${slot}`)
               core.setOutput('triggered', 'true')
             } catch (e) {
               console.log(`[recovery personal] trigger failed: ${e.message}`)

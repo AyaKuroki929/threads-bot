@@ -23,7 +23,7 @@ import urllib.error
 import subprocess
 from datetime import datetime
 
-from botlib import load_json, save_json
+from botlib import load_json, save_json, line_broadcast
 
 _BASE = os.path.dirname(__file__)
 
@@ -424,6 +424,68 @@ def threads_api_post(user_id, token, texts, topic_tag=None):
 
 # ── メイン ─────────────────────────────────────────────────
 
+def _line(message):
+    """管理者LINE通知。このリポの post.yml / post_personal.yml では
+    LINE_CHANNEL_ACCESS_TOKEN に ADMIN_NOTIFY_LINE_TOKEN（Claude通知Bot）が入る。
+    ⚠️ とうこさんOAのトークンではない（お客様には届かない）ことを確認済み。"""
+    token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    if not token:
+        return
+    try:
+        line_broadcast(message, token=token)
+    except Exception as e:
+        print(f"[line] 通知に失敗（続行）: {str(e)[:80]}")
+
+
+# ── とうこさんSaaSが担当するアカウントには、この経路から投稿しない ────────────
+# post_saas.py は「投稿台帳(post_attempts)」で実行権と公開結果を管理し、
+# 公開できたか未確定の枠を次の実行へ引き継ぐ。こちらは台帳を持たないので、
+# 同じアカウントを両方から出すと必ず二重投稿の経路になる（2026-09-12 Sol指摘#1〜3）。
+# heartbeat の自動リカバリも post_saas.yml を叩くように変更済み。
+def _saas_owns(actual_user_id):
+    """このアカウントを post_saas 側が担当しているなら理由の文字列、していなければ None。
+
+    ⚠️ 判定には **/me で確認した実際のユーザーID** を使う。環境変数の値で調べると、
+    調べたアカウントと投稿するアカウントがずれる（Sol指摘#3）。
+    調べられなかった場合は投稿しない側に倒す（重複より欠落を選ぶ）。"""
+    sb_url = os.environ.get("SUPABASE_URL", "")
+    sb_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not (sb_url and sb_key):
+        # ⚠️ 実行場所で例外を作らない。ローカルなら許す作りにすると、
+        # そこがそのまま抜け道になる（2026-09-12 Sol指摘#3）
+        return "とうこさんSaaSの管理下かを確認する設定(SUPABASE_URL/SUPABASE_SERVICE_KEY)がありません"
+    headers = {"apikey": sb_key, "Authorization": f"Bearer {sb_key}"}
+
+    def _get(params):
+        url = f"{sb_url}/rest/v1/salons?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read())
+
+    try:
+        if not actual_user_id:
+            # 実アカウントを確認できていないと、どのサロンの枠か判断できない
+            return "/me で実際のアカウントを確認できませんでした"
+        rows = _get({"select": "salon_name,is_active",
+                     "threads_user_id": f"eq.{actual_user_id}", "limit": "2"})
+        if not rows:
+            name = os.environ.get("THREADS_USERNAME", "")
+            if name:
+                rows = _get({"select": "salon_name,is_active",
+                             "salon_name": f"eq.{name}", "limit": "2"})
+        if not rows:
+            return None   # とうこさんSaaSの管理外アカウント。従来どおり投稿してよい
+        if len(rows) > 1:
+            return "同じアカウントに紐づくサロンが複数見つかり、どれか特定できません"
+        # ⚠️ is_active で判断しない。停止中でも過去の未確定投稿が残っていることがあり、
+        # 「今動いていない」と「安全に予備へ移してよい」は別（2026-09-12 Sol指摘#2）
+        state = "" if rows[0].get("is_active") else "（現在は停止中の登録）"
+        return (f"このアカウント（{rows[0]['salon_name']}{state}）は とうこさんSaaS の管理下です。"
+                "投稿台帳を持つ post_saas.py 側から出してください")
+    except Exception as e:
+        return f"とうこさんSaaSの担当かどうかを確認できませんでした（{type(e).__name__}: {str(e)[:80]}）"
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ["morning", "noon", "evening"]:
         print("使い方: python3 post_api.py morning|noon|evening [--dry-run]")
@@ -451,12 +513,23 @@ def main():
             token_user_id = str(me_data.get("id", ""))
             token_username = me_data.get("username", "")
             print(f"[token] /me → id={token_user_id} username={token_username}")
-            if THREADS_USER_ID and token_user_id != THREADS_USER_ID:
-                print(f"[warn] THREADS_USER_ID({THREADS_USER_ID}) ≠ token user({token_user_id}). token の user_id を使用します。")
-            actual_user_id = token_user_id or THREADS_USER_ID
+            if THREADS_USER_ID and token_user_id and token_user_id != THREADS_USER_ID:
+                # ⚠️ 警告して続行しない。トークンの取り違えで別アカウントへ投稿してしまう
+                # （2026-09-12 Sol指摘#2）
+                print(f"[fatal] 設定のTHREADS_USER_ID({THREADS_USER_ID})と"
+                      f"トークンの実アカウント({token_user_id})が一致しません。投稿しません。")
+                _line(f"🚨 {os.environ.get('THREADS_USERNAME', '')} の投稿を止めました：\n"
+                      f"設定のアカウント({THREADS_USER_ID})とトークンの実アカウント({token_user_id})が"
+                      "一致しません。別のアカウントへ投稿しないためです。")
+                sys.exit(EXIT_GENERIC_FAIL)
+            # ⚠️ 設定値へ戻さない。/me が空を返したら「確認できていない」として扱う
+            # （2026-09-12 Sol指摘#1）
+            actual_user_id = token_user_id
         except Exception as e:
-            print(f"[warn] /me 取得失敗: {e}. THREADS_USER_ID をそのまま使用。")
-            actual_user_id = THREADS_USER_ID
+            # ⚠️ 実アカウントを確認できないまま設定値で投稿しない。
+            # 「調べたアカウント」と「投稿するアカウント」がずれる（2026-09-12 Sol指摘#3）
+            print(f"[warn] /me 取得失敗: {e}")
+            actual_user_id = ""
 
     if not actual_user_id:
         print("[fatal] user_id が取得できませんでした（THREADS_USER_ID 未設定かつ /me 失敗）")
@@ -465,6 +538,15 @@ def main():
     if not dry_run and already_posted_today(time_slot):
         print(f"[skip] {time_slot} は本日すでに投稿済み。終了。")
         return
+
+    if not dry_run:
+        owned = _saas_owns(actual_user_id)
+        if owned:
+            print(f"[skip] この経路からは投稿しません: {owned}")
+            _line(f"⏸ {os.environ.get('THREADS_USERNAME', '')} の {time_slot}："
+                  f"予備の経路から投稿しようとしましたが、出しませんでした。\n{owned}\n"
+                  "二重投稿を避けるためです。")
+            return
 
     if not dry_run and not is_valid_time_for_slot(time_slot):
         h_start, h_end = SLOT_VALID_HOURS.get(time_slot, (0, 24))

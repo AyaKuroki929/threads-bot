@@ -31,6 +31,10 @@ jobs:
       issues: write
     env:
       TZ: Asia/Tokyo
+      # 投稿台帳を見るため（post_saas 側が「未確定・要対応」で止めた枠を、
+      # heartbeat の復旧経路から二重に出さない・2026-09-12 Sol指摘#1）
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
       THREADS_USERNAME: bemolle_diet
       POSTS_FILE: posts.json
@@ -130,7 +134,7 @@ jobs:
                 ``,
                 `完了後、本workflowを手動再実行：`,
                 `\`\`\``,
-                `gh workflow run post.yml -f slot=${slot} -f dry_run=false`,
+                `gh workflow run post_saas.yml -f slot=${slot} -f only_salon=bemolle_diet -f dry_run=false`,
                 `\`\`\``,
                 ``,
                 `対応完了したらこのIssueをcloseしてください。`,
