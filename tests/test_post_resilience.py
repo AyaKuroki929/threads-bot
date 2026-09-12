@@ -2778,11 +2778,16 @@ post_saas.SLOT = "noon"
 W.salons = [dict(SALON_ROW)]
 orig_scan = post_saas._scan_gaps
 post_saas._scan_gaps = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
-with contextlib.redirect_stdout(io.StringIO()):
-    post_saas.check_previous_slot(W.salons)
+raised = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.check_previous_slot(W.salons)
+except Exception as e:
+    raised = type(e).__name__
 post_saas._scan_gaps = orig_scan
 check("確認できなかったと知らせる", any("調べられませんでした" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
+check("失敗として返す（成功で終わらせない）", raised is not None, raised)
 post_saas.check_previous_slot = lambda salons: 0
 
 
@@ -2972,6 +2977,118 @@ post_saas.GAPFILL_BUDGET_SEC = 150
 # ジョブ全体10分に対して十分小さいことを見る
 check("持ち時間＋1サロンぶんに収まる", spent <= 30 + 40, f"{spent}秒")
 check("締切は元に戻る", post_saas._deadline is None, post_saas._deadline)
+post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 119. 旧形式のログしか無くても、出ている枠は「抜け」と数えない ─────────────
+print("\n(119) 旧形式ログの突き合わせ")
+reset()
+post_saas.SLOT = "evening"
+S1 = dict(SALON_ROW)
+W.salons = [S1]
+from datetime import datetime as _d9, timezone as _z9, timedelta as _t9
+JSTz9 = _z9(_t9(hours=9))
+for n in (0, 1):
+    day = _d9.now(JSTz9) - _t9(days=n)
+    for slot, h in (("morning", 7), ("noon", 12), ("evening", 21)):
+        if n == 0 and slot == "evening":
+            continue
+        W.post_logs.append({"salon_id": SALON, "slot": slot, "post_content": "旧",
+                            "posted_at": day.replace(hour=h).astimezone(_z9.utc).isoformat(),
+                            "op_id": None})        # ← op_id の無い旧形式
+with contextlib.redirect_stdout(io.StringIO()):
+    gaps = post_saas._scan_gaps(W.salons, 2)
+check("旧形式でも出ていれば抜けにしない", gaps == [], [(g[1], g[2]) for g in gaps])
+
+# ── 120. 稼働開始前の日を「未投稿」と数えない ─────────────────────
+print("\n(120) 稼働開始前")
+reset()
+post_saas.SLOT = "evening"
+today9 = _d9.now(JSTz9)
+S2 = dict(SALON_ROW, created_at=today9.replace(hour=11).astimezone(_z9.utc).isoformat())
+W.salons = [S2]
+with contextlib.redirect_stdout(io.StringIO()):
+    gaps = post_saas._scan_gaps(W.salons, 2)
+days = {g[1] for g in gaps}
+check("昨日は対象外", (today9 - _t9(days=1)).strftime("%Y-%m-%d") not in days, sorted(days))
+
+# ── 121. 件数が多すぎて全部を確認できないときは「抜け」と決めない ──────────────
+print("\n(121) ログが取り切れない")
+reset()
+post_saas.SLOT = "evening"
+W.salons = [dict(SALON_ROW)]
+orig_get = post_saas.supabase_get
+def endless(path, params=None):
+    if path == "post_logs":
+        return [{"salon_id": SALON, "slot": "morning",
+                 "posted_at": _d9.now(_z9.utc).isoformat(), "op_id": None}] * 1000
+    return orig_get(path, params)
+post_saas.supabase_get = endless
+raised = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas._scan_gaps(W.salons, 2)
+except Exception as e:
+    raised = type(e).__name__
+post_saas.supabase_get = orig_get
+check("取り切れなければ止める", raised is not None, raised)
+
+# ── 122. 点検が終わらなかった日は、次の実行で遡って見る ────────────────
+print("\n(122) 点検日の持ち越し")
+reset()
+import tempfile as _tf2
+post_saas.GAP_MARK_FILE = os.path.join(_tf2.mkdtemp(), "gap_checked.json")
+post_saas._run_jst_date = JST_DATE
+check("記録が無ければ既定の日数", post_saas._gap_days_to_scan() == post_saas.GAP_SCAN_DAYS,
+      post_saas._gap_days_to_scan())
+post_saas._mark_gap_checked((_d9.strptime(JST_DATE, "%Y-%m-%d") - _t9(days=4)).strftime("%Y-%m-%d"))
+check("やり残しがあれば遡る", post_saas._gap_days_to_scan() >= 5, post_saas._gap_days_to_scan())
+post_saas._run_jst_date = None
+
+# ── 123. 点検・記録に失敗したら、ジョブも失敗にする ───────────────────
+print("\n(123) 点検失敗はジョブの失敗")
+reset()
+post_saas.check_previous_slot = lambda salons: (_ for _ in ()).throw(RuntimeError("台帳に残せない"))
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+post_saas.is_promo_time = lambda name, slot: False
+post_saas.pick_post = lambda name, slot, used: ["昼の本文"]
+W.salons = [dict(SALON_ROW)]
+W.publish_behavior = lambda cid, n: "ok"
+code = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit as e:
+    code = e.code
+check("投稿はできている", len(W.posts) == 1, len(W.posts))
+check("それでも失敗として終わる", code == 1, code)
+check("知らせる", any("取りこぼし" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:160])
+post_saas.check_previous_slot = lambda salons: 0
+
+
+# ── 124. まとめ取得が取りこぼしても、埋める直前の再確認で二重投稿しない ─────────
+print("\n(124) まとめ取得の取りこぼし")
+reset()
+post_saas.check_previous_slot = _real_check_prev
+post_saas.SLOT = "noon"
+W.salons = [dict(SALON_ROW)]
+seed_history(days=2)
+# 今日の朝は実際には出ているのに、まとめ取得だけがそれを返さない状況を作る
+orig_scan_get = post_saas.supabase_get
+def hide_today_morning(path, params=None):
+    rows = orig_scan_get(path, params)
+    if path == "post_logs" and (params or {}).get("select", "").startswith("salon_id"):
+        return [r for r in rows if not str(r.get("op_id", "")).endswith(":morning")]
+    return rows
+post_saas.supabase_get = hide_today_morning
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.check_previous_slot(W.salons)
+post_saas.supabase_get = orig_scan_get
+check("再確認して出し直さない", len(W.posts) == 0, [p["text"] for p in W.posts])
 post_saas.check_previous_slot = lambda salons: 0
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))

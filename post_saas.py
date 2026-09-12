@@ -65,7 +65,11 @@ def supabase_post(path, data):
 
 
 def get_active_salons():
-    return supabase_get("salons", {"is_active": "eq.true", "select": "id,salon_name,threads_user_id,access_token,instagram_url"})
+    # created_at は「いつから投稿義務があるか」の目安。取りこぼしの点検で
+    # 稼働前の日を「未投稿」と数えないために使う（2026-09-12 Sol指摘#5）
+    return supabase_get("salons", {"is_active": "eq.true",
+                                   "select": "id,salon_name,threads_user_id,"
+                                             "access_token,instagram_url,created_at"})
 
 
 LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
@@ -1961,6 +1965,10 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
 
 # 取りこぼしの点検で見る日数（今日を含む）。1回のまとめ問い合わせで調べる
 GAP_SCAN_DAYS = int(os.environ.get("GAP_SCAN_DAYS", "2"))
+# 点検が最後まで終わった日を覚えておくファイル。終わっていない日は、
+# 次の実行で遡って見直す（2026-09-12 Sol指摘#2）
+GAP_MARK_FILE = os.path.join(os.path.dirname(__file__), "gap_checked.json")
+GAP_SCAN_MAX_DAYS = int(os.environ.get("GAP_SCAN_MAX_DAYS", "7"))
 # 取りこぼしの点検＋穴埋めに使ってよい実時間
 GAPFILL_BUDGET_SEC = int(os.environ.get("GAPFILL_BUDGET_SEC", "150"))
 ALL_SLOTS = ("morning", "noon", "evening")
@@ -1974,6 +1982,8 @@ def _flag_missing(salon, jst_date, slot, note):
     ⚠️ その場の通知1通で終わらせない。送れなければ二度と知らせる機会が無い。
     hold_repair にしておけば、回収の仕組みが**届くまで**繰り返し知らせる。
     ⚠️ 元のメモ（過去の失敗理由・通知済みの印）は消さずに残す。"""
+    if _out_of_time("取りこぼしの記録"):
+        return False
     op_id = post_state.make_op_id(salon["id"], jst_date, slot)
     try:
         row = post_state.fetch(op_id)
@@ -2006,10 +2016,19 @@ def _scan_gaps(salons, days):
         timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ids = [s["id"] for s in salons]
 
-    logs = supabase_get("post_logs", {
-        "select": "salon_id,slot,posted_at,op_id",
-        "salon_id": "in.(" + ",".join(ids) + ")",
-        "posted_at": f"gte.{since_utc}", "limit": "2000"})
+    logs, page, offset = [], 1000, 0
+    while True:
+        chunk = supabase_get("post_logs", {
+            "select": "salon_id,slot,posted_at,op_id",
+            "salon_id": "in.(" + ",".join(ids) + ")",
+            "posted_at": f"gte.{since_utc}",
+            "order": "posted_at.asc", "limit": str(page), "offset": str(offset)})
+        logs += chunk
+        if len(chunk) < page:
+            break
+        offset += page
+        if offset > 20000:      # 想定外の件数。取り切れないなら判断しない
+            raise RuntimeError("投稿記録が多すぎて全部を確認できません")
     done = set()
     for r in logs:
         if r.get("op_id"):
@@ -2030,7 +2049,11 @@ def _scan_gaps(salons, days):
     today = base.strftime("%Y-%m-%d")
     gaps = []
     for salon in salons:
+        started = _parse_ts(salon.get("created_at"))
+        start_day = started.astimezone(JST).strftime("%Y-%m-%d") if started else None
         for d in dates:
+            if start_day and d < start_day:
+                continue        # このサロンが始まる前の日は「未投稿」ではない
             for slot in ALL_SLOTS:
                 if d == today and slot not in EARLIER_SLOTS.get(SLOT, []) and slot != SLOT:
                     continue        # 今日のまだ来ていない枠は対象外
@@ -2058,18 +2081,42 @@ def check_previous_slot(salons):
         _deadline = saved_deadline
 
 
+def _gap_days_to_scan():
+    """今回さかのぼって見る日数。前回やり残した日があれば、そこまで戻る。"""
+    today = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")
+    last = (_load_json(GAP_MARK_FILE, {}) or {}).get("checked_through")
+    days = GAP_SCAN_DAYS
+    if last:
+        try:
+            gap = (datetime.strptime(today, "%Y-%m-%d")
+                   - datetime.strptime(last, "%Y-%m-%d")).days
+            days = max(days, min(gap + 1, GAP_SCAN_MAX_DAYS))
+        except Exception:
+            pass
+    return days
+
+
+def _mark_gap_checked(through):
+    try:
+        with open(GAP_MARK_FILE, "w", encoding="utf-8") as f:
+            json.dump({"checked_through": through}, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[gap] 点検済みの記録に失敗（続行）: {str(e)[:60]}")
+
+
 def _check_gaps(salons):
     today = _run_jst_date or datetime.now(JST).strftime("%Y-%m-%d")
     try:
-        gaps = _scan_gaps(salons, GAP_SCAN_DAYS)
+        gaps = _scan_gaps(salons, _gap_days_to_scan())
     except Exception as e:
         # ⚠️「調べられなかった」を「抜けなし」と言わない
         print(f"[gap] 取りこぼしを調べられません: {str(e)[:120]}")
         _notify_line("⚠️ とうこさん：投稿の取りこぼしを調べられませんでした。\n"
                      f"{type(e).__name__}: {str(e)[:150]}\n次の実行でもう一度調べます。")
-        return 0
+        raise
     if not gaps:
         print("[gap] 取りこぼしはありません")
+        _mark_gap_checked(today)
         return 0
 
     fillable = [g for g in gaps if g[1] == today]
@@ -2084,6 +2131,11 @@ def _check_gaps(salons):
                 unflagged.append(f"{salon['salon_name']}({d} {slot})")
             continue
         try:
+            # ⚠️ まとめ取得が取りこぼしていた可能性に備え、埋める直前に1件だけ再確認する
+            # （2026-09-12 Sol指摘#1：件数上限で既投稿を「抜け」と誤判定して再投稿）
+            op_id = post_state.make_op_id(salon["id"], d, slot)
+            if already_posted_today(salon["id"], slot, op_id, jst_date=d):
+                continue
             action, row = _acquire_with_retry(salon["id"], d, slot)
             if action in ("hold", "skip"):
                 continue
@@ -2124,6 +2176,7 @@ def _check_gaps(salons):
     _notify_line("⚠️ とうこさん：出ていない投稿がありました。\n" + "\n".join(lines))
     if unflagged:
         raise RuntimeError(f"取りこぼしを台帳に残せませんでした（{len(unflagged)}件）")
+    _mark_gap_checked(today)      # 全部を台帳に残せた日まで、点検済みとして進める
     return len(filled)
 
 
@@ -2348,9 +2401,12 @@ def main():
         try:
             check_previous_slot(salons)
         except Exception as e:
+            # ⚠️ ログに出すだけにしない。ジョブの失敗にして、監視にも届かせる
+            # （2026-09-12 Sol指摘#3）
             print(f"[gap] 取りこぼしの確認でエラー: {str(e)[:150]}")
-            _notify_line("⚠️ とうこさん：1つ前の投稿の取りこぼしを確認できませんでした。\n"
+            _notify_line("⚠️ とうこさん：投稿の取りこぼしを確認・記録できませんでした。\n"
                          f"{type(e).__name__}: {str(e)[:150]}")
+            results["error"].append(f"取りこぼしの確認: {type(e).__name__}")
 
     print(f"\n完了: 成功={len(results['ok'])} 失敗={len(results['error'])} トークン切れ={len(results['token_expired'])}")
 
