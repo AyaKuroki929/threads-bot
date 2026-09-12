@@ -150,6 +150,14 @@ def reject_reason(p: str):
     return None
 
 
+def _promo_salon_id():
+    """宣伝を出すアカウント（個人アカ）のサロンID。取れなければ None。"""
+    import post_saas
+    rows = post_saas.supabase_get("salons", {
+        "select": "id", "salon_name": f"eq.{post_saas.PROMO_SALON}", "limit": "1"})
+    return rows[0]["id"] if rows else None
+
+
 def _load(path, default):
     try:
         with open(path, encoding="utf-8") as f:
@@ -162,6 +170,15 @@ def main():
     pool = _load(POOL_FILE, {})
     posts = pool.get("posts") or []
     used = set(_load(USED_FILE, []))
+    # ⚠️ 使用済みの正本は投稿側と同じにする。ローカルJSONだけを見ると、
+    # push前に実行環境が消えた分を「未使用」と数えて補充を止めてしまう
+    # （2026-09-12 Sol指摘#2）。投稿側と同じ関数でDBからも拾う。
+    try:
+        import post_saas
+        used_db = post_saas._promo_used_from_db(_promo_salon_id())
+        used |= {p for p in posts if post_saas.post_state.norm_text(p) in used_db}
+    except Exception as e:
+        print(f"[promo] DBからの使用済み確認に失敗（ファイルのみで判断）: {str(e)[:100]}")
     unused = [p for p in posts if p not in used]
 
     print(f"[promo] 在庫: 未使用{len(unused)}本 / 全{len(posts)}本")

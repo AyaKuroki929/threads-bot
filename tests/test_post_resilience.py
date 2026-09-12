@@ -190,13 +190,14 @@ parts = W.attempts[f"{SALON}:{JST_DATE}:noon"]["parts"]
 check("OTHER を返信先にしない", all(p.get("post_id") != "OTHER" for p in parts),
       json.dumps(parts, ensure_ascii=False))
 check("2部目は出さない", W.calls["create"] == 1, W.calls["create"])
-check("要対応で止まる", W.attempts[f"{SALON}:{JST_DATE}:noon"]["status"] == "attention",
+check("要対応で止まる",
+      W.attempts[f"{SALON}:{JST_DATE}:noon"]["status"] in ("attention", "hold_repair"),
       W.attempts[f"{SALON}:{JST_DATE}:noon"]["status"])
 check("1部目は記録される", len(W.post_logs) == 1, len(W.post_logs))
 print("  → 再実行しても自動では触らない")
 before = (len(W.posts), len(W.post_logs), W.calls["create"])
 a, _ = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
-check("attention は hold", a == "hold", a)
+check("自動では触らない", a == "hold", a)
 check("何も増えない", (len(W.posts), len(W.post_logs), W.calls["create"]) == before)
 
 # ── 5. 返信本文と同じ本文の別投稿がある → 別IDを採用しない ────────────
@@ -229,8 +230,8 @@ check("CONTAINER_1 を返信先に使っていない", "CONTAINER_1" not in [p.g
       json.dumps(parts, ensure_ascii=False))
 check("2部目は出していない", W.calls["create"] == 1, W.calls["create"])
 check("未完として残る", not res.get("complete"), res)
-check("枠は attention（自動では触らない）",
-      W.attempts[f"{SALON}:{JST_DATE}:noon"]["status"] == "attention",
+check("枠は止まる（続きは自動で出さない）",
+      W.attempts[f"{SALON}:{JST_DATE}:noon"]["status"] in ("attention", "hold_repair"),
       W.attempts[f"{SALON}:{JST_DATE}:noon"]["status"])
 check("1部目は記録される", len(W.post_logs) == 1, len(W.post_logs))
 
@@ -553,7 +554,8 @@ W.status_override = lambda cid: W.containers[cid]["status"]
 W.log_insert_behavior = lambda n: "fail"
 (res, row, _), out = quiet(lambda: run(TEXTS2))
 op = f"{SALON}:{JST_DATE}:noon"
-check("attention で止まる", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("止まる（自動では続けない）",
+      W.attempts[op]["status"] in ("attention", "hold_repair"), W.attempts[op]["status"])
 check("記録はまだ無い", len(W.post_logs) == 0, len(W.post_logs))
 W.log_insert_behavior = lambda n: "ok"
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(minutes=10)).isoformat()
@@ -686,10 +688,10 @@ for mode in ("回復", "継続"):
                         complete = (not missing) and len(W.post_logs) == 1
                         if complete:
                             pass
-                        elif st == "attention" and len(W.post_logs) == 1 and any(
+                        elif st in ("attention", "hold_repair") and len(W.post_logs) == 1 and any(
                                 "止まりました" in m or "🚨" in m for m in NOTIFY):
                             held += 1     # 投稿IDを推測しない設計上、ここで止まるのは想定内
-                        elif st == "attention" and len(W.post_logs) == 1:
+                        elif st in ("attention", "hold_repair") and len(W.post_logs) == 1:
                             none_posted += 1
                             print(f"    ⚠️ {tag} → attention なのに通知が無い")
                         else:
@@ -854,7 +856,8 @@ W.containers["C_X"] = {"status": "FINISHED", "text": TEXTS1[0], "reply_to": None
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 check("投稿しない", len(W.posts) == 0, len(W.posts))
-check("要対応で止める", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("要対応で止める", W.attempts[op]["status"] in ("attention", "hold_repair"),
+      W.attempts[op]["status"])
 check("理由を通知する", any("一致しません" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
 
@@ -871,14 +874,15 @@ row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[
 post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
                     original_hash=post_state.part_hash(TEXTS1[0]), creation_id="C_Y",
                     status=post_state.PART_UNKNOWN, lost_response=True)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION,
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR,
                   note="人の確認待ち")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 check("logged を立てて消さない", not W.attempts[op].get("logged"), W.attempts[op].get("logged"))
 rows = post_state.open_issues(salon_ids=[SALON])
-check("次回も回収対象に残る", any(r["op_id"] == op for r in rows), [r["op_id"] for r in rows])
+check("次回も回収対象に残る", any(r["op_id"] == op for r in rows),
+      f'status={W.attempts[op]["status"]} rows={[r["op_id"][-12:] for r in rows]}')
 check("投稿はしない", len(W.posts) == 0, len(W.posts))
 
 # ── 38. 予備経路は設定が無ければローカルでも止まる ────────────────
@@ -936,14 +940,15 @@ row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[
 post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
                     original_hash=post_state.part_hash(TEXTS1[0]), creation_id="C_W",
                     status=post_state.PART_UNKNOWN, lost_response=True)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人の確認待ち")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="人の確認待ち")
 W.containers["C_W"] = {"status": "PUBLISHED", "text": TEXTS1[0], "reply_to": None}
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 check("記録が戻る", len(W.post_logs) == 1, len(W.post_logs))
 check("投稿はしない", len(W.posts) == 0, len(W.posts))
-check("停止状態は維持", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("停止状態は維持", W.attempts[op]["status"] in ("attention", "hold_repair"),
+      W.attempts[op]["status"])
 check("回収対象から外れる", not any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
       [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
 
@@ -955,7 +960,7 @@ op = f"{SALON}:{JST_DATE}:noon"
 a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
 post_state.set_part(row, 0, hash="x", creation_id="C_V", post_id="POST_X",
                     status=post_state.PART_PUBLISHED)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人の確認待ち")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="人の確認待ち")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
@@ -1029,7 +1034,7 @@ row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[
 post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
                     original_hash=post_state.part_hash(TEXTS1[0]), creation_id="C_F",
                     status=post_state.PART_UNKNOWN, lost_response=True)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人の確認待ち")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="人の確認待ち")
 W.containers["C_F"] = {"status": "FINISHED", "text": TEXTS1[0], "reply_to": None}
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
@@ -1059,7 +1064,8 @@ W.salons = [dict(SALON_ROW, threads_user_id="USER1")]
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 check("別アカウントから続きを出さない", W.calls["create"] == 0, W.calls["create"])
-check("要対応で止める", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("要対応で止める", W.attempts[op]["status"] in ("attention", "hold_repair"),
+      W.attempts[op]["status"])
 
 # ── 46. /me が一度こけただけでは全滅しない ──────────────────────
 print("\n㊻ /me の一時障害")
@@ -1125,7 +1131,8 @@ with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 W.me_behavior = None
 check("別アカウントでは続きを出さない", W.calls["create"] == before_create, W.calls["create"])
-check("要対応で止める", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("要対応で止める", W.attempts[op]["status"] in ("attention", "hold_repair"),
+      W.attempts[op]["status"])
 
 # ── 49. 台帳の本文と今回の本文が違えば、公開済み扱いしない ────────────────
 print("\n㊾ 台帳と本文が食い違う")
@@ -1235,7 +1242,8 @@ W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=6)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 check("続きを出さない", W.calls["create"] == 0, W.calls["create"])
-check("要対応で止める", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("要対応で止める", W.attempts[op]["status"] in ("attention", "hold_repair"),
+      W.attempts[op]["status"])
 check("今のアカウントを後付けしない", not W.attempts[op].get("publisher_user_id"),
       W.attempts[op].get("publisher_user_id"))
 
@@ -1256,7 +1264,8 @@ with contextlib.redirect_stdout(io.StringIO()):
     res = post_saas.threads_post(post_state.fetch(op), "USER1", "TOK", ["いまの本文"])
 check("追加で公開しない", len(W.posts) == 0, [p["text"] for p in W.posts])
 check("古い投稿IDを使い回さない", res["first_post_id"] != "POST_OLD3", res["first_post_id"])
-check("要対応で止める", res["slot_status"] == "attention", res["slot_status"])
+check("要対応で止める", res["slot_status"] in ("attention", "hold_repair"),
+      res["slot_status"])
 check("台帳の履歴は消さない",
       (post_state.get_part(post_state.fetch(op), 0) or {}).get("post_id") == "POST_OLD3",
       post_state.get_part(post_state.fetch(op), 0))
@@ -1362,7 +1371,7 @@ row = post_state.update(row, payload={"texts": ["あたらしい本文"], "origi
 post_state.set_part(row, 0, hash=post_state.part_hash("ふるい本文"),
                     original_hash=post_state.part_hash("ふるい本文"), creation_id="C_MM",
                     post_id="POST_MM", status=post_state.PART_PUBLISHED)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="本文不一致")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="本文不一致")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
@@ -1399,7 +1408,8 @@ for label, parts in (("2部目だけ履歴",
     with contextlib.redirect_stdout(io.StringIO()):
         res = post_saas.threads_post(post_state.fetch(op), "USER1", "TOK", texts)
     check(f"{label}：投稿しない", W.calls["create"] == 0, W.calls["create"])
-    check(f"{label}：要対応で止める", res["slot_status"] == "attention", res["slot_status"])
+    check(f"{label}：要対応で止める", res["slot_status"] in ("attention", "hold_repair"),
+          res["slot_status"])
 
 # ── 61. 記録専用の回収でも、401は再連携の通知になる ──────────────────
 print("\n(61) 状態照会が401")
@@ -1413,7 +1423,7 @@ row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[
 post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
                     original_hash=post_state.part_hash(TEXTS1[0]), creation_id="C_A401",
                     status=post_state.PART_UNKNOWN, lost_response=True)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人待ち")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="人待ち")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 W.status_override = "__401__"
 with contextlib.redirect_stdout(io.StringIO()):
@@ -1474,7 +1484,7 @@ post_state.set_part(row, 0, hash=post_state.part_hash("公開した本文"),
 # payload の original_first だけを、出していない本文に差し替える
 cur = post_state.fetch(op)
 pl = dict(cur["payload"]); pl["original_first"] = "出していない本文"
-post_state.update(cur, payload=pl, status=post_state.STATUS_ATTENTION, note="人待ち")
+post_state.update(cur, payload=pl, status=post_state.STATUS_HOLD_REPAIR, note="人待ち")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
@@ -1778,14 +1788,27 @@ NOTIFY.clear()
 W.me_behavior = lambda n: "401"
 W.status_override = "__401__"
 post_state.set_part(post_state.fetch(op), 0, status=post_state.PART_UNKNOWN)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR)
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
 W.me_behavior = None
 W.status_override = None
 check("1回目は知らせる", first_n >= 1, first_n)
-check("原因が変わったら改めて知らせる", len(NOTIFY) >= 1, NOTIFY)
+check("原因が変わったら改めて知らせる", len(NOTIFY) >= 1,
+      f'{NOTIFY} / note={W.attempts[op].get("note")}')
+print("  → 最初の原因に戻っても、もう鳴らさない")
+NOTIFY.clear()
+W.me_behavior = None
+W.status_override = None
+W.log_insert_behavior = lambda n: "fail"
+post_state.set_part(post_state.fetch(op), 0, status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, logged=False)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+check("知らせた種類は覚えている", len(NOTIFY) == 0,
+      f'{NOTIFY} / note={W.attempts[op].get("note")}')
 
 # ── 76. 宣伝の使用済み記録が失敗したら完了にしない ──────────────────
 print("\n(76) 宣伝の使用済み記録が失敗")
@@ -1924,7 +1947,7 @@ row = post_state.update(row, payload={"texts": ["宣伝W"], "original_first": "�
 post_state.set_part(row, 0, hash=post_state.part_hash("宣伝W"),
                     original_hash=post_state.part_hash("宣伝W"),
                     creation_id="C_PW", post_id="P_PW", status=post_state.PART_PUBLISHED)
-post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人待ち")
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="人待ち")
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 orig_mark = post_saas.mark_promo_used
 post_saas.mark_promo_used = lambda t: (_ for _ in ()).throw(OSError("書き込めない"))
@@ -1933,7 +1956,8 @@ with contextlib.redirect_stdout(io.StringIO()):
 post_saas.mark_promo_used = orig_mark
 check("知らせる", any("片づけられなかった" in m for m in NOTIFY),
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
-check("人待ちのまま", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+check("人待ちのまま", W.attempts[op]["status"] in ("attention", "hold_repair"),
+      W.attempts[op]["status"])
 
 
 # ── 82. 通知に載せていない枠は「通知済み」にしない ────────────────────
@@ -1965,6 +1989,110 @@ check("載った枠は通知済みになる",
 check("載らなかった枠は通知済みにしない",
       all("通知済み" not in (W.attempts[o].get("note") or "") for o in unlisted),
       [W.attempts[o].get("note") for o in unlisted])
+
+
+# ── 83. 前週の未確定な宣伝を、翌週に選び直さない ────────────────────
+print("\n(83) 週をまたぐ宣伝の未確定")
+reset()
+_json.dump({"posts": ["宣伝A", "宣伝B"], "image_url": "img"},
+           open(post_saas.PROMO_POOL_FILE, "w"), ensure_ascii=False)
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
+# 先週：宣伝Aを出したが応答を失い、記録も使用済みも残っていない
+last_week = (_dt.now(_tz.utc) - _td(days=7)).strftime("%Y-%m-%d")
+op = f"{SALON}:{last_week}:evening"
+W.attempts[op] = {"op_id": op, "salon_id": SALON, "jst_date": last_week, "slot": "evening",
+                  "status": "unknown", "rev": 0, "logged": False, "note": None,
+                  "parts": [{"i": 0, "status": "unknown", "hash": post_state.part_hash("宣伝A"),
+                             "creation_id": "C_LW", "lost_response": True}],
+                  "payload": {"texts": ["宣伝A"], "original_first": "宣伝A",
+                              "topic_tag": None, "image_url": "img", "promo": True},
+                  "updated_at": (_dt.now(_tz.utc) - _td(days=7)).isoformat()}
+got = post_saas.pick_promo(SALON)
+check("未確定の宣伝Aは選ばない", got and got["text"] == "宣伝B", got)
+
+# ── 84. 補充側も、投稿側と同じ使用済みを見る ───────────────────────
+print("\n(84) 補充側の使用済み判定")
+reset()
+W.post_logs.append({"salon_id": SALON, "slot": "evening", "post_content": "宣伝A",
+                    "posted_at": _dt.now(_tz.utc).isoformat(), "op_id": "p1"})
+W.post_logs.append({"salon_id": SALON, "slot": "evening", "post_content": "宣伝B",
+                    "posted_at": _dt.now(_tz.utc).isoformat(), "op_id": "p2"})
+used_db = post_saas._promo_used_from_db(SALON)
+check("DBから2本とも使用済みと分かる",
+      {post_state.norm_text("宣伝A"), post_state.norm_text("宣伝B")} <= used_db, used_db)
+open(post_saas.PROMO_USED_FILE, "w").write("[]")   # ローカルJSONは失われている
+_json.dump({"posts": ["宣伝A", "宣伝B"], "image_url": "img"},
+           open(post_saas.PROMO_POOL_FILE, "w"), ensure_ascii=False)
+check("投稿側は「選べる宣伝なし」", post_saas.pick_promo(SALON) is None, post_saas.pick_promo(SALON))
+
+
+# ── 85. 使用済みを確認できないときは、通常投稿に切り替えて投稿を止めない ────────
+print("\n(85) 確認不能から通常投稿へ")
+reset()
+post_saas.SLOT = "noon"
+post_saas.SALON_FILTER = ""
+post_saas.DRY_RUN = False
+post_saas.SLOT_JST_WINDOWS = {}
+W.salons = [dict(SALON_ROW)]
+_json.dump({"posts": ["宣伝A"], "image_url": "img"},
+           open(post_saas.PROMO_POOL_FILE, "w"), ensure_ascii=False)
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
+orig_promo_time = post_saas.is_promo_time
+post_saas.is_promo_time = lambda name, slot: True
+post_saas.pick_post = lambda name, slot, used: ["通常の本文"]
+orig_get = post_saas.supabase_get
+def flaky_get(path, params=None):
+    if path == "post_attempts" and (params or {}).get("select", "").startswith("payload"):
+        raise TimeoutError("timed out")
+    return orig_get(path, params)
+post_saas.supabase_get = flaky_get
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.main()
+except SystemExit:
+    pass
+post_saas.supabase_get = orig_get
+post_saas.is_promo_time = orig_promo_time
+check("宣伝は出さない", not any(p["text"] == "宣伝A" for p in W.posts), [p["text"] for p in W.posts])
+check("通常の投稿は出す", any(p["text"] == "通常の本文" for p in W.posts), [p["text"] for p in W.posts])
+check("理由を知らせる", any("確認できなかった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+check("在庫切れとは言わない", not any("在庫が空" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
+
+# ── 86. 例外処理の中でDBが落ちても、まとめ通知まで届く ────────────────
+print("\n(86) 例外処理中のDB障害")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1")
+post_state.set_part(row, 0, hash=post_state.part_hash(TEXTS1[0]),
+                    original_hash=post_state.part_hash(TEXTS1[0]),
+                    creation_id="C_SF", post_id="P_SF", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED, logged=False)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+W.log_insert_behavior = lambda n: "fail"
+orig_fetch = post_state.fetch
+calls = {"n": 0}
+def flaky_fetch(op_id):
+    calls["n"] += 1
+    if calls["n"] > 3:          # 記録復旧のあとの取り直しから落とす
+        raise TimeoutError("timed out")
+    return orig_fetch(op_id)
+post_state.fetch = flaky_fetch
+escaped = None
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.recover_open_attempts(W.salons)
+except Exception as e:
+    escaped = f"{type(e).__name__}: {e}"
+post_state.fetch = orig_fetch
+check("例外が外へ出ない", escaped is None, escaped)
+check("まとめ通知は届く", any("片づけられなかった" in m for m in NOTIFY),
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

@@ -30,7 +30,8 @@ REPAIR_PUBLISHED = (
     "                row = post_state.set_part(row, 0, status=post_state.PART_PUBLISHED)"
 )
 
-# ⚠️ 二重に守っている箇所（本文ハッシュの照合など）は、片方だけ壊しても
+# ⚠️ 二重に守っている箇所（本文ハッシュの照合、_safe_fetch と行ごとの例外分離など）は、
+# 片方だけ壊しても
 # もう片方が止めるため、ここには単体では載せない。代わりに、
 # 一番外側の入口（_ledger_consistent / _all_parts_published）を壊して検知させる。
 #
@@ -45,12 +46,12 @@ MUTATIONS = [
     ("通知は本文に載せた分だけ通知済みにする",
      "            _mark_notified(shown)",
      "            _mark_notified(failures)"),
-    ("回収対象のページ送り",
-     "        offset += page",
-     "        break", TARGET_STATE),
-    ("attentionでも宣伝未完なら回収する",
-     "        if allow_attention and (not row.get(\"logged\") or promo_pending):",
-     "        if allow_attention and not row.get(\"logged\"):", TARGET_STATE),
+    ("回収対象は状態だけで絞る（Python側で後から落とさない）",
+     '        "status": f"in.({\',\'.join(live)})",',
+     '        "status": f"in.({STATUS_UNKNOWN})",', TARGET_STATE),
+    ("記録の修復が残る停止(hold_repair)を回収する",
+     "    if st == STATUS_HOLD_REPAIR:",
+     "    if False and st == STATUS_HOLD_REPAIR:", TARGET_STATE),
     ("送信直前の締切確認",
      'if _out_of_time(f"{label}の公開要求"):',
      'if False and _out_of_time(f"{label}の公開要求"):'),
@@ -79,9 +80,10 @@ MUTATIONS = [
      "        if False and any((p.get(\"creation_id\") or p.get(\"post_id\")"),
     ("記録復旧の失敗を完了にしない",
      "        _state_finish(row,\n"
-     "                      post_state.STATUS_PUBLISHED if finish_status else post_state.STATUS_ATTENTION,",
+     "                      post_state.STATUS_PUBLISHED if finish_status\n"
+     "                      else post_state.STATUS_HOLD_REPAIR,",
      "        _state_finish(row,\n"
-     "                      finish_status or post_state.STATUS_ATTENTION,"),
+     "                      finish_status or post_state.STATUS_HOLD_REPAIR,"),
     ("添字の一意と連続の確認",
      "    if sorted(idx) != list(range(len(texts))):",
      "    if False and sorted(idx) != list(range(len(texts))):"),
@@ -151,24 +153,30 @@ MUTATIONS = [
     ("原文ハッシュを上書きしない",
      '                        if i == 0 and original_first is not None and not p.get("original_hash"):',
      "                        if i == 0 and original_first is not None:"),
-    ("同じ理由の再通知を抑える",
-     "    if mark in prev:",
-     "    if False and mark in prev:"),
+    ("同じ種類の再通知を抑える",
+     "    if kind in _notified_kinds(row):",
+     "    if False and kind in _notified_kinds(row):"),
     ("通知済み印を消さない",
      "        if RECOVER_NOTE_MARK not in note:\n            note = note + mark",
      "        pass"),
     ("通知は送れてから通知済みにする",
      "        if sent:\n            # ⚠️ 本文に載せた分だけ通知済みにする",
      "        if True:\n            # ⚠️ 本文に載せた分だけ通知済みにする"),
-    ("失敗の種類で通知を識別する",
-     "    mark = RECOVER_NOTE_MARK + kind",
-     '    mark = RECOVER_NOTE_MARK + "same"'),
+    ("通知済みの種類は足していく（上書きしない）",
+     "            kinds = _notified_kinds(cur) | {f[\"kind\"]}",
+     "            kinds = {f[\"kind\"]}"),
     ("宣伝の使用済みを別の完了条件にする",
      '    if res["complete"] and logged and not _promo_pending(row):',
      '    if res["complete"] and logged:'),
     ("宣伝の使用済み失敗を回収に残す",
      "            if not _mark_promo_done(row, text):",
      "            if False and not _mark_promo_done(row, text):"),
+    ("未確定の台帳に残る宣伝文も候補から外す",
+     "            txt = pl.get(\"original_first\")\n            if txt:",
+     "            txt = None\n            if txt:"),
+    ("使用済みを確認できないときの通常投稿への切替",
+     "            except PromoCheckFailed as e:",
+     "            except KeyError as e:"),
     ("記録復旧でFINISHEDを公開済み扱いしない",
      REPAIR_PUBLISHED,
      REPAIR_PUBLISHED.replace('if st == "PUBLISHED":', 'if st in ("PUBLISHED", "FINISHED"):')),

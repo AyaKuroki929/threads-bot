@@ -47,7 +47,8 @@ STATUS_UNKNOWN = "unknown"      # 公開できたか確定できない。人の�
 STATUS_PUBLISHED = "published"  # 公開済み（post_logs への記録は未完）
 STATUS_LOGGED = "logged"        # 公開＋記録まで完了
 STATUS_FAILED = "failed"        # 未公開を確定。再試行してよい
-STATUS_ATTENTION = "attention"  # 人の確認が要る。自動では二度と触らない
+STATUS_ATTENTION = "attention"    # 人の確認が要る。自動では二度と触らない
+STATUS_HOLD_REPAIR = "hold_repair"  # 投稿は止めるが、記録の修復だけは自動で続ける
 
 # 「他の実行が処理中かもしれない」と見なす時間。updated_at は工程ごとに進むので
 # ＝「最後に進捗があってから」の秒数。これを超えたら死んだ実行とみなして引き継ぐ。
@@ -198,16 +199,16 @@ def acquire(salon_id: str, jst_date: str, slot: str, *, stale_sec: int = None,
     st = row.get("status")
     if st == STATUS_LOGGED:
         return ("skip", row)
+    if st == STATUS_HOLD_REPAIR:
+        # 投稿は止めるが、記録の修復だけは自動で続ける状態
+        if not allow_attention:
+            return ("hold", row)
+        age = _age_sec(row)
+        if age < 0 or age < RESUME_STALE_SEC:
+            return ("hold", row)
+        return _take("repair", row)
     if st == STATUS_ATTENTION:
-        # 人が見るまで自動では投稿しない停止状態。
-        # ただし「公開済みなのに記録が無い」の修復だけは別（投稿は一切しない・Sol指摘#4）
-        pl = row.get("payload") or {}
-        promo_pending = bool(pl.get("promo")) and not pl.get("promo_used")
-        if allow_attention and (not row.get("logged") or promo_pending):
-            age = _age_sec(row)
-            if age < 0 or age < RESUME_STALE_SEC:
-                return ("hold", row)
-            return _take("repair", row)
+        # 人が見るまで自動では触らない停止状態（自動でできることは残っていない）
         print(f"[state] {op_id}: 要対応のため自動処理しません（{(row.get('note') or '')[:60]}）")
         return ("hold", row)
     if st in (STATUS_UNKNOWN, STATUS_PUBLISHED):
@@ -318,52 +319,29 @@ def open_issues(limit: int = 50, since_days: int = 3, salon_ids=None):
     """まだ片づいていない枠を、最後に触った順で返す。
 
     ⚠️ op_id には日付が入るので、翌日の実行は前日の行を「見に行かない限り」見ない。
-    取りこぼしを拾うのはこの関数の役目（2026-09-12 Sol指摘#5）。
+    取りこぼしを拾うのはこの関数の役目。
 
-    対象:
+    対象（すべてSQLだけで絞れる状態）:
       unknown / published / running … 公開の途中か、記録が未完
-      attention で logged=false     … 投稿は止めるが、記録の修復だけは要る
+      hold_repair                   … 投稿は止めるが、記録の修復は自動で続ける
     対象外:
-      logged / failed               … 片づいている
-      attention で logged=true      … 人待ち。ここに残すと枠を食い潰して
-                                       後ろの行が永久に処理されない（Sol指摘#4）
+      logged / failed / attention   … 片づいている、または人の確認待ち
 
-    ⚠️ 日付では切らない。障害や再連携待ちが長引いた枠ほど回収が要る（Sol指摘#5・#8）。
-    処理した行は updated_at が進んで後ろへ回るので、同じ行で詰まらない。"""
-    live = (STATUS_UNKNOWN, STATUS_PUBLISHED, STATUS_RUNNING)
-
-    def _attention_open(r):
-        # 記録が未完、または宣伝の使用済みが未完なら、まだ片づいていない
-        pl = r.get("payload") or {}
-        return (not r.get("logged")) or (bool(pl.get("promo")) and not pl.get("promo_used"))
-
+    ⚠️ 状態だけで絞り切ること。取ってからPythonで落とす作りにすると、
+    除外対象が大量に並んだときに後続へ永久に届かない（2026-09-12 Sol指摘#3）。
+    ⚠️ 日付では切らない。障害や再連携待ちが長引いた枠ほど回収が要る。"""
+    live = (STATUS_UNKNOWN, STATUS_PUBLISHED, STATUS_RUNNING, STATUS_HOLD_REPAIR)
     if not available():
         rows = [r for r in _MEM.values()
-                if (r.get("status") in live
-                    or (r.get("status") == STATUS_ATTENTION and _attention_open(r)))
+                if r.get("status") in live
                 and (salon_ids is None or r.get("salon_id") in salon_ids)]
         return sorted(rows, key=lambda r: str(r.get("updated_at") or ""))[:limit]
     params = {
         "select": "op_id,salon_id,jst_date,slot,status,note,parts,payload,logged,rev,updated_at",
-        # attention は「記録未完 or 宣伝未完」だけが対象だが、payload の中身は
-        # SQLで絞れない。除外される行が並んでいても後続へ届くようページ送りする
-        "or": f"(status.in.({','.join(live)}),"
-              f"status.eq.{STATUS_ATTENTION})",
-        "order": "updated_at.asc,op_id.asc",
+        "status": f"in.({','.join(live)})",
+        # 稼働中サロンで先に絞る。並びは「最後に触った順」＝失敗した行は後ろへ回る
+        "order": "updated_at.asc,op_id.asc", "limit": limit,
     }
     if salon_ids:
         params["salon_id"] = "in.(" + ",".join(salon_ids) + ")"
-
-    # ⚠️ 1回だけ取って絞ると、除外対象が先頭に並んだときに後続へ永久に届かない
-    # （2026-09-12 Sol指摘#4）。必要件数が集まるまでページを送る
-    page = max(limit * 4, 100)
-    keep, offset = [], 0
-    for _ in range(10):                      # 最大10ページ（＝上限×40件）で打ち切る
-        q = dict(params, limit=page, offset=offset)
-        rows = _req("GET", TABLE, params=q)
-        keep += [r for r in rows
-                 if r.get("status") != STATUS_ATTENTION or _attention_open(r)]
-        if len(keep) >= limit or len(rows) < page:
-            break
-        offset += page
-    return keep[:limit]
+    return _req("GET", TABLE, params=params)

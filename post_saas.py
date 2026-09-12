@@ -938,8 +938,9 @@ def threads_post(row, user_id, token, texts, topic_tag=None, image_url="",
             if i < len(texts) - 1 and not pid:
                 # ⚠️ コンテナIDや「本文が同じ別投稿」を返信先に代用しない。
                 # 続きを出さずに人へ渡す（自動では二度とこのツリーを完成させない）
-                return _result(False, post_state.STATUS_ATTENTION,
-                               f"{label}は公開済みですが投稿IDが取れず、続き（残り{len(texts)-i-1}部）を出せません")
+                return _result(False, post_state.STATUS_HOLD_REPAIR,
+                               f"{label}は公開済みですが投稿IDが取れず、"
+                               f"続き（残り{len(texts)-i-1}部）を出せません")
 
             reply_to_id = pid
             print(f"[api] {label} 投稿完了: post_id={pid or '(ID未回収)'}")
@@ -1158,7 +1159,23 @@ def _promo_used_from_db(salon_id, days=180):
         rows = supabase_get("post_logs", {
             "select": "post_content", "salon_id": f"eq.{salon_id}",
             "slot": f"eq.{PROMO_SLOT}", "posted_at": f"gte.{since}", "limit": "500"})
-        return {post_state.norm_text(r.get("post_content")) for r in rows}
+        used = {post_state.norm_text(r.get("post_content")) for r in rows}
+        # ⚠️ まだ片づいていない枠（公開したかもしれない・記録が未完）で使った宣伝文も外す。
+        # 外さないと、翌週その文をもう一度選んで二重投稿になる（2026-09-12 Sol指摘#1）
+        since_date = (datetime.now(JST) - timedelta(days=days)).strftime("%Y-%m-%d")
+        pending = supabase_get("post_attempts", {
+            "select": "payload,status,logged", "salon_id": f"eq.{salon_id}",
+            "slot": f"eq.{PROMO_SLOT}", "jst_date": f"gte.{since_date}", "limit": "200"})
+        for r in pending:
+            pl = r.get("payload") or {}
+            if not pl.get("promo"):
+                continue
+            if r.get("status") == "logged" and pl.get("promo_used"):
+                continue          # 完全に片づいている（post_logs 側で拾える）
+            txt = pl.get("original_first")
+            if txt:
+                used.add(post_state.norm_text(txt))
+        return used
     except Exception as e:
         # ⚠️「確認できなかった」を「使用済みなし」と扱わない。
         # 扱うと、公開済みの宣伝文をもう一度出す（2026-09-12 Sol指摘#5）
@@ -1217,22 +1234,33 @@ def _add_failure(failures, row, op_id, kind, reason):
     識別は理由の文字列ではなく `kind`（失敗の種類）で行う。文字列の先頭だけで比べると、
     原因が変わったのに「同じ」と見なして知らせ損ねる（2026-09-12 Sol指摘#2）。
     通知済みの印は、**実際に送れてから**付ける（同#3）。ここでは積むだけ。"""
-    prev = row.get("note") or ""
-    mark = RECOVER_NOTE_MARK + kind
-    if mark in prev:
+    if kind in _notified_kinds(row):
         print(f"[recover] {op_id}: 同じ種類（{kind}）は通知済み → 今回は積みません")
         return
     failures.append({"op_id": op_id, "kind": kind, "text": f"{op_id}（{reason}）"})
 
 
+def _notified_kinds(row):
+    """この枠で、これまでに知らせた失敗の種類。"""
+    note = row.get("note") or ""
+    if RECOVER_NOTE_MARK not in note:
+        return set()
+    return {k for k in note.split(RECOVER_NOTE_MARK, 1)[1].split(",") if k}
+
+
 def _mark_notified(failures):
-    """まとめ通知が**送れたあとに**、通知済みの印を台帳へ付ける。"""
+    """まとめ通知が**送れたあとに**、通知済みの印を台帳へ付ける。
+
+    ⚠️ 種類は上書きせず**足していく**。上書きすると、原因が交互に変わるだけで
+    同じことを何度も知らせてしまう（2026-09-12 Sol指摘#4）。"""
     for f in failures:
         try:
             cur = post_state.fetch(f["op_id"])
-            if cur:
-                base = (cur.get("note") or "").split(RECOVER_NOTE_MARK)[0]
-                post_state.update(cur, note=base + RECOVER_NOTE_MARK + f["kind"])
+            if not cur:
+                continue
+            kinds = _notified_kinds(cur) | {f["kind"]}
+            base = (cur.get("note") or "").split(RECOVER_NOTE_MARK)[0]
+            post_state.update(cur, note=base + RECOVER_NOTE_MARK + ",".join(sorted(kinds)))
         except Exception as e:
             print(f"[state] 通知済み印の保存に失敗（続行）: {str(e)[:60]}")
 
@@ -1245,7 +1273,7 @@ def _repair_safe(row, salon, slot, jst_date, finish_status=None, quiet=False):
                                 finish_status=finish_status, quiet=quiet) or (None, None)
     except TokenExpiredError as e:
         print(f"[recover] トークン切れ（記録の復旧）: {e}")
-        _state_finish(row, post_state.STATUS_ATTENTION, note="記録の復旧中にトークン切れ")
+        _state_finish(row, post_state.STATUS_HOLD_REPAIR, note="記録の復旧中にトークン切れ")
         if not quiet:
             _notify_line(f"🔑 とうこさん：{salon['salon_name']} の {jst_date} {slot} の記録を"
                          "戻そうとしましたが、Threadsとの連携が切れています。再連携が必要です。")
@@ -1333,12 +1361,12 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
                 st0 = post_state.PART_PUBLISHED
             except Exception as e:
                 print(f"[state] 公開確定の保存に失敗: {str(e)[:80]}")
-                _state_finish(row, post_state.STATUS_ATTENTION, note=row.get("note"))
-                return
+                _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=row.get("note"))
+                return "state", "公開の確定を保存できませんでした"
         else:
             # まだ分からない。記録対象に残したまま次回また確認する
-            _state_finish(row, post_state.STATUS_ATTENTION, note=row.get("note"))
-            return
+            _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=row.get("note"))
+            return "unknown", "公開できたかまだ確認できていません"
     if st0 == post_state.PART_PUBLISHED and text and (
             first.get("hash") != post_state.part_hash((payload.get("texts") or [text])[0])
             or _original_mismatch(row, text)):
@@ -1375,8 +1403,9 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
             if not _mark_promo_done(row, text):
                 # ⚠️ 元が「人待ち」なら人待ちのまま。記録の失敗で投稿の停止を解除しない
                 # （2026-09-12 Sol指摘#2）
-                keep = (post_state.STATUS_ATTENTION
-                        if (row.get("status") == post_state.STATUS_ATTENTION
+                keep = (post_state.STATUS_HOLD_REPAIR
+                        if (row.get("status") in (post_state.STATUS_ATTENTION,
+                                                  post_state.STATUS_HOLD_REPAIR)
                             or finish_status is None)
                         else post_state.STATUS_PUBLISHED)
                 _state_finish(post_state.fetch(row["op_id"]) or row, keep,
@@ -1396,7 +1425,8 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
         # 記録が無いまま完了扱いになり、二度と回収されない（2026-09-12 Sol指摘#2）
         print(f"[recover] 記録の復旧に失敗: {str(e)[:100]}")
         _state_finish(row,
-                      post_state.STATUS_PUBLISHED if finish_status else post_state.STATUS_ATTENTION,
+                      post_state.STATUS_PUBLISHED if finish_status
+                      else post_state.STATUS_HOLD_REPAIR,
                       note=f"記録の復旧に失敗: {str(e)[:120]}")
         return "log", f"記録の復旧に失敗: {str(e)[:60]}"
     return None, None
@@ -1613,6 +1643,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
             print(f"[state] 投稿アカウントの記録に失敗: {str(e)[:80]}")
             raise
 
+    promo_fallback = None      # 宣伝を通常投稿に落とした理由（出せてから知らせる）
     payload = (row.get("payload") or {}) if action == "resume" else {}
     if payload.get("texts"):
         # 前回の続き。**同じ本文**でなければ台帳のコンテナと対応が取れない
@@ -1638,20 +1669,18 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
             try:
                 promo = pick_promo(salon_id)
             except PromoCheckFailed as e:
-                # 使用済みを確認できない。同じ宣伝を出すより通常投稿に落とす
+                # ⚠️「確認できなかった」と「在庫が空」は別。まとめて在庫切れと言わない
+                # （2026-09-12 Sol指摘#5）
                 promo = None
                 print(f"[promo] 使用済みを確認できないため通常投稿にします: {e}")
-                if not quiet:
-                    _notify_line("⚠️ 月曜夜の宣伝投稿：どれを出したか確認できなかったので、"
-                                 "同じ文が二度出ないよう通常の投稿にしました。\n"
-                                 f"{str(e)[:120]}")
+                promo_fallback = ("どれを出したか確認できなかったので、"
+                                  f"同じ文が二度出ないよう通常の投稿にしました。\n{str(e)[:120]}")
             if promo:
                 print(f"[promo] {salon_name}: 月曜夜の宣伝枠として画像付きで投稿します")
-            else:
-                # 在庫切れ。無投稿にはせず通常投稿に落とすが、気づけるよう通知する
+            elif promo_fallback is None:
                 print(f"[promo] {salon_name}: 宣伝文の在庫が空 → 通常投稿にフォールバック")
-                _notify_line("⚠️ 月曜夜の宣伝投稿：文章の在庫が空だったため、通常の投稿を出しました。"
-                             "promo_posts_personal.json を確認してください。")
+                promo_fallback = ("文章の在庫が空だったため、通常の投稿を出しました。"
+                                  "promo_posts_personal.json を確認してください。")
         texts = [promo["text"]] if promo else pick_post(salon_name, slot, used)
         # 使用済み判定はプール原文と突合するため、CTA付与・分割前の原文を控えておく
         original_first = texts[0] if isinstance(texts, list) else texts
@@ -1716,6 +1745,9 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
 
     # ── 台帳に結末を残す ───────────────────────────────
     if res["complete"] and logged and not _promo_pending(row):
+        # 通常投稿に落とした理由は、実際に出せてから知らせる（Sol指摘#5）
+        if promo_fallback and not quiet:
+            _notify_line(f"⚠️ 月曜夜の宣伝投稿：{promo_fallback}")
         _state_finish(row, post_state.STATUS_LOGGED)
         _sync_last_run(salon_name, slot, jst_date=row.get("jst_date"))
         print(f"[OK] {salon_name}: post_id={post_id}")
