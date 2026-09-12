@@ -194,8 +194,12 @@ def _insights_payload(salon):
             data = _graph_get(f'{post["id"]}/insights', token,
                               {"metric": "views,likes,replies,reposts,quotes"})
             for row in data.get("data", []):
-                tv = row.get("total_value") or {}
-                item[row.get("name", "")] = tv.get("value")
+                # 投稿ごとの数字は total_value ではなく values[0].value で返る（実測）
+                if row.get("total_value") is not None:
+                    item[row.get("name", "")] = row["total_value"].get("value")
+                else:
+                    vals = row.get("values") or []
+                    item[row.get("name", "")] = sum(v.get("value", 0) for v in vals)
         except urllib.error.HTTPError as e:
             item["error"] = f"HTTP {e.code}"
         except Exception as e:  # noqa: BLE001
