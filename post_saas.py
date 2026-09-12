@@ -547,6 +547,8 @@ RETRY_BUDGET_SEC = int(os.environ.get("RETRY_BUDGET_SEC", "300"))
 # これが無いと、先頭サロンの通信待ちだけで後続サロンが処理前に打ち切られる（Sol指摘#4）
 JOB_BUDGET_SEC = int(os.environ.get("JOB_BUDGET_SEC", "480"))
 _job_deadline = None
+# 回収中は低い層から直接通知しない（まとめの1通へ集約する・2026-09-12 Sol指摘#5）
+_quiet_notify = False
 # 回収処理に与える締切（unix秒）。ここを過ぎたら待機も公開のやり直しも打ち切る。
 # 開始前だけの確認だと、1枠の通信待ちだけで上限を大きく超える（2026-09-12 Sol指摘#6）
 _deadline = None
@@ -663,11 +665,15 @@ def _ledger_set_part(row, i, **fields):
             print(f"[state] パート{i+1}の保存に失敗 {n}/3: {str(e)[:100]}")
             if n < 3:
                 time.sleep(2 * n)
-    _notify_line("🚨 とうこさん：投稿は出ましたが、台帳への保存ができませんでした。\n"
-                 f"op_id={row.get('op_id')} / パート{i+1} / "
-                 f"post_id={fields.get('post_id') or '(未取得)'} / "
-                 f"creation_id={fields.get('creation_id') or '-'}\n"
-                 "続きの投稿が止まります。この投稿IDを控えてください。")
+    if not _quiet_notify:
+        published = fields.get("status") == post_state.PART_PUBLISHED
+        what = ("投稿は出ましたが" if published
+                else "投稿できたかは未確定ですが")
+        _notify_line(f"🚨 とうこさん：{what}、台帳への保存ができませんでした。\n"
+                     f"op_id={row.get('op_id')} / パート{i+1} / "
+                     f"post_id={fields.get('post_id') or '(未取得)'} / "
+                     f"creation_id={fields.get('creation_id') or '-'}\n"
+                     "続きの投稿が止まります。この投稿IDを控えてください。")
     raise LedgerSaveError(f"パート{i+1}の台帳保存に失敗: {last}", i, fields)
 
 
@@ -989,6 +995,24 @@ def _acquire_with_retry(salon_id, jst_date, slot, attempts=3):
     raise last
 
 
+def _to_human(row, note, message, quiet=False):
+    """「人が確認するまで自動では触らない(attention)」へ移す。
+
+    ⚠️ 知らせが送れなかったら attention にしない。attention は回収対象から外れるので、
+    通知が届かないまま誰も気づけなくなる（2026-09-12 Sol指摘#3）。
+    送れるまでは hold_repair（回収対象に残る）で待つ。"""
+    if quiet:
+        # 回収中はまとめ通知が担当する。送れるまで hold_repair に残す
+        _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=note)
+        return False
+    if _notify_line(message):
+        _state_finish(row, post_state.STATUS_ATTENTION, note=note)
+        return True
+    print("[state] 知らせを送れなかったので、人待ちにせず次回へ残します")
+    _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=note)
+    return False
+
+
 def _state_finish(row, status, note=None):
     """台帳に結末を残す。ここが残らないと次の実行が状況を引き継げない。
 
@@ -1009,6 +1033,14 @@ def _state_finish(row, status, note=None):
             # 取り直さずに同じ行で粘っても永久に通らない
             fresh = _safe_fetch(row.get("op_id"), None)
             if fresh:
+                # ⚠️ 取り直しても無条件に上書きしない。別の実行が「人待ち」や「完了」に
+                # したものを、こちらの古い結末で戻すと停止が破れる（2026-09-12 Sol指摘#1）
+                if fresh.get("status") in (post_state.STATUS_ATTENTION,
+                                           post_state.STATUS_LOGGED) \
+                        and status not in (post_state.STATUS_ATTENTION,
+                                           post_state.STATUS_LOGGED):
+                    print(f"[state] 別の実行が {fresh.get('status')} にしています → 上書きしません")
+                    return False
                 row = fresh
             if i < 3:
                 time.sleep(2 * i)
@@ -1172,11 +1204,13 @@ def _promo_used_from_db(salon_id, days=180):
         pending = supabase_get("post_attempts", {
             "select": "payload", "salon_id": f"eq.{salon_id}",
             "slot": f"eq.{PROMO_SLOT}",
-            "status": "in.(unknown,published,running,hold_repair,attention)", "limit": "500"})
+            "status": "in.(unknown,published,running,hold_repair,attention)", "limit": "1000"})
         for r in pending:
             pl = r.get("payload") or {}
             txt = pl.get("original_first")
-            if pl.get("promo") and txt and not pl.get("promo_used"):
+            # ⚠️ promo_used が立っていても、記録が未完なら「片づいていない」。
+            # 除外しないと、その本文をもう一度選んで二重投稿になる（Sol指摘#2）
+            if pl.get("promo") and txt:
                 used.add(post_state.norm_text(txt))
         return used
     except Exception as e:
@@ -1438,13 +1472,14 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
 def recover_open_attempts(salons, skip_op_ids=()):
     """公開未確定・記録未完のまま残った枠を、元の本文・元のコンテナで片づける。
     新規投稿はしない（新しい本文を選ばない）。返り値は処理した件数。"""
-    global _deadline, _retry_spent
+    global _deadline, _retry_spent, _quiet_notify
     failures = []                    # 片づけられなかった枠（最後にまとめて通知する）
     by_id = {s["id"]: s for s in salons}
     started = time.time()
     # 回収は「当日の投稿より先」に走る。待機予算も締切も通常投稿と分けて持ち、
     # 終わったら必ず元に戻す（回収の消費で当日の再試行余力を削らない・Sol指摘#6）
     saved_spent, _retry_spent = _retry_spent, 0.0
+    _quiet_notify = True
     _deadline = started + RECOVER_BUDGET_SEC
     try:
         # 稼働中サロンで先に絞る。絞らないと停止済みサロンの古い行だけで上限に達する
@@ -1456,6 +1491,7 @@ def recover_open_attempts(salons, skip_op_ids=()):
                      "取りこぼしの自動回収が動いていません。\n"
                      f"{type(e).__name__}: {str(e)[:150]}")
         _deadline, _retry_spent = None, saved_spent
+        _quiet_notify = False
         return 0
 
     try:
@@ -1558,7 +1594,7 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     msg = (f"登録アカウント({salon['threads_user_id']})とトークンの実アカウント"
                            f"({user_id})が一致しません")
                     print(f"[recover] {msg} → 回収しません")
-                    _state_finish(row, post_state.STATUS_ATTENTION, note=msg)
+                    _state_finish(row, post_state.STATUS_HOLD_REPAIR, note=msg)
                     _add_failure(failures, row, op_id, "account", msg)
                     continue
                 try:
@@ -1577,7 +1613,8 @@ def recover_open_attempts(salons, skip_op_ids=()):
                                  "Threadsとの連携が切れています（再連携が必要）")
                 except Exception as e:
                     print(f"[recover] 回収に失敗: {str(e)[:120]}")
-                    _state_finish(row, post_state.STATUS_ATTENTION, note=f"回収に失敗: {str(e)[:150]}")
+                    _state_finish(row, post_state.STATUS_HOLD_REPAIR,
+                                  note=f"回収に失敗: {str(e)[:150]}")
                     _add_failure(failures, row, op_id, f"error:{type(e).__name__}",
                                  f"回収に失敗: {str(e)[:60]}")
             except Exception as e:
@@ -1590,6 +1627,7 @@ def recover_open_attempts(salons, skip_op_ids=()):
         # ⚠️ 例外が抜けても必ず戻す。戻らないと当日の通常投稿が
         # 回収用の締切で片っ端から打ち切られる
         _deadline, _retry_spent = None, saved_spent
+        _quiet_notify = False
 
     # ⚠️ 失敗をログだけに残さない。回収が効いていないことに誰も気づけなくなる
     # （2026-09-12 Sol指摘#3）。1実行1通にまとめる
@@ -1622,10 +1660,9 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
     if owner and str(owner) != str(user_id):
         msg = (f"この枠は別のアカウント({owner})で始まっています。"
                f"今のアカウントは {user_id} です")
-        _state_finish(row, post_state.STATUS_ATTENTION, note=msg)
-        if not quiet:
-            _notify_line(f"🚨 とうこさん：{salon_name} の {slot} を続けようとしましたが、{msg}。\n"
-                         "別のアカウントへ投稿しないよう止めました。")
+        _to_human(row, msg,
+                  f"🚨 とうこさん：{salon_name} の {slot} を続けようとしましたが、{msg}。\n"
+                  "別のアカウントへ投稿しないよう止めました。", quiet=quiet)
         return "error", msg, "publisher_mismatch"
     if not owner:
         # ⚠️ すでに公開やコンテナ作成の履歴がある行に、今のアカウントを後付けしない。
@@ -1635,10 +1672,9 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
                                        post_state.PART_PUBLISHED))
                for p in (row.get("parts") or [])):
             msg = "この枠は投稿を始めた記録があるのに、どのアカウントで始めたか分かりません"
-            _state_finish(row, post_state.STATUS_ATTENTION, note=msg)
-            if not quiet:
-                _notify_line(f"🚨 とうこさん：{salon_name} の {slot} を続けようとしましたが、{msg}。\n"
-                             "別のアカウントへ投稿しないよう止めました。")
+            _to_human(row, msg,
+                      f"🚨 とうこさん：{salon_name} の {slot} を続けようとしましたが、{msg}。\n"
+                      "別のアカウントへ投稿しないよう止めました。", quiet=quiet)
             return "error", msg, "publisher_unknown"
         try:
             row = post_state.update(row, publisher_user_id=str(user_id))
@@ -1770,8 +1806,13 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
     # 記録は済ませたうえで、トークン切れだけは呼び出し側に伝える（専用通知のため）
     if isinstance(res.get("error"), TokenExpiredError):
         raise res["error"]
-    return "error", detail, ("hold" if res["slot_status"] == post_state.STATUS_ATTENTION
-                             else "incomplete")
+    kind = "incomplete"
+    if res["slot_status"] == post_state.STATUS_ATTENTION:
+        kind = "hold"
+    elif res["slot_status"] == post_state.STATUS_HOLD_REPAIR:
+        # 「続きは自動で出せない」への変化は、別の知らせとして扱う（Sol指摘#4）
+        kind = "hold_repair"
+    return "error", detail, kind
 
 
 def main():

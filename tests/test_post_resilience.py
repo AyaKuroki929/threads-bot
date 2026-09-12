@@ -2137,5 +2137,59 @@ check("回収対象に入らない",
 check("状態が変わらない", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
 check("公開要求は0回", W.calls["publish"] == 0, W.calls["publish"])
 
+
+# ── 89. 別の実行が「人待ち」にした枠を、古い結果で戻さない ────────────────
+print("\n(89) 古い結末で停止を解除しない")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+stale = dict(row)                      # 手元に古い行を持ったまま
+post_state.update(post_state.fetch(op), status=post_state.STATUS_ATTENTION, note="人の確認待ち")
+ok = post_saas._state_finish(stale, post_state.STATUS_PUBLISHED, note="古い結末")
+check("上書きしない", ok is False, ok)
+check("人待ちのまま", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+
+# ── 90. 使用済み印が立っていても、記録が未完なら再選択しない ───────────────
+print("\n(90) promo_used だけ立っている枠")
+reset()
+_json.dump({"posts": ["宣伝A", "宣伝B"], "image_url": "img"},
+           open(post_saas.PROMO_POOL_FILE, "w"), ensure_ascii=False)
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
+op = f"{SALON}:{YESTERDAY}:evening"
+W.attempts[op] = {"op_id": op, "salon_id": SALON, "jst_date": YESTERDAY, "slot": "evening",
+                  "status": "published", "rev": 0, "logged": False, "note": None,
+                  "parts": [{"i": 0, "status": "published", "post_id": "P1",
+                             "hash": post_state.part_hash("宣伝A"),
+                             "original_hash": post_state.part_hash("宣伝A")}],
+                  "payload": {"texts": ["宣伝A"], "original_first": "宣伝A", "promo": True,
+                              "promo_used": True, "topic_tag": None, "image_url": "img"},
+                  "updated_at": (_dt.now(_tz.utc) - _td(days=7)).isoformat()}
+got = post_saas.pick_promo(SALON)
+check("記録未完の宣伝Aは選ばない", got and got["text"] == "宣伝B", got)
+
+# ── 91. 人待ちへ移す知らせが送れなければ、回収対象に残す ────────────────
+print("\n(91) 人待ち移行の通知が失敗")
+reset()
+op = f"{SALON}:{JST_DATE}:noon"
+a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
+row = post_state.update(row, payload={"texts": TEXTS1, "original_first": TEXTS1[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="ACCOUNT_A")
+NOTIFY_OK[0] = False
+with contextlib.redirect_stdout(io.StringIO()):
+    st, dt, kd = post_saas._run_slot(post_state.fetch(op), "resume", SALON_ROW,
+                                     "USER1", "TOK", "noon", "@testsalon")
+check("投稿しない", len(W.posts) == 0, len(W.posts))
+check("人待ちにしない（回収対象に残す）",
+      W.attempts[op]["status"] == "hold_repair", W.attempts[op]["status"])
+check("回収対象に残る",
+      any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+NOTIFY_OK[0] = True
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas._run_slot(post_state.fetch(op), "resume", SALON_ROW, "USER1", "TOK",
+                        "noon", "@testsalon")
+check("送れたら人待ちにする", W.attempts[op]["status"] == "attention", W.attempts[op]["status"])
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
