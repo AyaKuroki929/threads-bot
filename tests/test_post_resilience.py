@@ -16,15 +16,24 @@ fakeapi.install()
 W = fakeapi.W
 
 import post_state, post_saas
-def _fake_notify(message):
-    """通知の差し替え。本物と同じく「送れたか」を返す（返さないと
-    通知済みの印が付かず、連発防止のテストが通らない）。"""
-    NOTIFY.append(message)
+NOTIFY_OK = [True]      # False にすると「送信に失敗した」状況を作れる
+
+
+def _fake_broadcast(text, token=None, **kw):
+    """⚠️ 差し替えるのは**送信そのもの**だけ。_notify_line() は本物を通す。
+    _notify_line ごと差し替えると、戻り値の扱いの壊れを検知できない（Sol指摘）。"""
+    NOTIFY.append(text)
     return NOTIFY_OK[0]
 
 
-NOTIFY_OK = [True]      # False にすると「送信に失敗した」状況を作れる
-post_saas._notify_line = _fake_notify
+post_saas.line_broadcast = _fake_broadcast
+post_saas.LINE_TOKEN = "dummy"
+
+# 宣伝の使用済みファイルも、本物の読み書きをテスト用の一時ファイルで通す
+import tempfile as _tf
+_promo_dir = _tf.mkdtemp()
+post_saas.PROMO_USED_FILE = os.path.join(_promo_dir, "promo_used.json")
+post_saas.PROMO_POOL_FILE = os.path.join(_promo_dir, "promo_pool.json")
 
 
 class _Clock:
@@ -1605,9 +1614,8 @@ print("\n(70) 宣伝の使用済み記録の復旧")
 reset()
 W.salons = [SALON_ROW]
 op = f"{SALON}:{YESTERDAY}:evening"
-used_marks = []
-orig_mark = post_saas.mark_promo_used
-post_saas.mark_promo_used = lambda t: used_marks.append(t)
+import json as _json
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
 a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "evening")
 row = post_state.update(row, payload={"texts": ["宣伝本文"], "original_first": "宣伝本文",
                                       "topic_tag": None, "image_url": "img", "promo": True},
@@ -1619,17 +1627,17 @@ post_state.update(post_state.fetch(op), status=post_state.STATUS_PUBLISHED, logg
 W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas.recover_open_attempts(W.salons)
-post_saas.mark_promo_used = orig_mark
 check("記録が戻る", len(W.post_logs) == 1, len(W.post_logs))
-check("宣伝の使用済みも戻る", used_marks == ["宣伝本文"], used_marks)
+check("宣伝の使用済みも戻る（本物のファイルに書かれる）",
+      _json.load(open(post_saas.PROMO_USED_FILE)) == ["宣伝本文"],
+      open(post_saas.PROMO_USED_FILE).read()[:80])
 
 # ── 71. 原文が差し替わっていたら、宣伝の使用済みにもしない ─────────────
 print("\n(71) 宣伝の使用済みと原文照合")
 reset()
 op = f"{SALON}:{JST_DATE}:noon"
-used_marks = []
-orig_mark = post_saas.mark_promo_used
-post_saas.mark_promo_used = lambda t: used_marks.append(t)
+import json as _json
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
 a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
 row = post_state.update(row, payload={"texts": ["宣伝A", "続き"], "original_first": "宣伝A",
                                       "topic_tag": None, "image_url": "", "promo": True},
@@ -1644,8 +1652,9 @@ W.publish_behavior = lambda cid, n: "ok"
 with contextlib.redirect_stdout(io.StringIO()):
     post_saas._run_slot(post_state.fetch(op), "resume", SALON_ROW, "USER1", "TOK",
                         "noon", "@testsalon")
-post_saas.mark_promo_used = orig_mark
-check("未投稿の宣伝文を使用済みにしない", "宣伝B（未投稿）" not in used_marks, used_marks)
+check("未投稿の宣伝文を使用済みにしない",
+      "宣伝B（未投稿）" not in _json.load(open(post_saas.PROMO_USED_FILE)),
+      open(post_saas.PROMO_USED_FILE).read()[:80])
 
 
 # ── 72. コンテナを作り直しても、原文ハッシュは最初のものを保つ ───────────
@@ -1820,7 +1829,7 @@ post_saas.mark_promo_used = lambda t: (_ for _ in ()).throw(OSError("書き込�
 orig_promo_time = post_saas.is_promo_time
 orig_pick_promo = post_saas.pick_promo
 post_saas.is_promo_time = lambda name, slot: True
-post_saas.pick_promo = lambda: {"text": "宣伝Z", "image_url": "img"}
+post_saas.pick_promo = lambda sid=None: {"text": "宣伝Z", "image_url": "img"}
 a, row = post_saas._acquire_with_retry(SALON, JST_DATE, "noon")
 post_saas.get_used_posts = lambda sid, slot: set()
 post_saas._maybe_add_instagram_cta_saas = lambda t, u: t
@@ -1838,6 +1847,30 @@ check("完了にしない", W.attempts[op]["status"] != "logged", W.attempts[op]
 check("回収対象に残る",
       any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
       [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+
+
+# ── 78. 全公開済みの回収でも、原文が差し替わっていれば使用済みにしない ────────
+print("\n(78) 全公開済み経路＋原文差し替え")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:evening"
+open(post_saas.PROMO_USED_FILE, "w").write("[]")
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "evening")
+row = post_state.update(row, payload={"texts": ["宣伝A"], "original_first": "宣伝A",
+                                      "topic_tag": None, "image_url": "i", "promo": True},
+                        publisher_user_id="USER1", logged=True)
+post_state.set_part(row, 0, hash=post_state.part_hash("宣伝A"),
+                    original_hash=post_state.part_hash("宣伝A"),
+                    creation_id="C_PZ", post_id="P_PZ", status=post_state.PART_PUBLISHED)
+cur = post_state.fetch(op)
+pl = dict(cur["payload"]); pl["original_first"] = "宣伝B（未投稿）"
+post_state.update(cur, payload=pl, status=post_state.STATUS_PUBLISHED)
+W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+with contextlib.redirect_stdout(io.StringIO()):
+    post_saas.recover_open_attempts(W.salons)
+saved = _json.load(open(post_saas.PROMO_USED_FILE))
+check("未投稿の宣伝文を使用済みにしない", "宣伝B（未投稿）" not in saved, saved)
+check("完了にしない", W.attempts[op]["status"] != "logged", W.attempts[op]["status"])
 
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)

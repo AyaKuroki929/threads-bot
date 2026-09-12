@@ -79,8 +79,9 @@ def _notify_line(message: str) -> bool:
     if not LINE_TOKEN:
         return False
     try:
-        line_broadcast(message, token=LINE_TOKEN)
-        return True
+        # ⚠️ line_broadcast は失敗しても例外にせず False を返す。
+        # 戻り値を捨てると「送れていないのに通知済み」になる（2026-09-12 Sol指摘#1）
+        return bool(line_broadcast(message, token=LINE_TOKEN))
     except Exception as e:
         print(f"[line] 通知に失敗: {str(e)[:100]}")
         return False
@@ -1140,15 +1141,36 @@ def _load_json(path, default):
         return default
 
 
-def pick_promo():
+def _promo_used_from_db(salon_id, days=180):
+    """すでに出した宣伝文を **DBの投稿記録から** 拾う。
+
+    ⚠️ 使用済みの正本をローカルJSON（gitにpushして残す）だけに置くと、
+    push前に実行環境が消えたときに記録が失われ、同じ宣伝文がまた選ばれる
+    （2026-09-12 Sol指摘#3）。post_logs は消えないので、こちらも必ず見る。"""
+    if not salon_id:
+        return set()
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = supabase_get("post_logs", {
+            "select": "post_content", "salon_id": f"eq.{salon_id}",
+            "slot": f"eq.{PROMO_SLOT}", "posted_at": f"gte.{since}", "limit": "500"})
+        return {post_state.norm_text(r.get("post_content")) for r in rows}
+    except Exception as e:
+        print(f"[promo] 投稿記録からの使用済み確認に失敗（ファイルのみで判断）: {str(e)[:80]}")
+        return set()
+
+
+def pick_promo(salon_id=None):
     """未使用の宣伝文を1本返す。在庫が無ければ None（通常投稿にフォールバック）。"""
     pool = _load_json(PROMO_POOL_FILE, {})
     posts = pool.get("posts") or []
     image_url = pool.get("image_url") or ""
     used = set(_load_json(PROMO_USED_FILE, []))
+    used_db = _promo_used_from_db(salon_id)
     for text in posts:
-        if text not in used:
-            return {"text": text, "image_url": image_url}
+        if text in used or post_state.norm_text(text) in used_db:
+            continue
+        return {"text": text, "image_url": image_url}
     return None
 
 
@@ -1204,7 +1226,8 @@ def _repair_safe(row, salon, slot, jst_date, finish_status=None, quiet=False):
     """記録の復旧。返り値は (kind, reason)。片づいたら (None, None)。
     トークン切れは「記録を戻せない」ではなく再連携が必要だと分かる形で返す。"""
     try:
-        _repair_log_only(row, salon, slot, jst_date, finish_status=finish_status, quiet=quiet)
+        return _repair_log_only(row, salon, slot, jst_date,
+                                finish_status=finish_status, quiet=quiet) or (None, None)
     except TokenExpiredError as e:
         print(f"[recover] トークン切れ（記録の復旧）: {e}")
         _state_finish(row, post_state.STATUS_ATTENTION, note="記録の復旧中にトークン切れ")
@@ -1225,7 +1248,14 @@ def _promo_pending(row):
 
 
 def _mark_promo_done(row, text):
-    """宣伝の使用済みを記録し、台帳にも印を残す。成功したら True。"""
+    """宣伝の使用済みを記録し、台帳にも印を残す。成功したら True。
+
+    ⚠️ 入口で原文を照合する。呼び出し経路が複数あるので、ここに集約しないと
+    未投稿の宣伝文を使用済みにできてしまう（2026-09-12 Sol指摘#4）。"""
+    bad = _original_mismatch(row, text)
+    if bad:
+        print(f"[promo] 使用済みにしません: {bad}")
+        return False
     try:
         mark_promo_used(text)
     except Exception as e:
@@ -1302,15 +1332,16 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
         # （2026-09-12 Sol指摘#1）
         _state_finish(row, post_state.STATUS_ATTENTION,
                       note="公開した本文と台帳の本文が食い違うため記録できません（人の確認が必要）")
-        _notify_line(f"🚨 とうこさん：{salon['salon_name']} の {jst_date} {slot} は、"
-                     "公開した本文と台帳の本文が 食い違います。記録を戻せないので確認してください。")
-        return
+        if not quiet:
+            _notify_line(f"🚨 とうこさん：{salon['salon_name']} の {jst_date} {slot} は、"
+                         "公開した本文と台帳の本文が食い違います。記録を戻せないので確認してください。")
+        return "mismatch", "公開した本文と台帳の本文が食い違います（人の確認が必要）"
     if st0 == post_state.PART_PUBLISHED and not text:
         # ⚠️「本文を復元できない」と「公開していない」は別（2026-09-12 Sol指摘#4）。
         # 公開済みなら記録対象から外さず、人に渡す
         _state_finish(row, post_state.STATUS_ATTENTION,
                       note="公開済みだが本文を復元できず、記録を戻せません（人の確認が必要）")
-        return
+        return "no_text", "公開済みだが本文を復元できず、記録を戻せません"
     if st0 != post_state.PART_PUBLISHED or not text:
         # 公開していないことが分かっている＝自動でできることは無い。
         # logged を立てて回収対象から外す（毎回この行で枠を使い潰さないため・Sol指摘#6）
@@ -1327,10 +1358,15 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
         if _promo_pending(row):
             # 宣伝枠は「使用済み」の記録も戻さないと、同じ宣伝文がまた選ばれる
             if not _mark_promo_done(row, text):
-                _state_finish(post_state.fetch(row["op_id"]) or row,
-                              post_state.STATUS_PUBLISHED,
+                # ⚠️ 元が「人待ち」なら人待ちのまま。記録の失敗で投稿の停止を解除しない
+                # （2026-09-12 Sol指摘#2）
+                keep = (post_state.STATUS_ATTENTION
+                        if (row.get("status") == post_state.STATUS_ATTENTION
+                            or finish_status is None)
+                        else post_state.STATUS_PUBLISHED)
+                _state_finish(post_state.fetch(row["op_id"]) or row, keep,
                               note="宣伝の使用済み記録を戻せていません")
-                return
+                return "promo", "宣伝の使用済み記録を戻せていません"
             # 台帳を書き換えたので手元の行は古い。取り直さないと次の更新が弾かれる
             row = post_state.fetch(row["op_id"]) or row
         try:
@@ -1347,6 +1383,8 @@ def _repair_log_only(row, salon, slot, jst_date, finish_status=None, quiet=False
         _state_finish(row,
                       post_state.STATUS_PUBLISHED if finish_status else post_state.STATUS_ATTENTION,
                       note=f"記録の復旧に失敗: {str(e)[:120]}")
+        return "log", f"記録の復旧に失敗: {str(e)[:60]}"
+    return None, None
 
 
 def recover_open_attempts(salons, skip_op_ids=()):
@@ -1395,8 +1433,8 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     action, row = post_state.acquire(salon["id"], jst_date, slot, allow_attention=True)
                 except Exception as e:
                     print(f"[recover] {op_id} の実行権が取れず（次回へ）: {str(e)[:100]}")
-                    failures.append({"op_id": op_id, "kind": "acquire",
-                                     "text": f"{op_id}（実行権が取れない: {str(e)[:60]}）"})
+                    _add_failure(failures, r, op_id, "acquire",
+                                 f"実行権が取れない: {str(e)[:60]}")
                     continue
                 if action in ("hold", "skip"):
                     continue
@@ -1492,8 +1530,9 @@ def recover_open_attempts(salons, skip_op_ids=()):
                                  f"回収に失敗: {str(e)[:60]}")
             except Exception as e:
                 print(f"[recover] {op_id} の処理で想定外のエラー: {str(e)[:150]}")
-                failures.append({"op_id": op_id, "kind": f"error:{type(e).__name__}",
-                                 "text": f"{op_id}（想定外のエラー: {type(e).__name__}: {str(e)[:50]}）"})
+                _add_failure(failures, post_state.fetch(op_id) or r, op_id,
+                             f"error:{type(e).__name__}",
+                             f"想定外のエラー: {type(e).__name__}: {str(e)[:50]}")
                 continue
     finally:
         # ⚠️ 例外が抜けても必ず戻す。戻らないと当日の通常投稿が
@@ -1573,7 +1612,7 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         used = get_used_posts(salon_id, slot)
         promo = None
         if is_promo_time(salon_name, slot):
-            promo = pick_promo()
+            promo = pick_promo(salon_id)
             if promo:
                 print(f"[promo] {salon_name}: 月曜夜の宣伝枠として画像付きで投稿します")
             else:

@@ -196,6 +196,7 @@ class World:
                     keep = set(m.group(1).split(",")) if m else set()
                     m2 = re.search(r"and\(status\.eq\.(\w+),jst_date\.gte\.([\d-]+)\)", orq)
                     m3 = re.search(r"and\(status\.eq\.(\w+),logged\.is\.(\w+)\)", orq)
+                    m4 = re.findall(r"(?<!and\()status\.eq\.(\w+)", orq)
                     def _match(r):
                         if r.get("status") in keep:
                             return True
@@ -204,6 +205,8 @@ class World:
                             return True
                         if m3 and r.get("status") == m3.group(1) \
                                 and bool(r.get("logged")) == (m3.group(2) == "true"):
+                            return True
+                        if m4 and r.get("status") in m4:
                             return True
                         return False
                     rows = [r for r in rows if _match(r)]

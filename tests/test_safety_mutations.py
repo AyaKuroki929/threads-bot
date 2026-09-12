@@ -127,9 +127,11 @@ MUTATIONS = [
     ("記録復旧で宣伝の使用済みも戻す",
      "        if _promo_pending(row):",
      "        if False and _promo_pending(row):"),
-    ("宣伝の使用済み記録も原文照合を通す",
-     '    if promo and res["complete"] and not _original_mismatch(row, original_first):',
-     '    if promo and res["complete"]:'),
+    ("宣伝の使用済み記録の原文照合（入口で集約）",
+     "    bad = _original_mismatch(row, text)\n    if bad:\n"
+     '        print(f"[promo] 使用済みにしません: {bad}")\n        return False',
+     "    bad = None\n    if bad:\n"
+     '        print(f"[promo] 使用済みにしません: {bad}")\n        return False'),
     ("原文ハッシュを上書きしない",
      '                        if i == 0 and original_first is not None and not p.get("original_hash"):',
      "                        if i == 0 and original_first is not None:"),

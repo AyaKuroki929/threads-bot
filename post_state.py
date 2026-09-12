@@ -201,7 +201,9 @@ def acquire(salon_id: str, jst_date: str, slot: str, *, stale_sec: int = None,
     if st == STATUS_ATTENTION:
         # 人が見るまで自動では投稿しない停止状態。
         # ただし「公開済みなのに記録が無い」の修復だけは別（投稿は一切しない・Sol指摘#4）
-        if allow_attention and not row.get("logged"):
+        pl = row.get("payload") or {}
+        promo_pending = bool(pl.get("promo")) and not pl.get("promo_used")
+        if allow_attention and (not row.get("logged") or promo_pending):
             age = _age_sec(row)
             if age < 0 or age < RESUME_STALE_SEC:
                 return ("hold", row)
@@ -329,20 +331,34 @@ def open_issues(limit: int = 50, since_days: int = 3, salon_ids=None):
     ⚠️ 日付では切らない。障害や再連携待ちが長引いた枠ほど回収が要る（Sol指摘#5・#8）。
     処理した行は updated_at が進んで後ろへ回るので、同じ行で詰まらない。"""
     live = (STATUS_UNKNOWN, STATUS_PUBLISHED, STATUS_RUNNING)
+
+    def _attention_open(r):
+        # 記録が未完、または宣伝の使用済みが未完なら、まだ片づいていない
+        pl = r.get("payload") or {}
+        return (not r.get("logged")) or (bool(pl.get("promo")) and not pl.get("promo_used"))
+
     if not available():
         rows = [r for r in _MEM.values()
                 if (r.get("status") in live
-                    or (r.get("status") == STATUS_ATTENTION and not r.get("logged")))
+                    or (r.get("status") == STATUS_ATTENTION and _attention_open(r)))
                 and (salon_ids is None or r.get("salon_id") in salon_ids)]
         return sorted(rows, key=lambda r: str(r.get("updated_at") or ""))[:limit]
     params = {
         "select": "op_id,salon_id,jst_date,slot,status,note,parts,payload,logged,rev,updated_at",
+        # attention は「記録未完」または「宣伝の使用済み未完」だけ拾う。
+        # payload の中身はSQLで絞れないので、記録済みかつ宣伝の行はここで広めに取り、
+        # 呼び出し側（_attention_open 相当）で落とす
         "or": f"(status.in.({','.join(live)}),"
-              f"and(status.eq.{STATUS_ATTENTION},logged.is.false))",
+              f"status.eq.{STATUS_ATTENTION})",
         # ⚠️ 稼働中サロンで先に絞る。絞らずに件数で切ると、停止済みサロンの古い行だけで
         # 上限に達して有効なサロンまで届かない（2026-09-12 Sol指摘#9）。
-        "order": "updated_at.asc", "limit": limit,
+        # ⚠️ attention は「記録未完 or 宣伝未完」だけが対象だが、payload の中身は
+        # SQLで絞れない。件数で切る前に落とせるよう、多めに取ってから絞る
+        "order": "updated_at.asc", "limit": limit * 4,
     }
     if salon_ids:
         params["salon_id"] = "in.(" + ",".join(salon_ids) + ")"
-    return _req("GET", TABLE, params=params)
+    rows = _req("GET", TABLE, params=params)
+    keep = [r for r in rows
+            if r.get("status") != STATUS_ATTENTION or _attention_open(r)]
+    return keep[:limit]
