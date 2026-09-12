@@ -30,7 +30,8 @@ REPAIR_PUBLISHED = (
     "                row = post_state.set_part(row, 0, status=post_state.PART_PUBLISHED)"
 )
 
-# ⚠️ 二重に守っている箇所（本文ハッシュの照合、_safe_fetch と行ごとの例外分離など）は、
+# ⚠️ 二重に守っている箇所（本文ハッシュの照合、_safe_fetch と行ごとの例外分離、
+# _settle_if_notified と _mark_notified の二段構えなど）は、
 # 片方だけ壊しても
 # もう片方が止めるため、ここには単体では載せない。代わりに、
 # 一番外側の入口（_ledger_consistent / _all_parts_published）を壊して検知させる。

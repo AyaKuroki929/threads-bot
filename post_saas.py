@@ -1269,6 +1269,28 @@ def _safe_fetch(op_id, fallback=None):
         return fallback
 
 
+def _settle_if_notified(row, op_id):
+    """すでに必要な知らせが届いていて、自動でできることが残っていない枠を人待ちへ移す。
+
+    ⚠️ 通知の重複抑制と「人待ちへ移す」は別の判断。同じにすると、
+    2回目以降は通知対象から外れるせいで永久に hold_repair のまま回り続け、
+    毎回の回収枠と通信を使い続ける（2026-09-12 Sol指摘）。"""
+    cur = _safe_fetch(op_id, row) or row
+    if cur.get("status") != post_state.STATUS_HOLD_REPAIR:
+        return False
+    if _repairable(cur):
+        return False
+    if not (_notified_kinds(cur) & HUMAN_KINDS):
+        return False
+    try:
+        post_state.update(cur, status=post_state.STATUS_ATTENTION)
+        print(f"[recover] {op_id}: 知らせ済みで自動でできることも無い → 人待ちにします")
+        return True
+    except Exception as e:
+        print(f"[state] 人待ちへの移行に失敗（続行）: {str(e)[:60]}")
+        return False
+
+
 def _add_failure(failures, row, op_id, kind, reason):
     """片づけられなかった枠を通知対象に積む。
 
@@ -1605,6 +1627,8 @@ def recover_open_attempts(salons, skip_op_ids=()):
                     done += 1
                     kind, reason = _repair_safe(row, salon, slot, jst_date, quiet=True)
                     after = _safe_fetch(op_id, row) or row
+                    if _settle_if_notified(after, op_id):
+                        continue
                     if kind or not after.get("logged") or _promo_pending(after):
                         _add_failure(failures, after, op_id, kind or "log",
                                      reason or ("宣伝の使用済み記録が残っています"
@@ -1688,6 +1712,8 @@ def recover_open_attempts(salons, skip_op_ids=()):
                         if _repairable(cur):
                             _repair_safe(cur, salon, slot, jst_date, quiet=True)
                             cur = _safe_fetch(op_id, cur) or cur
+                        if _settle_if_notified(cur, op_id):
+                            continue
                         _add_failure(failures, cur, op_id,
                                      kind or "incomplete", str(detail)[:60])
                 except TokenExpiredError:

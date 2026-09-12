@@ -2514,5 +2514,40 @@ check("種類が読み取れる",
       post_saas._notified_kinds({"note": post_saas._append_note(note, "／記録は復旧済み")}) == {"hold"},
       post_saas._notified_kinds({"note": post_saas._append_note(note, "／記録は復旧済み")}))
 
+
+# ── 104. 知らせ済み＋復旧済みの枠は、回収枠を使い続けない ────────────────
+print("\n(104) 復旧後に回収から外れる")
+reset()
+W.salons = [SALON_ROW]
+op = f"{SALON}:{YESTERDAY}:noon"
+a, row = post_saas._acquire_with_retry(SALON, YESTERDAY, "noon")
+# 2部構成・親だけ公開済み・記録未完（＝知らせが要る／記録は戻せる）
+row = post_state.update(row, payload={"texts": TEXTS2, "original_first": TEXTS2[0],
+                                      "topic_tag": None, "image_url": "", "promo": False},
+                        publisher_user_id="USER1", logged=False)
+post_state.set_part(post_state.fetch(op), 0, hash=post_state.part_hash(TEXTS2[0]),
+                    original_hash=post_state.part_hash(TEXTS2[0]),
+                    creation_id="C_ST", post_id="P_ST", status=post_state.PART_PUBLISHED)
+post_state.update(post_state.fetch(op), status=post_state.STATUS_HOLD_REPAIR, note="続きが出せない")
+W.log_insert_behavior = lambda n: "fail"    # 1回目は記録を戻せない（＝知らせるが片づかない）
+states, notified = [], []
+for i in range(4):
+    NOTIFY.clear()
+    if i == 1:
+        W.log_insert_behavior = lambda n: "ok"   # 2回目から記録が戻せるようになる
+    W.attempts[op]["updated_at"] = (_dt.now(_tz.utc) - _td(hours=3)).isoformat()
+    with contextlib.redirect_stdout(io.StringIO()):
+        post_saas.recover_open_attempts(W.salons)
+    states.append(W.attempts[op]["status"])
+    notified.append(len(NOTIFY))
+check("1回目で知らせる", notified[0] >= 1, notified)
+check("記録は戻る", len(W.post_logs) == 1, W.post_logs)
+check("片づいたあとは知らせない", sum(notified[2:]) == 0, notified)
+check("2回目で片づく（回り続けない）", states[1] == "attention", states)
+check("最後は人待ちになって回収から外れる", states[-1] == "attention", states)
+check("回収対象から消える",
+      not any(r["op_id"] == op for r in post_state.open_issues(salon_ids=[SALON])),
+      [r["op_id"] for r in post_state.open_issues(salon_ids=[SALON])])
+
 print("\n" + ("🚨 失敗 " + ", ".join(FAILS) if FAILS else "✅ 全項目パス"))
 sys.exit(1 if FAILS else 0)
