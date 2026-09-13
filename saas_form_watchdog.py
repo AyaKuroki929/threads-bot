@@ -121,6 +121,23 @@ def notify_admin(text):
         print(f"[notify] admin LINE 失敗 HTTP {e.code}: {e.read().decode()[:200]}", file=sys.stderr)
 
 
+def load_cancelled():
+    """解約・データ削除が済んだクライアント。フォームの回答は残るので、
+    ここに入れておかないと「未対応」として毎回鳴り続ける
+    （2026-09-13 lanibeauty の削除直後に実際に誤検知した）。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saas_cancelled.json")
+    if not os.path.exists(path):
+        return set(), set()
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"[watchdog] saas_cancelled.json を読めません（除外なしで続行）: {e}")
+        return set(), set()
+    cids = {str(x.get("customer_id", "")).strip() for x in d if x.get("customer_id")}
+    tids = {_normalize_tid(x.get("threads_id", "")) for x in d if x.get("threads_id")}
+    return cids, tids
+
+
 def main():
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("[ERROR] SUPABASE_URL/SUPABASE_SERVICE_KEY 未設定", file=sys.stderr)
@@ -129,6 +146,7 @@ def main():
     rows = read_form_rows()
     step_map = fetch_line_users_step_map()
     connected_cids, connected_names = fetch_connected()
+    cancelled_cids, cancelled_tids = load_cancelled()
 
     def is_connected(cid, tid):
         return (cid and cid in connected_cids) or (_normalize_tid(tid) in connected_names)
@@ -147,6 +165,10 @@ def main():
 
         if not salon and not email:
             continue  # 空行スキップ
+
+        # 解約してデータを消した方は、フォームの回答だけ残る。鳴らさない
+        if (cid and cid in cancelled_cids) or _normalize_tid(tid) in cancelled_tids:
+            continue
 
         # 連携完了なら cid有無に関わらず除外（旧クライアントは cid空でも salon_nameで一致する）
         if is_connected(cid, tid):

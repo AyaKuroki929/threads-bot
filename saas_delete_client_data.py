@@ -42,6 +42,34 @@ def _req(method, path_qs, body=None, prefer=None):
         return json.loads(raw) if raw else None
 
 
+def record_cancelled(salon_name: str, customer_ids, threads_id: str = ""):
+    """解約リストに追記する。
+
+    ⚠️ フォームの回答シートは消せないので、消しただけだと安全網（saas_form_watchdog）が
+    「フォーム回答済みなのに未対応」と鳴り続ける（2026-09-13 実際に鳴った）。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saas_cancelled.json")
+    try:
+        data = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
+    except (OSError, ValueError):
+        data = []
+    known = {(x.get("threads_id"), x.get("customer_id")) for x in data}
+    import datetime
+    today = datetime.date.today().isoformat()
+    added = 0
+    for cid in (list(customer_ids) or [""]):
+        key = (salon_name, cid)
+        if key in known:
+            continue
+        data.append({"salon_name": salon_name, "threads_id": threads_id or salon_name,
+                     "customer_id": cid, "deleted_at": today,
+                     "note": "データ削除済み。フォーム回答は残るので安全網の対象から外す"})
+        added += 1
+    if added:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"  [OK] saas_cancelled.json に{added}件追記（安全網の誤検知を防ぐ）")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -115,6 +143,11 @@ def main():
         print(f"[ERROR] 削除後も {len(leftovers)} 件残存。手動確認が必要", file=sys.stderr)
         sys.exit(1)
     print("[verify] 削除後の再検索: 残存0件 ✅")
+
+    # ⚠️ フォームの回答シートは消せない。ここに残さないと安全網が
+    # 「フォーム回答済みなのに未対応」と鳴り続ける（2026-09-13 実際に鳴った）
+    for s3 in (salons or [{"salon_name": ident}]):
+        record_cancelled(s3.get("salon_name", ident), customer_ids, s3.get("salon_name", ""))
 
     # workflowがprivateリポの投稿プールを削除できるよう、対象サロン名を出力
     import re as _re
