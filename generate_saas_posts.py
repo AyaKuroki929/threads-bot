@@ -1410,6 +1410,21 @@ JSON配列以外の文字は一切出力しないでください。"""
             continue
 
         new_posts = _validate_batch(new_posts, f"{salon_name} {slot}")
+        # ⚠️ 判断材料投稿だけでなく、通常の投稿にも事実照合を当てる。
+        # 共感やストーリーの投稿でも「初回7,777円」「新宿駅から3分」のような
+        # ヒアリングに無い事実がまぎれこむ（2026-09-13 Sol指摘）。
+        # サロン以外（B2B・スクール・ナポリ・カスタム）は照合するヒアリング欄が
+        # 無いので対象外。
+        if stype in (None, "", "salon") and not is_custom:
+            from botlib import judge_fact_violations as _fact_check
+            kept = []
+            for post in new_posts:
+                reason = _fact_check(post, salon)
+                if reason:
+                    print(f"[saas] {salon_name} {slot}: 事実照合NGで除外 → {reason}: {str(post)[:50]}")
+                else:
+                    kept.append(post)
+            new_posts = kept
         if not new_posts:
             print(f"[saas] {salon_name} {slot}: 全件検証NG → 追加なし")
             continue

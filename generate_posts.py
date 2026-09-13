@@ -66,7 +66,7 @@ def generate_for_account(account, posts_file, used_file, rules_file):
     client = anthropic.Anthropic(api_key=api_key)
 
     generated_any = False
-    needed_any = False  # 補充が必要なスロットが1つでもあったか（全滅exit判定用）
+    needed_slots, filled_slots = [], []   # 枠ごとに「要る」「足せた」を数える
 
     all_slots = [s for s in ["morning", "morning2", "noon", "evening2", "evening"] if s in posts]
     for slot in all_slots:
@@ -74,7 +74,7 @@ def generate_for_account(account, posts_file, used_file, rules_file):
         if remaining > THRESHOLD:
             print(f"[generate] {account} {slot}: 残{remaining}本 → 生成不要")
             continue
-        needed_any = True
+        needed_slots.append(slot)
 
         print(f"[generate] {account} {slot}: 残{remaining}本 ≤ {THRESHOLD} → {GENERATE_COUNT}本生成開始")
 
@@ -199,6 +199,7 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
             posts[slot].extend(new_posts)
             print(f"[generate] {account} {slot}: {len(new_posts)}本を追加（合計{len(posts[slot])}本）")
             generated_any = True
+            filled_slots.append(slot)
 
         except Exception as e:
             print(f"[generate] {account} {slot}: 生成エラー → スキップ: {e}")
@@ -211,15 +212,51 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 
     # 補充が必要だったのに1本も生成できなかった＝このままではプールが枯渇して
     # 投稿が止まる。exit 0 で静かに終わらず、異常終了してワークフローの通知に乗せる。
-    if needed_any and not generated_any:
-        print(f"[generate] {account}: 補充が必要なスロットに1本も生成できませんでした → 異常終了", file=sys.stderr)
+    # ⚠️ 全体で1枠でも成功すると通ってしまうと、朝夜の失敗に気づけない（Sol指摘）。
+    # 補充が要る枠ごとに見る。
+    missed = [s_ for s_ in needed_slots if s_ not in filled_slots]
+    if missed:
+        print(f"[generate] {account}: 補充できなかった枠 {', '.join(missed)} → 異常終了",
+              file=sys.stderr)
         sys.exit(1)
 
     return generated_any
 
 
+def _supabase_used_texts(salon_name: str) -> set:
+    """このサロンで投稿済みの本文をすべて集める（SaaSモード用）。
+
+    ⚠️ 件数だけで数えると、12本中12本使用済みでも
+    `total - used % total` が 12 になり「残12本→補充不要」と誤判定する
+    （2026-09-13 Sol指摘）。本文そのもので突き合わせる。"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return set()
+    h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    try:
+        url = (f"{SUPABASE_URL}/rest/v1/salons"
+               f"?salon_name={urllib.parse.quote('eq.' + salon_name)}&select=id&limit=1")
+        with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=15) as r:
+            rows = json.loads(r.read())
+        if not rows:
+            return set()
+        sid = rows[0]["id"]
+        used, page, offset = set(), 1000, 0
+        while True:
+            url = (f"{SUPABASE_URL}/rest/v1/post_logs?salon_id=eq.{sid}"
+                   f"&select=post_content&order=id.asc&limit={page}&offset={offset}")
+            with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=20) as r:
+                chunk = json.loads(r.read())
+            used.update(x.get("post_content") or "" for x in chunk)
+            if len(chunk) < page:
+                return used
+            offset += page
+    except Exception as e:
+        print(f"[generate/saas] Supabase使用済み取得エラー ({salon_name}): {e}")
+        return used if "used" in dir() else set()
+
+
 def _supabase_used_count(salon_name: str, slot: str) -> int:
-    """Supabaseのpost_logsから使用済み投稿数を取得（SaaSモード用）"""
+    """Supabaseのpost_logsから使用済み投稿数を取得（SaaSモード用・旧方式）"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
     try:
@@ -263,15 +300,20 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
     client = anthropic.Anthropic(api_key=api_key)
     generated_any = False
 
+    used_texts = _supabase_used_texts(salon_name)
+
+    def _key(p):
+        return p if isinstance(p, str) else (p[0] if p else "")
+
+    needed, filled = [], []
     for slot in ["morning", "noon", "evening"]:
         if slot not in posts:
             continue
-        total = len(posts[slot])
-        used_count = _supabase_used_count(salon_name, slot)
-        remaining = total - (used_count % total) if total > 0 else 0
+        remaining = len([p for p in posts[slot] if _key(p) not in used_texts])
         if remaining > THRESHOLD:
             print(f"[generate/saas] {salon_name} {slot}: 残{remaining}本 → 生成不要")
             continue
+        needed.append(slot)
 
         print(f"[generate/saas] {salon_name} {slot}: 残{remaining}本 ≤ {THRESHOLD} → {GENERATE_COUNT}本生成開始")
 
@@ -369,6 +411,7 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
             posts[slot].extend(new_posts)
             print(f"[generate/saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
             generated_any = True
+            filled.append(slot)
         except Exception as e:
             print(f"[generate/saas] {salon_name} {slot}: 生成エラー → スキップ: {e}")
             continue
@@ -377,6 +420,14 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
         with open(posts_path, "w", encoding="utf-8") as f:
             json.dump(posts, f, ensure_ascii=False, indent=2)
         print(f"[generate/saas] {posts_file} を更新しました")
+
+    # ⚠️ 1枠でも成功すると全体が成功に見えてしまうと、朝夜の失敗に誰も気づかない。
+    # 補充が要る枠のうち1本も足せなかった物があれば異常終了して通知に乗せる（Sol指摘）
+    missed = [s_ for s_ in needed if s_ not in filled]
+    if missed:
+        print(f"[generate/saas] {salon_name}: 補充できなかった枠 {', '.join(missed)} → 異常終了",
+              file=sys.stderr)
+        sys.exit(1)
 
     return generated_any
 

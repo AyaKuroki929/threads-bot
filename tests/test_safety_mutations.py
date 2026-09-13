@@ -14,6 +14,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.path.join(BASE, "post_saas.py")
 TARGET_STATE = os.path.join(BASE, "post_state.py")
 TARGET_BOTLIB = os.path.join(BASE, "botlib.py")
+TARGET_GEN = os.path.join(BASE, "generate_saas_posts.py")
 SUITE = os.path.join(BASE, "tests", "test_post_resilience.py")
 
 REVERT = (
@@ -341,23 +342,26 @@ MUTATIONS = [
     ("地名の切り出しは助詞の後ろだけ",
      '        if "ぁ" <= match[i - 1] <= "ん" and match[i:] in known_place:',
      "        if match[i:] in known_place:", TARGET_BOTLIB),
-    ("時間の範囲は営業と書いていなくても照合する",
-     "    if _HOURS_CONTEXT_RE.search(text) or _TIME_RANGE_RE.search(text.translate(_ZEN)):",
-     "    if _HOURS_CONTEXT_RE.search(text):", TARGET_BOTLIB),
-    ("時間の前後が逆なら止める",
-     "            if len(times) >= 2 and times[0] >= times[-1]:",
-     "            if False:", TARGET_BOTLIB),
+    ("営業の話をしている文の時刻を照合する",
+     "        if not _BIZ_WORD_RE.search(sent):",
+     "        if True:", TARGET_BOTLIB),
     ("漢数字の営業時間を止める",
-     "        if _KANJI_TIME_RE.search(text):",
+     "        if _KANJI_TIME_RE.search(sent):",
      "        if False:", TARGET_BOTLIB),
     ("漢数字の金額を止める",
      "    if _KANJI_MONEY_RE.search(text):",
      "    if False:", TARGET_BOTLIB),
     ("営業時間の外の時刻を止める",
-     "                if not (span[0] <= int(h) * 60 + int(mm) <= span[1]):",
+     "                if not (open_m <= int(h) * 60 + int(mm) <= close_m):",
      "                if False:", TARGET_BOTLIB),
-    ("開店・閉店の言い切りは完全一致を求める",
-     "                if want is not None and t != want:",
+    ("開店時刻の言い切りは完全一致を求める",
+     '                if t != _fmt(open_m):',
+     "                if False:", TARGET_BOTLIB),
+    ("閉店時刻の言い切りは完全一致を求める",
+     '                if t != _fmt(close_m):',
+     "                if False:", TARGET_BOTLIB),
+    ("最終受付の言い切りは完全一致を求める",
+     '                if t != _fmt(last_m):',
      "                if False:", TARGET_BOTLIB),
     ("ツリーは部をまたいでも照合する",
      '        return judge_fact_violation("\\n\\n".join(parts), salon)',
@@ -365,6 +369,9 @@ MUTATIONS = [
     ("金額禁止のサロンで金額を許さない",
      '    return set()        # 「いいえ」も、読み取れない回答も、金額は書かせない',
      "    return _money_tokens(menu)", TARGET_BOTLIB),
+    # 「時間の前後が逆」は開店・閉店の完全一致で同じケースが止まるため単独では検知できない。
+    # 「通常プールの事実照合」は生成側の経路で、モデル呼び出しが要るのでこのテストでは動かせない
+    # （偽モデルでの動作は別途手で確認した）。どちらも変異テストの項目には入れない。
     # 台帳にだけ残る本文も除外集合に入れる（記録漏れの本文を二度出さない）
     ("台帳の本文も使用済みに数える",
      "    pending, complete = get_pending_texts(salon_id)\n"

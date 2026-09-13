@@ -187,14 +187,13 @@ _ACCESS_RE = re.compile(r"(徒歩|車で|バスで)\s*(?:約)?\s*([0-9]+)\s*分"
 # 時刻（9:30 / 9時 / 9時30分 / 9時半 / 午後6時）
 _TIME_RE = re.compile(
     r"(午前|午後)?\s*([0-9]{1,2})\s*(?::\s*([0-9]{2})|時\s*(?:(半)|([0-9]{1,2})\s*分)?)")
-# 営業に触れている本文か
-_HOURS_CONTEXT_RE = re.compile(r"営業|受付|オープン|開店|閉店|定休")
-# 「七時」「十時半」など、営業時間欄（9:30〜18:00）と突き合わせられない書き方
+# 営業時間の話をしている文か（「受け付ける」も拾う）
+_BIZ_WORD_RE = re.compile(r"営業|受付|受け付|オープン|開店|閉店|定休|お待ちして")
+_LASTCALL_WORD_RE = re.compile(r"最終受付|最終のご案内|受付終了|受付|受け付")
+_OPEN_WORD_RE = re.compile(r"営業|オープン|開店|受付|受け付|お待ちして")
+_CLOSE_WORD_RE = re.compile(r"営業|オープン|やって|閉店|お待ちして")
+# 「七時」「十時半」など、営業時間欄と突き合わせられない書き方
 _KANJI_TIME_RE = re.compile(r"[〇一二三四五六七八九十]{1,3}\s*時")
-# 「22時まで営業」「9時から受付」のような、開店・閉店そのものの言い切り
-_OPEN_CLOSE_RE = re.compile(
-    r"(?:午前|午後|朝|昼|夕方|夕|夜|深夜)?\s*[0-9]{1,2}\s*(?::[0-9]{2}|時(?:半|[0-9]{1,2}分)?)"
-    r"\s*(?P<kind>まで|から)\s*[^\n]{0,6}?(?:営業|受付|オープン|開店|閉店)")
 # 「9時から18時まで」「9:00〜18:00」のような時間の範囲
 _TIME_PREFIX = r"(?:午前|午後|朝|昼|夕方|夕|夜|深夜)?\s*"
 _TIME_RANGE_RE = re.compile(
@@ -366,6 +365,84 @@ def _allowed_money(salon: dict) -> set:
     return set()        # 「いいえ」も、読み取れない回答も、金額は書かせない
 
 
+def _hours_facts(hours: str):
+    """営業時間欄を (開店, 閉店, 最終受付 or None) の分数にする。読めなければ None。"""
+    h = (hours or "").translate(_ZEN)
+    last = None
+    m = re.search(r"最終受付|最終のご案内|受付終了", h)
+    if m:
+        t = _ordered_times(h[m.end():m.end() + 14])
+        last = t[0] if t else None
+        h = h[:m.start()]
+    times = _ordered_times(h)
+    # ⚠️ 最後の時刻を閉店にしてはいけない。「9:30〜17:30（最終受付16:30）」で
+    # 16:30が閉店になり、正しい17:30が落ちる（2026-09-13 実データで発生）
+    if len(times) >= 2 and min(times) < max(times):
+        return min(times), max(times), last
+    return None
+
+
+def _fmt(mins: int) -> str:
+    return f"{mins // 60}:{mins % 60:02d}"
+
+
+def _hours_violation(text: str, hours: str):
+    """営業時間について書いていることが、ヒアリングと合っているか。
+
+    ⚠️ 文単位で見る。全文をまとめて見ると「朝7時に家を出て」のような生活の時刻まで
+    営業時間として落ちる（2026-09-13 Sol指摘）。
+    ⚠️ 「◯時から営業」「◯時まで営業」「最終受付は◯時」は言い切りなので完全一致を求め、
+    それ以外（「12時に来店したい方へ」）は営業時間の中に入っていれば通す。"""
+    norm = (text or "").translate(_ZEN)
+    facts = _hours_facts(hours)
+    allowed = _time_tokens(hours)
+    for sent in re.split(r"[。！？]", norm):
+        if not _BIZ_WORD_RE.search(sent):
+            continue
+        if _KANJI_TIME_RE.search(sent):
+            return "漢数字の時刻（営業時間欄と突き合わせられない）"
+        for m in _TIME_RE.finditer(sent):
+            t = _time_tokens(m.group(0))
+            if not t:
+                continue
+            t = sorted(t)[0]
+            after = sent[m.end():m.end() + 8]
+            before = sent[max(0, m.start() - 8):m.start()]
+            kind = None
+            if re.search(r"最終受付|最終のご案内|受付終了", before) or \
+                    ("まで" in after and _LASTCALL_WORD_RE.search(after)):
+                kind = "最終受付"
+            elif ("から" in after or "より" in after) and _OPEN_WORD_RE.search(sent):
+                kind = "開店"
+            elif "まで" in after and _CLOSE_WORD_RE.search(after + sent):
+                kind = "閉店"
+            elif re.search(r"開店|オープン", sent) and "まで" not in after:
+                kind = "開店"
+            elif "閉店" in sent:
+                kind = "閉店"
+            if facts is None:
+                if t not in allowed:
+                    return f"ヒアリングに無い時刻（{t}）"
+                continue
+            open_m, close_m, last_m = facts
+            if kind == "最終受付":
+                if last_m is None:
+                    return f"ヒアリングに最終受付の記載が無い（{t}）"
+                if t != _fmt(last_m):
+                    return f"ヒアリングと違う最終受付（{t}）"
+            elif kind == "開店":
+                if t != _fmt(open_m):
+                    return f"ヒアリングと違う開店時刻（{t}）"
+            elif kind == "閉店":
+                if t != _fmt(close_m):
+                    return f"ヒアリングと違う閉店時刻（{t}）"
+            else:
+                h, mm = t.split(":")
+                if not (open_m <= int(h) * 60 + int(mm) <= close_m):
+                    return f"営業時間の外の時刻（{t}）"
+    return None
+
+
 def judge_fact_violation(text: str, salon: dict):
     """判断材料投稿が、ヒアリングに無い事実を書いていないか。違反なら理由を返す。"""
     text = str(text or "")
@@ -394,41 +471,9 @@ def judge_fact_violation(text: str, salon: dict):
         if not _place_known(place, known_place):
             return f"ヒアリングに無い場所（{place}）"
 
-    # 営業に触れている本文、または時間の範囲を書いている本文は、時刻を照合する。
-    # ⚠️ 「朝7時から夜10時までお待ちしています」は営業の言葉が無くても営業時間の話
-    # （2026-09-13 Sol 7巡目）
-    if _HOURS_CONTEXT_RE.search(text) or _TIME_RANGE_RE.search(text.translate(_ZEN)):
-        if _KANJI_TIME_RE.search(text):
-            return "漢数字の時刻（営業時間欄と突き合わせられない）"
-        hours = str(salon.get("営業時間", ""))
-        span = _hours_span(hours)
-        allowed_times = _time_tokens(hours)
-        # 「◯時まで営業」「◯時から営業」は開店・閉店そのものの言い切り。
-        # ⚠️ ここは完全一致を求める。一方「12時に来店したい方へ」のような
-        # 営業時間内の案内まで落としてはいけない（2026-09-13 Sol指摘#4）
-        for m in _OPEN_CLOSE_RE.finditer(text.translate(_ZEN)):
-            claimed = _time_tokens(m.group(0))
-            want = None
-            if span:
-                want = f"{span[1] // 60}:{span[1] % 60:02d}" if m.group("kind") == "まで" \
-                    else f"{span[0] // 60}:{span[0] % 60:02d}"
-            for t in claimed:
-                if want is not None and t != want:
-                    return f"ヒアリングと違う{'閉店' if m.group('kind') == 'まで' else '開店'}時刻（{t}）"
-                if want is None and t not in allowed_times:
-                    return f"ヒアリングに無い時刻（{t}）"
-        for t in _time_tokens(text):
-            if span:
-                h, mm = t.split(":")
-                if not (span[0] <= int(h) * 60 + int(mm) <= span[1]):
-                    return f"営業時間の外の時刻（{t}）"
-            elif t not in allowed_times:
-                return f"ヒアリングに無い時刻（{t}）"
-        rng = _TIME_RANGE_RE.search(text.translate(_ZEN))
-        if rng:
-            times = _ordered_times(rng.group(0))
-            if len(times) >= 2 and times[0] >= times[-1]:
-                return f"時間の前後が逆（{rng.group(0)}）"
+    reason = _hours_violation(text, str(salon.get("営業時間", "")))
+    if reason:
+        return reason
 
     if re.search(r"instagram|インスタ", text, re.I):
         return "本文にInstagram誘導が入っている（投稿時に自動で付くため二重になる）"
