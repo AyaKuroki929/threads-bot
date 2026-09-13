@@ -365,6 +365,9 @@ MUTATIONS = [
      "    return get_used_posts(salon_id) | pending, complete",
      "    pending, complete = get_pending_texts(salon_id)\n"
      "    return get_used_posts(salon_id), complete"),
+    ("判断材料プールの形が違う要素を使わない",
+     "    return [p for p in arr if _ok(p) and _key(p) not in used_texts]",
+     "    return [p for p in arr]"),
     ("読み切れないときは判断材料プールを使わない",
      "    if allow_judge and random.random() < JUDGE_RATE:",
      "    if random.random() < JUDGE_RATE:"),

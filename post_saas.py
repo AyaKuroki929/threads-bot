@@ -273,8 +273,19 @@ def _judge_candidates(salon_name, slot, used_texts):
     if not isinstance(arr, list):
         print(f"[判断材料] {salon_name} {slot}: プールが配列ではありません（通常プールを使います）")
         return []
-    return [p for p in arr
-            if isinstance(p, str) and p.strip() and p not in used_texts]
+
+    def _ok(p):
+        """単発（文字列）とツリー（文字列2つの配列）だけを候補にする。"""
+        if isinstance(p, str):
+            return bool(p.strip())
+        if isinstance(p, list) and 1 <= len(p) <= 3:
+            return all(isinstance(x, str) and x.strip() for x in p)
+        return False
+
+    def _key(p):
+        return p if isinstance(p, str) else p[0]
+
+    return [p for p in arr if _ok(p) and _key(p) not in used_texts]
 
 
 def pick_post(salon_name, slot, used_texts, allow_judge=True):
@@ -287,7 +298,7 @@ def pick_post(salon_name, slot, used_texts, allow_judge=True):
         if judge:
             chosen = random.choice(judge)
             print(f"[判断材料] {salon_name} {slot}: 判断材料プールから選びました（残{len(judge)}本）")
-            return [chosen]
+            return chosen if isinstance(chosen, list) else [chosen]
 
     with open(posts_file) as f:
         data = json.load(f)

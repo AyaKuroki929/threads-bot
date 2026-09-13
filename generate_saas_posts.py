@@ -209,6 +209,8 @@ _PRICE_RULE_DEFAULT = "金額は一切書かない（クライアントの指定
 # 通常プールは200本以上あるため、混ぜると数ヶ月先まで出番が来ない。だから別プールにする。
 JUDGE_COUNT = 5
 JUDGE_THRESHOLD = 3
+# ツリー1部目の上限。狙いは60〜100字。生成のぶれを見込んでここで切る
+FIRST_PART_MAX = 160
 # 使用済みを数え切れないときは「安全側＝補充」に倒すが、無制限にはしない。
 # 障害が続くと毎回15本ずつ積み上がり、モデル呼び出しも増え続ける（2026-09-13 Sol 5巡目）。
 # ファイル内の本数がこの上限を超えていたら、数え切れないまま足すのはやめて人を呼ぶ。
@@ -1225,13 +1227,18 @@ def _validate_batch(new_posts: list, label: str) -> list:
     （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。"""
     def _within_length(p):
         if isinstance(p, list):
+            # ⚠️ 1部目はタイムラインに出る部分。ここが短いほど見られる（2026-09-13 実測。
+            # 〜100字は200字〜の6〜10倍）。指示しても伸びることがあるので機械で止める。
+            if p and len(str(p[0])) > FIRST_PART_MAX:
+                return False
             return all(len(str(x)) <= 400 for x in p)
         return len(str(p)) <= 350
 
     kept = [p for p in new_posts if _within_length(p)]
     dropped = len(new_posts) - len(kept)
     if dropped:
-        print(f"[saas] {label}: 長すぎる投稿 {dropped}本を除外（基準: 単発350字/ツリー各部400字）")
+        print(f"[saas] {label}: 長すぎる投稿 {dropped}本を除外"
+              f"（基準: 1部目{FIRST_PART_MAX}字/ツリー各部400字/単発350字）")
 
     from botlib import validate_post_content
     checked = []
@@ -1321,31 +1328,30 @@ def generate_for_salon(salon: dict):
 
         existing = "\n".join([str(posts[slot][i])[:80] for i in range(min(3, len(posts[slot])))])
 
-        if slot == "noon":
-            output_format = """全投稿をツリー（2部構成）にする。各要素は2要素の配列。改行は\\nで表現。
+        # ⚠️ 朝・昼・夜すべてツリー（短い1部目＋2部目）にする。
+        # 彩さんの3アカウント879投稿を実測した結果、**本文が短いほど見られる**が
+        # 朝・昼・夜のどこでも一致した（2026-09-13）。
+        #   bemolle_diet 朝：〜100字=表示228 / 200字〜=表示12
+        #   aya_kuroki_0929 夜：〜100字=表示310 / 200字〜=表示30
+        # 「昼が強い」と見えていたのは、昼だけツリーで1部目が短かったから
+        # （本文の長さの中央値は 昼72字 / 朝263字）。時間帯の差ではなかった。
+        # 中身の量を減らさずに入口だけ短くするため、全スロットをツリーに揃える。
+        output_format = """全投稿をツリー（2部構成）にする。各要素は2要素の配列。改行は\\nで表現。
 
 出力例:
 [
   ["1部目フック\\n\\n途中で止める", "2部目は答えから\\n\\nCTA"],
   ["別の1部目", "別の2部目"]
 ]"""
-            tree_rule = """- 全投稿をツリー（2部構成・配列形式）にする
+        tree_rule = """- 全投稿をツリー（2部構成・配列形式）にする
 - 1部目末尾は答えを出さずに途中で止めるクリフハンガー形式
 - 1部目末尾を「予告文」で終えること絶対禁止：「〜を書きます」「〜を話します」「〜をお伝えします」「〜を紹介します」「正直に書きます」など、内容を宣言するメタ発言は全てNG。話を始めてしまい、一番気になるところで止めること
   例：❌「その時、考えたことを書きます。」→ ✅「頭に最初に浮かんだのは、売上でも採用でもありませんでした。」
 - 2部目は接続詞・前置きなしで答えから書き始める
 """
-            length_rule = "- 各部（1部目・2部目）は150〜300字。どの部も350字を超えないこと"
-        else:
-            output_format = """各要素は単発投稿の文字列。改行は\\nで表現。
-
-出力例:
-[
-  "1行目フック\\n\\n本文。\\n\\nCTA",
-  "別の投稿のフック\\n\\n本文。"
-]"""
-            tree_rule = "- 全投稿を単発（文字列）で生成する\n"
-            length_rule = "- 各投稿は200〜300字を目安に、最長でも350字。長すぎる投稿は禁止（スクロールで一気に読み切れる短さが最も読まれる）"
+        length_rule = ("- **1部目は60〜100字**。これがタイムラインに出る部分で、ここが短いほど読まれる（実測）。"
+                       "100字を超えないこと\n"
+                       "- 2部目は120〜250字。長くても300字を超えないこと")
 
         system_prompt = f"""あなたはSNS投稿の専門家です。
 以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
@@ -1525,15 +1531,24 @@ def _generate_judge_pool(client, rules: str, salon: dict, salon_name: str,
 サロン情報に書かれていない事実（住所・時間・金額・回数・所要時間）は絶対に創作しないこと。
 
 === 出力形式（厳守）===
-JSON配列だけを返してください。各要素は単発投稿の文字列。改行は\\nで表現。
+JSON配列だけを返してください。各要素は2要素の配列（ツリー投稿）。改行は\\nで表現。
+
+出力例:
+[
+  ["1部目フック\\n\\n途中で止める", "2部目は答えから\\n\\n予約先へ"],
+  ["別の1部目", "別の2部目"]
+]
+
 JSON配列以外の文字は一切出力しないでください。"""
 
         user_prompt = f"""{JUDGE_COUNT}本の判断材料投稿を生成してください。
 
 - 切り口①〜⑤を1本ずつ、順番に1本ずつ作る（同じ切り口を2本作らない）
-- 1行目は読み手の状況から入る（店舗情報の見出しから始めない）
-- 事実を並べず、エピソード・お客様の言葉・問いかけの中に事実を溶かす
-- 各投稿200〜300字、最長350字
+- 全部ツリー（2部構成・配列）にする
+- **1部目は60〜100字**。読み手の状況から入り、答えを出さずに途中で止める
+  （店舗情報の見出しから始めない。「〜を書きます」のような予告もしない）
+- 2部目で事実（場所・料金・流れ・向き不向き・比較）を出す。120〜250字
+- 事実を並べず、エピソード・お客様の言葉・問いかけの中に溶かす
 - ハッシュタグ禁止
 - 本文の中でInstagramに触れない
 - {JUDGE_COUNT}本すべてJSON配列に含める
@@ -1550,16 +1565,26 @@ JSON配列以外の文字は一切出力しないでください。"""
             empty_slots.append(f"{slot}（{str(last_error)[:60]}）")
             continue
 
-        new_posts = [p for p in new_posts if isinstance(p, str) and p.strip()]
+        def _parts(p):
+            """ツリーは2要素の配列、単発は文字列。中身のある文字列だけ取り出す。"""
+            if isinstance(p, str):
+                return [p] if p.strip() else []
+            if isinstance(p, list):
+                return [x for x in p if isinstance(x, str) and x.strip()] if all(
+                    isinstance(x, str) for x in p) else []
+            return []
+
+        new_posts = [p for p in new_posts if _parts(p)]
         new_posts = _validate_batch(new_posts, f"{salon_name} 判断材料/{slot}")
 
-        # ヒアリングに無い金額・距離・営業時間を書いていないか、機械で突き合わせる
+        # ヒアリングに無い金額・距離・営業時間を書いていないか、機械で突き合わせる。
+        # ⚠️ ツリーは1部目・2部目の**両方**を見る。片方だけだと2部目の嘘が通る
         from botlib import judge_fact_violation as _judge_fact_violation
         kept = []
         for post in new_posts:
-            reason = _judge_fact_violation(post, salon)
+            reason = next((r for r in (_judge_fact_violation(x, salon) for x in _parts(post)) if r), None)
             if reason:
-                print(f"[判断材料] {salon_name} {slot}: 事実照合NGで除外 → {reason}: {post[:50]}")
+                print(f"[判断材料] {salon_name} {slot}: 事実照合NGで除外 → {reason}: {str(post)[:50]}")
             else:
                 kept.append(post)
         new_posts = kept

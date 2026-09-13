@@ -3328,6 +3328,25 @@ picks = [_pick() for _ in range(20)]
 check("割合0なら判断材料は出ない", all(p == ["通常B"] for p in picks),
       [p for p in picks if p != ["通常B"]][:3])
 
+# 判断材料もツリー（2部構成）で持てる
+post_saas.JUDGE_RATE = 1.0
+json.dump({"_salon": name, "morning": [], "evening": [],
+           "noon": [["1部目フック", "2部目の答え"]]},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+check("ツリーの判断材料をそのまま返す", _pick() == ["1部目フック", "2部目の答え"], _pick())
+# 形が違う要素（数値やネスト）は候補にしない
+json.dump({"_salon": name, "morning": [], "evening": [],
+           "noon": [[1, 2], ["", ""], [["a"], "b"]]},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+check("中身が文字列でないツリーは使わない", _pick() == ["通常B"], _pick())
+# 1部目が投稿済みならツリーごと除外する
+json.dump({"_salon": name, "morning": [], "evening": [],
+           "noon": [["使った1部目", "2部目"]]},
+          open(judge_path, "w", encoding="utf-8"), ensure_ascii=False)
+check("1部目が投稿済みならツリーを使わない",
+      _pick({"使った1部目"}) == ["通常B"], _pick({"使った1部目"}))
+post_saas.JUDGE_RATE = 0.0
+
 post_saas.POSTS_DIR = _orig_dir
 post_saas.JUDGE_RATE = _orig_rate
 shutil.rmtree(_tmp, ignore_errors=True)
