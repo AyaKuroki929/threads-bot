@@ -477,9 +477,20 @@ def _hours_violation(text: str, hours: str):
     return None
 
 
+# 予約先URLなどのリンク。中に数字とハイフンが入っているため、住所や金額として
+# 拾ってしまう（2026-09-13 実害：つばめの巣の予約URL 2008022680-0gNljz7e の
+# 「2680-0」を番地と誤認し、判断材料が15本すべて落ちた）
+_URL_RE = re.compile(r"https?://\S+|\S+\.(?:jp|com|net|link|ee|me|be|co)\S*", re.I)
+
+
+def _strip_urls(text: str) -> str:
+    return _URL_RE.sub(" ", text or "")
+
+
 def judge_fact_violation(text: str, salon: dict):
     """判断材料投稿が、ヒアリングに無い事実を書いていないか。違反なら理由を返す。"""
-    text = str(text or "")
+    # ⚠️ リンクの中身は本文の主張ではない。先に外す
+    text = _strip_urls(str(text or ""))
 
     if _KANJI_MONEY_RE.search(text):
         return "漢数字の金額（メニュー欄と突き合わせられない）"
