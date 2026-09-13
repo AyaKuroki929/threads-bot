@@ -1123,9 +1123,35 @@ def _get_used_texts(salon_name: str, slot: str = ""):
         return used, False
 
 
+def _load_cancelled_ids() -> set:
+    """解約・データ削除が済んだアカウント（saas_cancelled.json）。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saas_cancelled.json")
+    if not os.path.exists(path):
+        return set()
+    try:
+        d = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"[saas] saas_cancelled.json を読めません（除外なしで続行）: {e}")
+        return set()
+    out = set()
+    for x in d:
+        for key in ("threads_id", "salon_name", "customer_id"):
+            v = str(x.get(key) or "").strip().lstrip("@").lower()
+            if v:
+                out.add(v)
+    return out
+
+
 def _is_deactivated(salon_name: str) -> bool:
-    """Supabaseのsalonsで is_active=false（停止中）のアカウントか。
-    停止中は投稿されないため生成も不要（テスト垢の誤生成・誤通知防止 2026-07-13）。"""
+    """生成の対象外か。停止中・解約済み・そもそもsalonsに居ない、のどれか。
+
+    ⚠️ 「salonsに行が無い」を「新規クライアント」と読んではいけない。
+    解約してデータを消した方のフォーム回答はシートに残るので、行が無いだけで
+    生成が走り「本日から自動配信が開始されます」が飛ぶ
+    （2026-09-13 LaniBEAUTY で実際に飛んだ）。行が無いなら作らない。"""
+    if str(salon_name or "").strip().lstrip("@").lower() in _load_cancelled_ids():
+        print(f"[saas] {salon_name}: 解約済み（saas_cancelled.json）→ 生成しない")
+        return True
     if not SUPABASE_URL or not SUPABASE_KEY:
         return False
     try:
@@ -1137,7 +1163,10 @@ def _is_deactivated(salon_name: str) -> bool:
         })
         with urllib.request.urlopen(req, timeout=10) as r:
             rows = json.loads(r.read())
-        return bool(rows) and rows[0].get("is_active") is False
+        if not rows:
+            print(f"[saas] {salon_name}: salons に行が無い → 生成しない（解約・未連携）")
+            return True
+        return rows[0].get("is_active") is False
     except Exception:
         return False
 
