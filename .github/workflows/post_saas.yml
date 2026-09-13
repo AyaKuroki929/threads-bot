@@ -129,6 +129,9 @@ jobs:
           esac
           [ -n "$URL" ] && curl -sS --retry 3 "$URL" || true
 
+      # ⚠️ continue-on-error と `|| echo` で異常終了を握りつぶしていたため、
+      # 補充が止まっても誰も気づかなかった（2026-09-13 Sol指摘）。
+      # 片方が落ちても両方走らせるが、落ちたことは必ず残して最後にLINEで知らせる。
       - name: 投稿ストック自動補充（ベモーレ・個人）
         if: success()
         continue-on-error: true
@@ -138,8 +141,25 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           pip install -q "anthropic<2"
-          python3 generate_posts.py saas_bemolle || echo "bemolle補充失敗（処理継続）"
-          python3 generate_posts.py saas_personal || echo "personal補充失敗（処理継続）"
+          failed=""
+          python3 generate_posts.py saas_bemolle  || failed="$failed bemolle"
+          python3 generate_posts.py saas_personal || failed="$failed personal"
+          if [ -n "$failed" ]; then
+            echo "refill_failed=$failed" >> "$GITHUB_ENV"
+            echo "::warning::投稿ストックの補充に失敗:$failed"
+          fi
+
+      - name: 補充失敗を知らせる
+        if: ${{ !cancelled() && env.refill_failed != '' }}
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          [ -z "$LINE_TOKEN" ] && exit 0
+          MSG="⚠️ 投稿ストックの補充に失敗しました\n\n対象:${{ env.refill_failed }}\n\nこのままだと在庫が尽きて同じ投稿が再利用されます。\nsaas_generate を手動実行するか、ログを確認してください。"
+          curl -sS -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$MSG\"}]}" || true
+          exit 1
 
       # if: success() だと、クライアント1件の失敗で成功済みアカウントの last_run が
       # pushされず、heartbeatが「未投稿」と誤判定して旧プールから二重投稿していた。

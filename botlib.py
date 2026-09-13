@@ -173,8 +173,8 @@ _ZEN = str.maketrans("０１２３４５６７８９，：．－−‐―〜～"
 # （2026-09-13 Sol 6巡目）。数字の途中から拾わないよう (?<![0-9.]) を付ける。
 _MONEY_RE = re.compile(
     r"[¥￥]\s*(?<![0-9.])([0-9][0-9,]*)"
-    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*万\s*([0-9][0-9,]*)?\s*(千)?\s*円?"
-    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*千\s*円?"
+    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*万\s*([0-9][0-9,]*)?\s*(千)?\s*(?:円|(?![人回件本歩年台軒名日月分秒個枚色歳倍kgcm]))"
+    r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*千\s*(?:円|(?![人回件本歩年台軒名日月分秒個枚色歳倍kgcm]))"
     r"|(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*百\s*円"
     r"|(?<![0-9.])([0-9][0-9,]*)\s*円")
 # 「一万円」「五千円」など、メニュー欄と突き合わせようがない書き方。
@@ -188,10 +188,13 @@ _ACCESS_RE = re.compile(r"(徒歩|車で|バスで)\s*(?:約)?\s*([0-9]+)\s*分"
 _TIME_RE = re.compile(
     r"(午前|午後)?\s*([0-9]{1,2})\s*(?::\s*([0-9]{2})|時\s*(?:(半)|([0-9]{1,2})\s*分)?)")
 # 営業時間の話をしている文か（「受け付ける」も拾う）
-_BIZ_WORD_RE = re.compile(r"営業|受付|受け付|オープン|開店|閉店|定休|お待ちして")
+_BIZ_WORD_RE = re.compile(r"営業|受付|受け付|オープン|開店|閉店|定休|お待ちして|承って|お受け")
 _LASTCALL_WORD_RE = re.compile(r"最終受付|最終のご案内|受付終了|受付|受け付")
+_LAST_RE = re.compile(r"最終受付|最終のご案内|受付終了|最後に受け付|最後の受付")
+# 「営業時間は9:30〜17:30です」のように、範囲そのものを営業時間だと言っている文
+_RANGE_CTX_RE = re.compile(r"営業|受付|受け付|オープン|開店|閉店|承って|お受け|やって|ご案内")
 _OPEN_WORD_RE = re.compile(r"営業|オープン|開店|受付|受け付|お待ちして")
-_CLOSE_WORD_RE = re.compile(r"営業|オープン|やって|閉店|お待ちして")
+_CLOSE_WORD_RE = re.compile(r"営業|オープン|やって|閉店|お待ちして|承って|お受け")
 # 「七時」「十時半」など、営業時間欄と突き合わせられない書き方
 _KANJI_TIME_RE = re.compile(r"[〇一二三四五六七八九十]{1,3}\s*時")
 # 「9時から18時まで」「9:00〜18:00」のような時間の範囲
@@ -206,8 +209,13 @@ _TIME_RANGE_RE = re.compile(
 # そこで、地名の語尾から**助詞・句読点に当たるまで前へ1文字ずつ遡って**地名を1つに切り出す。
 # 「5-12-18」「99-99」のような番地表記も照合対象にする。
 # ⚠️ 「3-5回」「1-2ヶ月」は範囲であって住所ではないので、単位が続く物は除く。
+# ⚠️ 「区別」「市販」「町内」のように、語尾の直後に字が続いて別の言葉になる物は地名ではない
 _PLACE_RE = re.compile(
-    r"[ぁ-んァ-ヶー一-龥々0-9]{1,8}(?:駅|丁目|番地|番[0-9]{1,4}号|[市区町村])"
+    r"[ぁ-んァ-ヶー一-龥々0-9]{1,8}(?:駅|丁目|番地|番[0-9]{1,4}号)"
+    r"|[ぁ-んァ-ヶー一-龥々0-9]{1,8}市(?![販場民長立制営議役外])"
+    r"|[ぁ-んァ-ヶー一-龥々0-9]{1,8}区(?![別分域画間切内])"
+    r"|[ぁ-んァ-ヶー一-龥々0-9]{1,8}町(?![内中会民長工])"
+    r"|[ぁ-んァ-ヶー一-龥々0-9]{1,8}村(?![社民長])"
     r"|[0-9]{1,4}(?:-[0-9]{1,4}){1,2}")
 # 「3-12回」「10-20分」は範囲であって住所ではない。単位が続く物は住所として見ない
 _RANGE_UNIT_RE = re.compile(
@@ -391,55 +399,81 @@ def _hours_violation(text: str, hours: str):
 
     ⚠️ 文単位で見る。全文をまとめて見ると「朝7時に家を出て」のような生活の時刻まで
     営業時間として落ちる（2026-09-13 Sol指摘）。
-    ⚠️ 「◯時から営業」「◯時まで営業」「最終受付は◯時」は言い切りなので完全一致を求め、
-    それ以外（「12時に来店したい方へ」）は営業時間の中に入っていれば通す。"""
+    ⚠️ ただし「最終受付についてご案内します。」「夜22時です。」のように
+    次の文へ話がまたぐことがある。時刻を含まない営業の文は、次の文へ文脈を持ち越す。
+    ⚠️ 「◯時から◯時まで」の範囲表記は、開店・閉店そのものの言い切りとして扱う。"""
     norm = (text or "").translate(_ZEN)
     facts = _hours_facts(hours)
     allowed = _time_tokens(hours)
-    for sent in re.split(r"[。！？]", norm):
-        if not _BIZ_WORD_RE.search(sent):
+
+    def _check(t, kind):
+        if facts is None:
+            return None if t in allowed else f"ヒアリングに無い時刻（{t}）"
+        open_m, close_m, last_m = facts
+        if kind == "最終受付":
+            if last_m is None:
+                return f"ヒアリングに最終受付の記載が無い（{t}）"
+            return None if t == _fmt(last_m) else f"ヒアリングと違う最終受付（{t}）"
+        if kind == "開店":
+            return None if t == _fmt(open_m) else f"ヒアリングと違う開店時刻（{t}）"
+        if kind == "閉店":
+            return None if t == _fmt(close_m) else f"ヒアリングと違う閉店時刻（{t}）"
+        h, mm = t.split(":")
+        if not (open_m <= int(h) * 60 + int(mm) <= close_m):
+            return f"営業時間の外の時刻（{t}）"
+        return None
+
+    carry = False       # 直前の文が「営業の話だが時刻が無い」だったか
+    for sent in re.split(r"[。！？\n]", norm):
+        if not sent.strip():
             continue
+        biz = bool(_BIZ_WORD_RE.search(sent))
+        times_here = list(_TIME_RE.finditer(sent))
+        if not (biz or carry):
+            carry = False
+            continue
+        # ⚠️ 漢数字の時刻は「時刻が無い文」に見えるので、持ち越し判定より先に見る
         if _KANJI_TIME_RE.search(sent):
             return "漢数字の時刻（営業時間欄と突き合わせられない）"
-        for m in _TIME_RE.finditer(sent):
-            t = _time_tokens(m.group(0))
-            if not t:
+        if biz and not times_here:
+            carry = True            # 「最終受付についてご案内します。」→ 次の文へ持ち越す
+            continue
+        carry = False
+
+        # 「9:30〜17:30」「9時から18時まで」の範囲表記は開店・閉店の言い切り
+        rng = _TIME_RANGE_RE.search(sent)
+        if rng and _RANGE_CTX_RE.search(sent):
+            # ⚠️ 文字列で並べ替えると "17:30" < "9:30" になり、開店と閉店が入れ替わる
+            order = _ordered_times(rng.group(0))
+            if len(order) >= 2 and order[0] >= order[-1]:
+                return f"時間の前後が逆（{rng.group(0)}）"
+            if len(order) >= 2:
+                for t, kind in ((_fmt(order[0]), "開店"), (_fmt(order[-1]), "閉店")):
+                    r = _check(t, kind)
+                    if r:
+                        return r
                 continue
-            t = sorted(t)[0]
-            after = sent[m.end():m.end() + 8]
-            before = sent[max(0, m.start() - 8):m.start()]
+
+        for m in times_here:
+            got = _time_tokens(m.group(0))
+            if not got:
+                continue
+            t = sorted(got)[0]
+            after = sent[m.end():m.end() + 10]
+            before = sent[max(0, m.start() - 10):m.start()]
+            around = before + after
             kind = None
-            if re.search(r"最終受付|最終のご案内|受付終了", before) or \
-                    ("まで" in after and _LASTCALL_WORD_RE.search(after)):
+            if _LAST_RE.search(around) or ("まで" in after and _LASTCALL_WORD_RE.search(after)):
                 kind = "最終受付"
-            elif ("から" in after or "より" in after) and _OPEN_WORD_RE.search(sent):
+            elif re.search(r"開店|オープン|開き|開けて", after[:6]) or \
+                    (("から" in after or "より" in after) and _OPEN_WORD_RE.search(sent)):
                 kind = "開店"
-            elif "まで" in after and _CLOSE_WORD_RE.search(after + sent):
+            elif re.search(r"閉店|終了", after[:6]) or \
+                    ("まで" in after and _CLOSE_WORD_RE.search(sent)):
                 kind = "閉店"
-            elif re.search(r"開店|オープン", sent) and "まで" not in after:
-                kind = "開店"
-            elif "閉店" in sent:
-                kind = "閉店"
-            if facts is None:
-                if t not in allowed:
-                    return f"ヒアリングに無い時刻（{t}）"
-                continue
-            open_m, close_m, last_m = facts
-            if kind == "最終受付":
-                if last_m is None:
-                    return f"ヒアリングに最終受付の記載が無い（{t}）"
-                if t != _fmt(last_m):
-                    return f"ヒアリングと違う最終受付（{t}）"
-            elif kind == "開店":
-                if t != _fmt(open_m):
-                    return f"ヒアリングと違う開店時刻（{t}）"
-            elif kind == "閉店":
-                if t != _fmt(close_m):
-                    return f"ヒアリングと違う閉店時刻（{t}）"
-            else:
-                h, mm = t.split(":")
-                if not (open_m <= int(h) * 60 + int(mm) <= close_m):
-                    return f"営業時間の外の時刻（{t}）"
+            r = _check(t, kind)
+            if r:
+                return r
     return None
 
 

@@ -207,6 +207,9 @@ _PRICE_RULE_DEFAULT = "金額は一切書かない（クライアントの指定
 # 「このサロンを選ぶ判断材料」投稿（別プール posts_<name>.judge.json）
 # 1回の補充で作る本数と、補充を始める残数のしきい値。
 # 通常プールは200本以上あるため、混ぜると数ヶ月先まで出番が来ない。だから別プールにする。
+# 補充できなかったサロン（最後にまとめて失敗にしてワークフローの通知に乗せる）
+_FAILED_SALONS = []
+
 JUDGE_COUNT = 5
 JUDGE_THRESHOLD = 3
 # ツリー1部目の上限。狙いは60〜100字。生成のぶれを見込んでここで切る
@@ -1310,6 +1313,7 @@ def generate_for_salon(salon: dict):
     generated_any = False
 
     blind_slots = []
+    needed_slots, filled_slots = [], []
     for slot in ["morning", "noon", "evening"]:
         remaining, counted = _remaining(posts, file_key, slot)
         # ⚠️ 数え切れていないときに「足りている」と判断しない。実際は0本でも
@@ -1326,6 +1330,7 @@ def generate_for_salon(salon: dict):
                 continue
             print(f"[saas] {file_key} {slot}: 使用済みを数え切れないため安全側に倒して補充します")
 
+        needed_slots.append(slot)
         print(f"[saas] {file_key} {slot}: 残{remaining}本 → {GENERATE_COUNT}本生成開始")
 
         slot_hint = _SLOT_HINTS[slot]
@@ -1432,6 +1437,19 @@ JSON配列以外の文字は一切出力しないでください。"""
         posts[slot].extend(new_posts)
         print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
         generated_any = True
+        filled_slots.append(slot)
+
+    # ⚠️ 補充が要る枠に1本も足せないと、在庫が尽きて過去投稿の再利用が始まる。
+    # 黙って正常終了させない（2026-09-13 Sol 3巡目 指摘#2）
+    missed = [x for x in needed_slots if x not in filled_slots]
+    if missed:
+        print(f"[saas] {salon_name}: 補充できなかった枠 {', '.join(missed)}")
+        _notify_admin(f"🚨 投稿ストックを補充できませんでした\n\n"
+                      f"サロン: {salon_name}\n"
+                      f"枠: {', '.join(missed)}\n\n"
+                      f"このままだと在庫が尽きて、同じ投稿が再利用されます。\n"
+                      f"saas_generate.yml を salon_name={file_key} で手動実行してください。")
+        _FAILED_SALONS.append(f"{salon_name}({','.join(missed)})")
 
     if blind_slots:
         _notify_admin(f"⚠️ 投稿の使用済み判定ができていません（Supabase側の不調の疑い）\n\n"
@@ -1662,6 +1680,7 @@ def main():
 
     processed_ids = set()  # シートとローカル定義に同じアカウントがいても二重生成しない
     failed_salons = []
+    _FAILED_SALONS.clear()
 
     for salon in salons:
         salon_name = salon.get("サロン名", "")
@@ -1690,6 +1709,9 @@ def main():
                           f"再実行: saas_generate.yml を salon_name={threads_id or salon_name} で手動実行")
 
     print("\n[saas] 全処理完了")
+    if _FAILED_SALONS:
+        print(f"[saas] ⚠️ 補充できなかった枠があります: {', '.join(_FAILED_SALONS)}（exit 4）")
+        sys.exit(4)
     if failed_salons:
         print(f"[saas] ⚠️ 生成できなかったサロン: {', '.join(failed_salons)}（exit 3）")
         sys.exit(3)

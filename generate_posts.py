@@ -42,6 +42,22 @@ def _remaining(posts, used, slot):
     return total - len(used_indices)
 
 
+def _load_facts(salon_name: str):
+    """事実照合に使うヒアリング相当の情報（saas_facts.json）。無ければ None。
+
+    ⚠️ ベモーレ・個人の補充経路には形と長さの検査しか無く、
+    「夜22時まで営業」「初回7,777円」「新宿駅から徒歩3分」のような
+    ヒアリングに無い事実がそのまま保存できていた（2026-09-13 Sol指摘）。"""
+    path = os.path.join(_BASE, "saas_facts.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        return json.load(open(path, encoding="utf-8")).get(salon_name)
+    except (OSError, ValueError) as e:
+        print(f"[generate] saas_facts.json を読めません（事実照合はスキップ）: {e}")
+        return None
+
+
 def _load_rules(rules_file):
     path = os.path.join(_BASE, rules_file)
     if os.path.exists(path):
@@ -61,6 +77,7 @@ def generate_for_account(account, posts_file, used_file, rules_file):
     posts = json.load(open(posts_path, encoding="utf-8"))
     used = json.load(open(used_path, encoding="utf-8")) if os.path.exists(used_path) else {}
     rules = _load_rules(rules_file)
+    facts = _load_facts(account)
 
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
@@ -177,6 +194,19 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
                 print(f"[generate] {slot}: 形か長さが基準外 {len(new_posts) - len(kept)}本を除外"
                       f"（ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字）")
             new_posts = kept
+            if facts:
+                from botlib import judge_fact_violations
+                checked = []
+                skip_money = bool(facts.get("_金額は照合しない"))
+                for x in new_posts:
+                    why = judge_fact_violations(x, facts)
+                    if why and skip_money and "金額" in why:
+                        why = None      # 価格はご本人の判断。場所と営業時間だけ見る
+                    if why:
+                        print(f"[generate] {slot}: 事実照合NGで除外 → {why}: {str(x)[:50]}")
+                    else:
+                        checked.append(x)
+                new_posts = checked
             if not new_posts:
                 print(f"[generate] {slot}: 追加なし")
                 continue
@@ -230,7 +260,7 @@ def _supabase_used_texts(salon_name: str) -> set:
     `total - used % total` が 12 になり「残12本→補充不要」と誤判定する
     （2026-09-13 Sol指摘）。本文そのもので突き合わせる。"""
     if not SUPABASE_URL or not SUPABASE_KEY:
-        return set()
+        return set(), False
     h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     try:
         url = (f"{SUPABASE_URL}/rest/v1/salons"
@@ -238,7 +268,7 @@ def _supabase_used_texts(salon_name: str) -> set:
         with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=15) as r:
             rows = json.loads(r.read())
         if not rows:
-            return set()
+            return set(), False
         sid = rows[0]["id"]
         used, page, offset = set(), 1000, 0
         while True:
@@ -248,11 +278,13 @@ def _supabase_used_texts(salon_name: str) -> set:
                 chunk = json.loads(r.read())
             used.update(x.get("post_content") or "" for x in chunk)
             if len(chunk) < page:
-                return used
+                return used, True
             offset += page
     except Exception as e:
-        print(f"[generate/saas] Supabase使用済み取得エラー ({salon_name}): {e}")
-        return used if "used" in dir() else set()
+        # ⚠️ 読み切れなかったことを黙って隠すと、使用済み12本を「残12本・補充不要」と
+        # 誤判定する（2026-09-13 Sol指摘）。取れた分と「不完全」を返す
+        print(f"[generate/saas] Supabase使用済み取得エラー ({salon_name}／取れた分だけ使います): {e}")
+        return locals().get("used", set()), False
 
 
 def _supabase_used_count(salon_name: str, slot: str) -> int:
@@ -295,12 +327,13 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
 
     posts = json.load(open(posts_path, encoding="utf-8"))
     rules = _load_rules(rules_file)
+    facts = _load_facts(salon_name)
 
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
     generated_any = False
 
-    used_texts = _supabase_used_texts(salon_name)
+    used_texts, used_complete = _supabase_used_texts(salon_name)
 
     def _key(p):
         return p if isinstance(p, str) else (p[0] if p else "")
@@ -310,9 +343,17 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
         if slot not in posts:
             continue
         remaining = len([p for p in posts[slot] if _key(p) not in used_texts])
-        if remaining > THRESHOLD:
+        # ⚠️ 数え切れていないときに「足りている」と判断しない。実際は0本でも
+        # 「残12本→補充不要」になり、投稿側が過去投稿の再利用に入る
+        if used_complete and remaining > THRESHOLD:
             print(f"[generate/saas] {salon_name} {slot}: 残{remaining}本 → 生成不要")
             continue
+        if not used_complete:
+            if len(posts[slot]) > THRESHOLD * 3:
+                print(f"[generate/saas] {salon_name} {slot}: 使用済みを数え切れず、"
+                      f"在庫は{len(posts[slot])}本あるので補充を見送ります")
+                continue
+            print(f"[generate/saas] {salon_name} {slot}: 使用済みを数え切れないため安全側に倒して補充します")
         needed.append(slot)
 
         print(f"[generate/saas] {salon_name} {slot}: 残{remaining}本 ≤ {THRESHOLD} → {GENERATE_COUNT}本生成開始")
@@ -405,6 +446,19 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
                 print(f"[generate] {slot}: 形か長さが基準外 {len(new_posts) - len(kept)}本を除外"
                       f"（ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字）")
             new_posts = kept
+            if facts:
+                from botlib import judge_fact_violations
+                checked = []
+                skip_money = bool(facts.get("_金額は照合しない"))
+                for x in new_posts:
+                    why = judge_fact_violations(x, facts)
+                    if why and skip_money and "金額" in why:
+                        why = None      # 価格はご本人の判断。場所と営業時間だけ見る
+                    if why:
+                        print(f"[generate] {slot}: 事実照合NGで除外 → {why}: {str(x)[:50]}")
+                    else:
+                        checked.append(x)
+                new_posts = checked
             if not new_posts:
                 print(f"[generate] {slot}: 追加なし")
                 continue
