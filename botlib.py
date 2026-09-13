@@ -191,6 +191,10 @@ _TIME_RE = re.compile(
 _HOURS_CONTEXT_RE = re.compile(r"営業|受付|オープン|開店|閉店|定休")
 # 「七時」「十時半」など、営業時間欄（9:30〜18:00）と突き合わせられない書き方
 _KANJI_TIME_RE = re.compile(r"[〇一二三四五六七八九十]{1,3}\s*時")
+# 「22時まで営業」「9時から受付」のような、開店・閉店そのものの言い切り
+_OPEN_CLOSE_RE = re.compile(
+    r"(?:午前|午後|朝|昼|夕方|夕|夜|深夜)?\s*[0-9]{1,2}\s*(?::[0-9]{2}|時(?:半|[0-9]{1,2}分)?)"
+    r"\s*(?P<kind>まで|から)\s*[^\n]{0,6}?(?:営業|受付|オープン|開店|閉店)")
 # 「9時から18時まで」「9:00〜18:00」のような時間の範囲
 _TIME_PREFIX = r"(?:午前|午後|朝|昼|夕方|夕|夜|深夜)?\s*"
 _TIME_RANGE_RE = re.compile(
@@ -326,6 +330,16 @@ def _ordered_times(text: str) -> list:
     return out
 
 
+def _hours_span(hours: str):
+    """営業時間欄（9:30〜18:00 など）を (開始の分, 終了の分) にする。読めなければ None。"""
+    times = _ordered_times(hours)
+    # ⚠️ 最後の時刻を閉店時刻にしてはいけない。「9:30〜17:30（最終受付16:30）」だと
+    # 16:30が閉店になり、正しい17:30が「営業時間の外」で落ちる（2026-09-13 実データで発生）
+    if len(times) >= 2 and min(times) < max(times):
+        return min(times), max(times)
+    return None
+
+
 def _allowed_money(salon: dict) -> set:
     """このサロンの投稿に書いてよい金額（ヒアリングに実在する数字だけ）。"""
     price_ok = str(salon.get("価格を投稿に記載してもOKですか？", "")).strip()
@@ -386,9 +400,29 @@ def judge_fact_violation(text: str, salon: dict):
     if _HOURS_CONTEXT_RE.search(text) or _TIME_RANGE_RE.search(text.translate(_ZEN)):
         if _KANJI_TIME_RE.search(text):
             return "漢数字の時刻（営業時間欄と突き合わせられない）"
-        allowed_times = _time_tokens(str(salon.get("営業時間", "")))
+        hours = str(salon.get("営業時間", ""))
+        span = _hours_span(hours)
+        allowed_times = _time_tokens(hours)
+        # 「◯時まで営業」「◯時から営業」は開店・閉店そのものの言い切り。
+        # ⚠️ ここは完全一致を求める。一方「12時に来店したい方へ」のような
+        # 営業時間内の案内まで落としてはいけない（2026-09-13 Sol指摘#4）
+        for m in _OPEN_CLOSE_RE.finditer(text.translate(_ZEN)):
+            claimed = _time_tokens(m.group(0))
+            want = None
+            if span:
+                want = f"{span[1] // 60}:{span[1] % 60:02d}" if m.group("kind") == "まで" \
+                    else f"{span[0] // 60}:{span[0] % 60:02d}"
+            for t in claimed:
+                if want is not None and t != want:
+                    return f"ヒアリングと違う{'閉店' if m.group('kind') == 'まで' else '開店'}時刻（{t}）"
+                if want is None and t not in allowed_times:
+                    return f"ヒアリングに無い時刻（{t}）"
         for t in _time_tokens(text):
-            if t not in allowed_times:
+            if span:
+                h, mm = t.split(":")
+                if not (span[0] <= int(h) * 60 + int(mm) <= span[1]):
+                    return f"営業時間の外の時刻（{t}）"
+            elif t not in allowed_times:
                 return f"ヒアリングに無い時刻（{t}）"
         rng = _TIME_RANGE_RE.search(text.translate(_ZEN))
         if rng:
@@ -398,4 +432,20 @@ def judge_fact_violation(text: str, salon: dict):
 
     if re.search(r"instagram|インスタ", text, re.I):
         return "本文にInstagram誘導が入っている（投稿時に自動で付くため二重になる）"
+    return None
+
+
+def judge_fact_violations(post, salon):
+    """単発でもツリーでも使える事実照合。違反理由（無ければ None）。
+
+    ⚠️ 各部を別々に見るだけだと、1部目「最後に受け付けるのは」→
+    2部目「夜22時です」のように**部をまたいだ嘘**が通る（2026-09-13 Sol指摘#1）。
+    各部に加えて、つなげた全文にも当てる。"""
+    parts = [post] if isinstance(post, str) else [x for x in (post or []) if isinstance(x, str)]
+    for part in parts:
+        reason = judge_fact_violation(part, salon)
+        if reason:
+            return reason
+    if len(parts) > 1:
+        return judge_fact_violation("\n\n".join(parts), salon)
     return None

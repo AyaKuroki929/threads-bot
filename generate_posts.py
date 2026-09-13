@@ -18,6 +18,18 @@ import urllib.parse
 
 THRESHOLD = 5
 GENERATE_COUNT = 12
+# ツリー1部目の長さ。ここがタイムラインに出る部分で、短いほど見られる（2026-09-13 実測）
+FIRST_PART_MIN = 25
+FIRST_PART_MAX = 160
+
+
+def _valid_tree(p) -> bool:
+    """保存してよい形か。ちょうど2部・1部目が短い・各部が長すぎない。"""
+    if not isinstance(p, list) or len(p) != 2:
+        return False
+    if not all(isinstance(x, str) and x.strip() for x in p):
+        return False
+    return FIRST_PART_MIN <= len(p[0]) <= FIRST_PART_MAX and all(len(x) <= 400 for x in p)
 _BASE = os.path.dirname(os.path.abspath(__file__))
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -78,34 +90,22 @@ def generate_for_account(account, posts_file, used_file, rules_file):
             str(posts[slot][i])[:80] for i in range(min(5, len(posts[slot])))
         ])
 
-        if slot == "noon":
-            output_format = """=== 出力形式（厳守）===
-必ずJSON配列だけを返してください。各要素は以下のいずれか：
-- 単発投稿: "投稿本文"（文字列）
-- ツリー投稿: ["1部目の本文", "2部目の本文"]（文字列の配列）
-  ※ツリー投稿の1部目末尾を「予告文」で終えること絶対禁止。予告文とは「これから何を話すか」を宣言するメタ発言全般：
-    ❌「続きに読んでください」「続きを書きます」「〜を書きます」「〜を話します」「〜をお伝えします」「〜を紹介します」「私の考えを書きます」「正直に書きます」など、文末が「書きます/話します/伝えます/紹介します」で終わる文は全てNG。
-    ✅ 正しいクリフハンガー＝話を始めてしまい、一番気になるところで止める。
-    例：❌「その時、何より先に考えたことを書きます。」
-    　　✅「正直、お店の存続を考えるべき場面でした。でも私の頭に最初に浮かんだのは、売上でも採用でもありませんでした。」
+        # ⚠️ 朝・昼・夜すべてツリー。本文が短いほど見られるのが実測で分かったため
+        # （2026-09-13。〜100字は200字〜の6〜10倍。朝・昼・夜すべてで一致）。
+        # 以前は「ツリーは昼だけ」で、それが朝夜の表示回数を落としていた。
+        output_format = """=== 出力形式（厳守）===
+必ずJSON配列だけを返してください。各要素は **ちょうど2要素の配列**（ツリー投稿）です。
+["1部目の本文", "2部目の本文"]
+※1部目末尾を「予告文」で終えること絶対禁止。「〜を書きます」「〜を話します」
+  「〜をお伝えします」「〜を紹介します」「正直に書きます」など、内容を宣言する
+  メタ発言は全てNG。話を始めてしまい、一番気になるところで止めること。
+※**1部目は60〜100字**。ここがタイムラインに出る部分で、短いほど読まれる（実測）。
+※2部目は120〜250字。
 
 出力例:
 [
-  "単発投稿の本文。改行は\\nで表現。",
-  ["ツリー1部目。", "ツリー2部目。"],
-  "別の単発投稿。"
-]
-
-JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
-        else:
-            output_format = """=== 出力形式（厳守）===
-必ずJSON配列だけを返してください。各要素は「単発投稿の本文（文字列）」のみ。
-★この時間帯（昼以外）はツリー投稿（配列）を絶対に作らないこと。必ず単発投稿にすること。ツリーは昼(noon)だけ。
-
-出力例:
-[
-  "単発投稿の本文。改行は\\nで表現。",
-  "別の単発投稿。"
+  ["1部目フック。改行は\nで表現。", "2部目は答えから。"],
+  ["別の1部目。", "別の2部目。"]
 ]
 
 JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
@@ -170,12 +170,16 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
                 print(f"[generate] {slot}: 不正な形式 → スキップ")
                 continue
 
-            # 昼(noon)以外はツリー禁止：万一配列で来たら結合して単発化（保険）
-            if slot != "noon":
-                new_posts = [
-                    "\n\n".join(str(x) for x in p) if isinstance(p, list) else p
-                    for p in new_posts
-                ]
+            # ⚠️ ここで配列を1本につなげると、せっかくの短い1部目が200字超の
+            # 単発に戻る（2026-09-13 Sol指摘）。つなげず、形が違う物を落とす。
+            kept = [x for x in new_posts if _valid_tree(x)]
+            if len(kept) < len(new_posts):
+                print(f"[generate] {slot}: 形か長さが基準外 {len(new_posts) - len(kept)}本を除外"
+                      f"（ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字）")
+            new_posts = kept
+            if not new_posts:
+                print(f"[generate] {slot}: 追加なし")
+                continue
 
             # 最終バリデーション: 空/短すぎ/薬機法NG語/プロンプト漏れ/ハングルを
             # プールに入れる前に落とす（プロンプト任せにしない最後の防波堤）
@@ -281,30 +285,22 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
             str(posts[slot][i])[:80] for i in range(min(5, len(posts[slot])))
         ])
 
-        if slot == "noon":
-            output_format = """=== 出力形式（厳守）===
-必ずJSON配列だけを返してください。各要素は以下のいずれか：
-- 単発投稿: "投稿本文"（文字列）
-- ツリー投稿: ["1部目の本文", "2部目の本文"]（文字列の配列）
-  ※ツリー投稿の1部目末尾を「予告文」で終えること絶対禁止。「〜を書きます」「〜を話します」「〜をお伝えします」「〜を紹介します」「正直に書きます」など、内容を宣言するメタ発言は全てNG。話を始めてしまい、一番気になるところで止めること。
+        # ⚠️ 朝・昼・夜すべてツリー。本文が短いほど見られるのが実測で分かったため
+        # （2026-09-13。〜100字は200字〜の6〜10倍。朝・昼・夜すべてで一致）。
+        # 以前は「ツリーは昼だけ」で、それが朝夜の表示回数を落としていた。
+        output_format = """=== 出力形式（厳守）===
+必ずJSON配列だけを返してください。各要素は **ちょうど2要素の配列**（ツリー投稿）です。
+["1部目の本文", "2部目の本文"]
+※1部目末尾を「予告文」で終えること絶対禁止。「〜を書きます」「〜を話します」
+  「〜をお伝えします」「〜を紹介します」「正直に書きます」など、内容を宣言する
+  メタ発言は全てNG。話を始めてしまい、一番気になるところで止めること。
+※**1部目は60〜100字**。ここがタイムラインに出る部分で、短いほど読まれる（実測）。
+※2部目は120〜250字。
 
 出力例:
 [
-  "単発投稿の本文。改行は\\nで表現。",
-  ["ツリー1部目。", "ツリー2部目。"],
-  "別の単発投稿。"
-]
-
-JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
-        else:
-            output_format = """=== 出力形式（厳守）===
-必ずJSON配列だけを返してください。各要素は「単発投稿の本文（文字列）」のみ。
-★この時間帯（昼以外）はツリー投稿（配列）を絶対に作らないこと。
-
-出力例:
-[
-  "単発投稿の本文。改行は\\nで表現。",
-  "別の単発投稿。"
+  ["1部目フック。改行は\nで表現。", "2部目は答えから。"],
+  ["別の1部目。", "別の2部目。"]
 ]
 
 JSON配列以外の文字は一切出力しないでください。説明文も不要です。"""
@@ -360,11 +356,16 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
             if not isinstance(new_posts, list) or len(new_posts) == 0:
                 print(f"[generate/saas] {slot}: 不正な形式 → スキップ")
                 continue
-            if slot != "noon":
-                new_posts = [
-                    "\n\n".join(str(x) for x in p) if isinstance(p, list) else p
-                    for p in new_posts
-                ]
+            # ⚠️ ここで配列を1本につなげると、せっかくの短い1部目が200字超の
+            # 単発に戻る（2026-09-13 Sol指摘）。つなげず、形が違う物を落とす。
+            kept = [x for x in new_posts if _valid_tree(x)]
+            if len(kept) < len(new_posts):
+                print(f"[generate] {slot}: 形か長さが基準外 {len(new_posts) - len(kept)}本を除外"
+                      f"（ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字）")
+            new_posts = kept
+            if not new_posts:
+                print(f"[generate] {slot}: 追加なし")
+                continue
             posts[slot].extend(new_posts)
             print(f"[generate/saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
             generated_any = True

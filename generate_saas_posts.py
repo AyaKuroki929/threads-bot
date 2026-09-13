@@ -211,6 +211,7 @@ JUDGE_COUNT = 5
 JUDGE_THRESHOLD = 3
 # ツリー1部目の上限。狙いは60〜100字。生成のぶれを見込んでここで切る
 FIRST_PART_MAX = 160
+FIRST_PART_MIN = 25
 # 使用済みを数え切れないときは「安全側＝補充」に倒すが、無制限にはしない。
 # 障害が続くと毎回15本ずつ積み上がり、モデル呼び出しも増え続ける（2026-09-13 Sol 5巡目）。
 # ファイル内の本数がこの上限を超えていたら、数え切れないまま足すのはやめて人を呼ぶ。
@@ -1226,19 +1227,22 @@ def _validate_batch(new_posts: list, label: str) -> list:
     クライアントのアカウントで公開されるため、コード側の防波堤は必須
     （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。"""
     def _within_length(p):
-        if isinstance(p, list):
-            # ⚠️ 1部目はタイムラインに出る部分。ここが短いほど見られる（2026-09-13 実測。
-            # 〜100字は200字〜の6〜10倍）。指示しても伸びることがあるので機械で止める。
-            if p and len(str(p[0])) > FIRST_PART_MAX:
-                return False
-            return all(len(str(x)) <= 400 for x in p)
-        return len(str(p)) <= 350
+        # ⚠️ 新しく作る投稿は必ずツリー（ちょうど2部）。単発や3部は保存しない
+        # （既存プールの単発在庫は投稿側がそのまま読めるので、そちらは触らない）
+        if not isinstance(p, list) or len(p) != 2:
+            return False
+        first = len(str(p[0]))
+        # ⚠️ 1部目はタイムラインに出る部分。ここが短いほど見られる（2026-09-13 実測。
+        # 〜100字は200字〜の6〜10倍）。長すぎても、短すぎて意味をなさなくても落とす。
+        if not (FIRST_PART_MIN <= first <= FIRST_PART_MAX):
+            return False
+        return all(len(str(x)) <= 400 for x in p)
 
     kept = [p for p in new_posts if _within_length(p)]
     dropped = len(new_posts) - len(kept)
     if dropped:
-        print(f"[saas] {label}: 長すぎる投稿 {dropped}本を除外"
-              f"（基準: 1部目{FIRST_PART_MAX}字/ツリー各部400字/単発350字）")
+        print(f"[saas] {label}: 形か長さが基準外の投稿 {dropped}本を除外"
+              f"（基準: ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字・各部400字まで）")
 
     from botlib import validate_post_content
     checked = []
@@ -1578,11 +1582,12 @@ JSON配列以外の文字は一切出力しないでください。"""
         new_posts = _validate_batch(new_posts, f"{salon_name} 判断材料/{slot}")
 
         # ヒアリングに無い金額・距離・営業時間を書いていないか、機械で突き合わせる。
-        # ⚠️ ツリーは1部目・2部目の**両方**を見る。片方だけだと2部目の嘘が通る
-        from botlib import judge_fact_violation as _judge_fact_violation
+        # ⚠️ 各部だけでなく、つなげた全文にも当てる（1部目「受け付けるのは」＋
+        # 2部目「夜22時です」のような部をまたぐ嘘を止めるため）
+        from botlib import judge_fact_violations as _judge_fact_violations
         kept = []
         for post in new_posts:
-            reason = next((r for r in (_judge_fact_violation(x, salon) for x in _parts(post)) if r), None)
+            reason = _judge_fact_violations(post, salon)
             if reason:
                 print(f"[判断材料] {salon_name} {slot}: 事実照合NGで除外 → {reason}: {str(post)[:50]}")
             else:
