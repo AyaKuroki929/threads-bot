@@ -80,7 +80,14 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-        run: python3 generate_saas_posts.py
+        run: |
+          set +e
+          python3 generate_saas_posts.py
+          rc=$?
+          # 2/3/4 はスクリプト側が中身をLINEで1通にまとめて報告済み。
+          # ワークフロー側の通知と二重に届かせない（2026-09-14 本人指示）
+          case "$rc" in 2|3|4) echo "already_notified=1" >> "$GITHUB_ENV";; esac
+          exit $rc
 
       - name: Generate posts for specific salon
         if: ${{ github.event.inputs.salon_name != '' }}
@@ -89,7 +96,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-        run: python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
+        run: |
+          set +e
+          python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
+          rc=$?
+          case "$rc" in 2|3|4) echo "already_notified=1" >> "$GITHUB_ENV";; esac
+          exit $rc
 
       # 個人アカの月曜21時「とうこさん」宣伝枠の文章在庫。週1本しか使わないが、
       # 在庫が2本を切ったら3本足す（足りていれば何もしない冪等設計）。
@@ -202,7 +214,8 @@ jobs:
           exit 1
 
       - name: Notify LINE on failure
-        if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
+        # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
+        if: ${{ (failure() || cancelled()) && env.already_notified != '1' }}
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |

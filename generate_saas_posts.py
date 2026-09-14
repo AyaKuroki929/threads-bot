@@ -43,6 +43,31 @@ SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 ADMIN_LINE_TOKEN = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
 
 
+# ⚠️ LINEの配信数には上限がある。通知してよいのは
+#   ①何かが止まっている ②トラブル ③彩さんが手を動かす必要がある
+#   ④彩さんが「通知して」と言ったもの
+# の4つだけ（2026-09-14 本人指示「使える件数が決まっている」）。
+# それ以外（投稿が続くのに知らせるだけの警告）は print だけにしてログに残す。
+# さらに、1回の実行で最大1通にまとめる（サロン11件×枠3つ＝理論上66通になる作りだった）。
+_ALERTS: list = []
+
+
+def _alert(text: str):
+    """要対応の警告を溜める。実行の最後に1通のLINEへまとめて送る。"""
+    print(f"[saas][要対応] {text}")
+    _ALERTS.append(text)
+
+
+def _flush_alerts():
+    """溜めた警告を1通にまとめて送る。何も無ければ送らない（正常時は無音）。"""
+    if not _ALERTS:
+        return
+    body = "\n\n".join(f"・{t}" for t in _ALERTS)
+    _notify_admin(f"🚨 SaaS投稿生成で要対応が{len(_ALERTS)}件あります\n\n{body}\n\n"
+                  f"saas_generate.yml を手動実行するか、Claudeに伝えてください。")
+    _ALERTS.clear()
+
+
 def _notify_admin(text: str):
     """管理者LINE（Claude通知Bot）へ通知。失敗しても生成処理は止めない。"""
     if not ADMIN_LINE_TOKEN:
@@ -1430,17 +1455,10 @@ JSON配列以外の文字は一切出力しないでください。"""
                                            f"{salon_name} {slot}")
 
         if new_posts is None:
+            # ここではLINEを送らない。この枠が本当に埋まらなかったかは
+            # 後段の「補充できなかった枠」で判定され、そこで1通にまとめて届く。
+            # スロットごとに送ると同じ障害で何通も飛ぶ（2026-09-14 本人指示）。
             print(f"[saas] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
-            # 黙って続行すると誰も気づかず翌週にプール枯渇する（2026-07-06の反省）→ 即通知
-            _notify_admin(
-                f"🚨 SaaS投稿生成 失敗\n\n"
-                f"サロン: {salon_name}\n"
-                f"スロット: {slot}\n"
-                f"エラー: {str(last_error)[:200]}\n\n"
-                f"このままだと約1週間でこのスロットが枯渇します。\n"
-                f"再実行: saas_generate.yml を salon_name={file_key} で手動実行\n"
-                f"（Claudeに「{salon_name}の{slot}生成やり直して」でもOK）"
-            )
             continue
 
         new_posts = _validate_batch(new_posts, f"{salon_name} {slot}")
@@ -1473,19 +1491,14 @@ JSON配列以外の文字は一切出力しないでください。"""
     missed = [x for x in needed_slots if x not in filled_slots]
     if missed:
         print(f"[saas] {salon_name}: 補充できなかった枠 {', '.join(missed)}")
-        _notify_admin(f"🚨 投稿ストックを補充できませんでした\n\n"
-                      f"サロン: {salon_name}\n"
-                      f"枠: {', '.join(missed)}\n\n"
-                      f"このままだと在庫が尽きて、同じ投稿が再利用されます。\n"
-                      f"saas_generate.yml を salon_name={file_key} で手動実行してください。")
+        _alert(f"{salon_name}：{', '.join(missed)} の投稿ストックを補充できませんでした"
+               f"（このままだと在庫が尽きて同じ投稿が再利用されます）")
         _FAILED_SALONS.append(f"{salon_name}({','.join(missed)})")
 
     if blind_slots:
-        _notify_admin(f"⚠️ 投稿の使用済み判定ができていません（Supabase側の不調の疑い）\n\n"
-                      f"サロン: {salon_name}\n"
-                      f"枠: {', '.join(blind_slots)}\n\n"
-                      f"在庫は残っているので投稿は続きますが、数え切れない状態が続くと"
-                      f"同じ本文を出す危険があります。")
+        # 投稿は止まらず彩さんにできることも無いので、LINEにはしない（ログだけ）
+        print(f"[saas] {salon_name}: 使用済み判定ができなかった枠 {', '.join(blind_slots)}"
+              f"（Supabase側の不調の疑い。在庫はあるので投稿は続きます）")
 
     # ⚠️ 通常プールは判断材料より先に保存し切る。あとで判断材料が失敗しても、
     # せっかく作った通常分が保存されないまま消えることが無いようにする（Sol指摘#4）。
@@ -1504,11 +1517,8 @@ JSON配列以外の文字は一切出力しないでください。"""
             judge_added = _generate_judge_pool(client, rules, salon, salon_name,
                                                file_key, safe_name)
         except Exception as e:      # noqa: BLE001 判断材料の故障で全体を止めない
+            # 通常投稿は止まらないのでLINEにはしない（ログだけ）
             print(f"[判断材料] {salon_name}: 中断しました（通常投稿は続きます）: {e}")
-            _notify_admin(f"⚠️ 判断材料プールの補充が中断しました\n\n"
-                          f"サロン: {salon_name}\n"
-                          f"理由: {str(e)[:200]}\n\n"
-                          f"通常の投稿は止まりません。")
 
     if generated_any or judge_added:
         # 完了LINEは「新規クライアントの初回生成」のときだけ（オンボーディングの節目）。
@@ -1540,10 +1550,8 @@ def _generate_judge_pool(client, rules: str, salon: dict, salon_name: str,
             pool = json.load(open(path, encoding="utf-8"))
         except (OSError, ValueError) as e:
             # 読めないファイルを上書きすると、中身が何だったか分からなくなる。触らず知らせる
+            # 通常投稿は止まらないのでLINEにはしない（ログだけ）
             print(f"[判断材料] {salon_name}: 既存プールを読めません → 触りません: {e}")
-            _notify_admin(f"⚠️ 判断材料プールが読めません\n\n"
-                          f"サロン: {salon_name}\nファイル: {os.path.basename(path)}\n"
-                          f"理由: {str(e)[:150]}\n\n通常の投稿は止まりません。")
             return False
     if not isinstance(pool, dict):
         print(f"[判断材料] {salon_name}: 既存プールの形が違います → 触りません")
@@ -1551,12 +1559,9 @@ def _generate_judge_pool(client, rules: str, salon: dict, salon_name: str,
     # ⚠️ 持ち主が書かれていない既存ファイルに、いまの顧客名を付けて自分の物にしない。
     # 取り違えたら別の店の情報を客先で投稿することになる（2026-09-13 Sol 2巡目 指摘#5）
     if pool_existed and pool.get("_salon") != file_key:
-        print(f"[判断材料] {salon_name}: プールの持ち主が違います（{pool.get('_salon')!r}）→ 触りません")
-        _notify_admin(f"⚠️ 判断材料プールの持ち主が一致しません\n\n"
-                      f"サロン: {salon_name}\n"
-                      f"ファイル: {os.path.basename(path)}\n"
-                      f"中の持ち主: {pool.get('_salon')!r}\n\n"
-                      f"通常の投稿は止まりません。")
+        _alert(f"{salon_name}：判断材料プール {os.path.basename(path)} の持ち主が "
+               f"{pool.get('_salon')!r} になっています"
+               f"（別の店の情報を投稿する危険があるため触っていません）")
         return False
     pool["_salon"] = file_key
     for slot in ("morning", "noon", "evening"):
@@ -1669,20 +1674,15 @@ JSON配列以外の文字は一切出力しないでください。"""
         _save_pool(path, pool)
         print(f"[判断材料] {path} を更新しました")
     if blind_slots:
-        _notify_admin(f"⚠️ 判断材料の使用済み判定ができていません（Supabase側の不調の疑い）\n\n"
-                      f"サロン: {salon_name}\n"
-                      f"枠: {', '.join(blind_slots)}\n\n"
-                      f"通常の投稿は止まりませんが、この間は判断材料投稿が出ません。")
+        # 通常投稿は止まらないのでLINEにはしない（ログだけ）
+        print(f"[判断材料] {salon_name}: 使用済み判定ができなかった枠 {', '.join(blind_slots)}")
     if empty_slots:
         # 「足りているから作らなかった」と「作ろうとして1本も残らなかった」は別物。
         # ⚠️ 1枠でも成功していると見逃す作りにしない。枠ごとに数えて必ず知らせる
         # （2026-09-13 Sol 2巡目 指摘#6）。
-        print(f"[判断材料] {salon_name}: 補充できなかった枠 {', '.join(empty_slots)}")
-        _notify_admin(f"⚠️ 判断材料投稿を作れなかった枠があります\n\n"
-                      f"サロン: {salon_name}\n"
-                      f"枠: {', '.join(empty_slots)}\n\n"
-                      f"通常の投稿は止まりません（判断材料の割合だけ下がります）。\n"
-                      f"ヒアリング内容と生成ルールの噛み合わせを見直してください。")
+        # 通常投稿は止まらず割合が下がるだけなのでLINEにはしない（ログだけ）
+        print(f"[判断材料] {salon_name}: 補充できなかった枠 {', '.join(empty_slots)}"
+              f"（通常の投稿は止まりません）")
     return added
 
 
@@ -1731,11 +1731,7 @@ def main():
         except Exception as e:      # noqa: BLE001
             failed_salons.append(salon_name)
             print(f"[saas] {salon_name}: 生成中に失敗しました（他のサロンは続けます）: {e}")
-            _notify_admin(f"🚨 SaaS投稿生成 失敗（このサロンだけ）\n\n"
-                          f"サロン: {salon_name}\n"
-                          f"エラー: {str(e)[:200]}\n\n"
-                          f"他のサロンの生成は続行しました。\n"
-                          f"再実行: saas_generate.yml を salon_name={threads_id or salon_name} で手動実行")
+            _alert(f"{salon_name}：生成が失敗しました（{str(e)[:120]}）")
 
     print("\n[saas] 全処理完了")
     if _FAILED_SALONS:
@@ -1750,4 +1746,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # ⚠️ finally で必ず流す。sys.exit(2/3/4) も例外も通るので、
+    # 溜めた要対応が黙って消えることがない（沈黙の失敗を作らない）。
+    try:
+        main()
+    finally:
+        _flush_alerts()
