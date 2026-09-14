@@ -201,7 +201,7 @@ def _safe_name(salon_name):
 
 
 # 自己修復ディスパッチの重複防止（同一実行内で同じサロンに2回キックしない）
-_GENERATE_DISPATCHED = set()
+_GENERATE_DISPATCHED = {}   # salon_name → 生成workflow起動に成功したか（同一実行内で1回だけ起動）
 
 
 def _trigger_generate(salon_name):
@@ -288,6 +288,38 @@ def _judge_candidates(salon_name, slot, used_texts):
     return [p for p in arr if _ok(p) and _key(p) not in used_texts]
 
 
+# この実行で「過去投稿を再利用した」サロンと、投稿は続くが直してほしいこと（Instagramリンク不備など）。
+# 最後に1通のLINEにまとめる（サロンごとに送ると同じ障害で何通も飛ぶ。LINEの配信数には上限がある）
+_REUSED: list = []
+_NOTICES: list = []
+
+
+def _notify_reused() -> bool:
+    """再利用・注意事項があれば1通で知らせる。戻り値＝知らせる必要が無かった／届いた。
+    届かなかった回は呼び出し側が非0で終わり、ワークフローの失敗通知に拾わせる。"""
+    if DRY_RUN or not (_REUSED or _NOTICES):
+        _REUSED.clear(); _NOTICES.clear()
+        return True
+    blocks = []
+    if _REUSED:
+        blocks.append("⚠️ とうこさん：投稿ストックが尽きて、過去の投稿を再利用する本文を選びました。\n\n"
+                      + "\n".join(f"・{x}" for x in _REUSED)
+                      + "\n\n続くと同じ本文が繰り返されます。saas_generate.yml を手動実行してください。")
+    blocks.extend(dict.fromkeys(_NOTICES))     # 同じ注意は1回だけ
+    _REUSED.clear(); _NOTICES.clear()
+    text = "\n\n────\n\n".join(blocks)
+    # LINEの本文上限5000字はUTF-16単位（絵文字は2単位）
+    u16 = lambda t: len(t.encode("utf-16-le")) // 2
+    if u16(text) > 4900:
+        cut, used = [], 0
+        for ch in text:
+            if used + u16(ch) > 4800:
+                break
+            cut.append(ch); used += u16(ch)
+        text = "".join(cut) + "\n\n（以下省略。全文はActionsのログ参照）"
+    return _notify_line(text)
+
+
 def pick_post(salon_name, slot, used_texts, allow_judge=True):
     posts_file = os.path.join(POSTS_DIR, f"posts_{_safe_name(salon_name)}.json")
     if not os.path.exists(posts_file):
@@ -322,17 +354,20 @@ def pick_post(salon_name, slot, used_texts, allow_judge=True):
     # 自己修復：未使用が残りわずかなら、枯渇する前に生成ワークフローを自動起動する。
     # （2026-07-12 うらかた枯渇の再発防止。人の対応を待たずに自動補充する）
     if len(unused) <= 2 and salon_name not in _GENERATE_DISPATCHED:
-        _GENERATE_DISPATCHED.add(salon_name)
-        if _trigger_generate(salon_name):
+        _GENERATE_DISPATCHED[salon_name] = bool(_trigger_generate(salon_name))
+        if _GENERATE_DISPATCHED[salon_name]:
             print(f"[pool] {salon_name} {slot}: 未使用{len(unused)}本 → 生成workflowを自動起動（自己修復）")
-        elif not unused:
-            # 自動補充もできない時だけ人を呼ぶ（LINEは要アクション時のみの方針）
-            _notify_line(f"⚠️ {salon_name} の {slot} 投稿プールが枯渇し、過去投稿を再利用しています。\n自動補充の起動にも失敗したため、saas_generate を手動実行してください。")
+    # 同じ実行で既に起動済みなら、その結果を使う（穴埋めで別スロットを選んだ時に
+    # 「起動も失敗」と誤って書かない。2026-09-14 Sol指摘）
+    dispatched = _GENERATE_DISPATCHED.get(salon_name, True)
 
     if not unused:
         # プール使い切り→過去投稿の再利用（同一文の再投稿はMetaのスパム判定リスク）。
-        # 自動補充を起動済みなので、次のスロットからは新ストックが使われる。
+        # ⚠️ 「自動補充を起動したから次は直る」を信じてここを黙らせない。補充側が
+        # 使用済みを数えられない状態だと補充は毎回見送られ、再利用が延々と続く
+        # （2026-09-14 Sol指摘#2）。再利用が起きた事実そのものを、実行の最後に1通で知らせる
         print(f"[pool] {salon_name} {slot}: 未使用プール枯渇 → 今回のみ過去投稿を再利用")
+        _REUSED.append(f"{salon_name}（{slot}）" + ("" if dispatched else "・自動補充の起動も失敗"))
         unused = candidates
 
     chosen = random.choice(unused)
@@ -391,9 +426,10 @@ def _maybe_add_instagram_cta_saas(texts: list, instagram_url: str) -> list:
     if not handle:
         # ⚠️ 壊れたリンクを客先の投稿に載せない。気づけるよう知らせる
         print(f"[cta] Instagramのユーザー名を取り出せません: {instagram_url}")
-        _notify_line("⚠️ とうこさん：Instagram誘導のリンクを作れませんでした。\n"
-                     f"登録内容：{str(instagram_url)[:120]}\n"
-                     "「https://www.instagram.com/ユーザー名」の形で登録し直してください。")
+        # 即時に送らず、実行の最後の1通に束ねる（2026-09-14 Sol 3巡目 指摘#3）
+        _NOTICES.append("⚠️ とうこさん：Instagram誘導のリンクを作れませんでした。\n"
+                        f"登録内容：{str(instagram_url)[:120]}\n"
+                        "「https://www.instagram.com/ユーザー名」の形で登録し直してください。")
         return texts
     cta = random.choice(_INSTAGRAM_CTA_TEMPLATES).format(handle=handle)
     result = list(texts)
@@ -2631,4 +2667,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # ⚠️ どの終わり方でも再利用の通知を流す（途中の未捕捉例外で末尾処理が飛ぶ穴。2026-09-14 Sol指摘）。
+    # 通知そのものが届かなかった回は exit 0 にしない → ワークフローの失敗通知に拾わせる
+    rc = 0
+    try:
+        main()
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 1
+    except BaseException:
+        _notify_reused()
+        raise
+    if not _notify_reused() and rc == 0:
+        print("[pool] 再利用の通知を送れませんでした → exit 1（ワークフロー通知に任せる）")
+        rc = 1
+    sys.exit(rc)

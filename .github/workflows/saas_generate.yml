@@ -26,15 +26,25 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # ⚠️ 各工程の timeout-minutes の合計（78分）より大きくする。ジョブ上限で止まると
+    # job.status=cancelled になり最終通知の失敗がジョブ失敗にならない（Sol 4巡目 指摘②）
+    timeout-minutes: 90
+    env:
+      # 生成スクリプトはLINEを自分で送らず、要対応をこのファイルに書く。
+      # 送るのは最後の「LINE通知（1実行1通）」ステップだけ（2026-09-14 本人指示・Sol 2巡目）
+      SAAS_ALERT_FILE: .saas_alerts.txt
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        id: checkout
+        timeout-minutes: 3
 
       # クライアント投稿の隔離先（private リポ）。生成後にここへ振り分けて公開リポには残さない。
       - name: private投稿リポを取得（クライアント隔離先）
+        id: private_checkout
+        timeout-minutes: 3
         continue-on-error: true
         uses: actions/checkout@v4
         with:
@@ -45,9 +55,13 @@ jobs:
       # ⭐ private の既存投稿を生成の入力に取り込む（これが無いと全クライアントが
       #    「ファイル無し＝初回」と誤認され、毎週全員分を再生成→誤通知→プール上書きになる。2026-07-13の事故）
       - name: private投稿を生成入力へ取り込み
+        id: import_private
+        timeout-minutes: 2
         run: |
           mkdir -p posts_saas
-          if [ -d .saas_posts_private ]; then
+          # ⚠️ フォルダの有無で判定しない。取得が途中で失敗してもフォルダは残り、
+          # 0件取り込み＝全クライアント初回扱いで通ってしまう（2026-09-14 Sol指摘#5）
+          if [ "${{ steps.private_checkout.outcome }}" = "success" ] && [ -d .saas_posts_private/.git ]; then
             n=0
             for f in .saas_posts_private/posts_*.json; do
               [ -e "$f" ] || continue
@@ -60,52 +74,54 @@ jobs:
           fi
 
       - name: Set up Python
+        id: setup_python
+        timeout-minutes: 3
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
+        id: install
+        timeout-minutes: 5
         run: |
           pip install "anthropic<2" gspread google-auth
 
       - name: Write Google Service Account
+        id: write_sa
+        timeout-minutes: 1
         env:
           GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
 
+      # ⚠️ ステップ側で先に止める。ジョブのtimeoutで止まると job.status=cancelled になり、
+      # 最終通知が失敗してもジョブは failure に変わらず、失敗メールも来ない（2026-09-14 Sol 3巡目 指摘#2）
       - name: Generate posts for all salons
+        id: gen_all
+        timeout-minutes: 22
         if: ${{ github.event.inputs.salon_name == '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-        run: |
-          set +e
-          python3 generate_saas_posts.py
-          rc=$?
-          # 2/3/4 はスクリプト側が中身をLINEで1通にまとめて報告済み。
-          # ワークフロー側の通知と二重に届かせない（2026-09-14 本人指示）
-          case "$rc" in 2|3|4) echo "already_notified=1" >> "$GITHUB_ENV";; esac
-          exit $rc
+        run: python3 generate_saas_posts.py
 
       - name: Generate posts for specific salon
+        id: gen_one
+        timeout-minutes: 22
         if: ${{ github.event.inputs.salon_name != '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
-        run: |
-          set +e
-          python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
-          rc=$?
-          case "$rc" in 2|3|4) echo "already_notified=1" >> "$GITHUB_ENV";; esac
-          exit $rc
+        run: python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
 
       # 個人アカの月曜21時「とうこさん」宣伝枠の文章在庫。週1本しか使わないが、
       # 在庫が2本を切ったら3本足す（足りていれば何もしない冪等設計）。
       - name: Refill promo posts (personal Monday)
+        id: promo
+        timeout-minutes: 5
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # 使用済みの正本はDB。渡さないと補充側だけ「未使用」と数えて補充が止まる
@@ -114,6 +130,8 @@ jobs:
         run: python3 generate_promo_posts.py ${{ inputs.force_promo && '--force' || '' }}
 
       - name: Remove service account file
+        id: remove_sa
+        timeout-minutes: 1
         if: always()
         run: rm -f google_service_account.json
 
@@ -121,10 +139,12 @@ jobs:
       # 公開リポの作業ツリーから除外する（次の Commit で公開リポに載らないようにする）。
       # 新規クライアントも allowlist 外として自動で private 側へ回る。
       - name: クライアント投稿を private へ隔離（公開リポに残さない）
+        id: isolate
+        timeout-minutes: 4
         if: ${{ !cancelled() }}
         run: |
           PUBLIC_KEEP="posts_bemolle_diet.json posts_aya_kuroki_0929.json posts_urakata_san_official.json posts_toko_test.json posts_て.json posts_テスト.json"
-          moved=0
+          moved=0; copy_failed=0
           if [ -d .saas_posts_private ]; then
             for f in posts_saas/posts_*.json; do
               [ -e "$f" ] || continue
@@ -142,21 +162,30 @@ jobs:
                   rm "$f"; moved=$((moved+1))
                 else
                   rm -f ".saas_posts_private/$b.tmp"
-                  echo "::warning::privateへ安全にコピーできませんでした（private側の既存在庫はそのまま）: $b"
-                  rm -f "$f"
+                  echo "::error::privateへ安全にコピーできませんでした（private側の既存在庫はそのまま）: $b"
+                  rm -f "$f"; copy_failed=$((copy_failed+1))
                 fi
               fi
             done
             echo "クライアント $moved 件を private へ隔離"
+            push_failed=0
             if [ -d .saas_posts_private/.git ]; then
               cd .saas_posts_private
               git config user.name "github-actions[bot]"; git config user.email "gha@users.noreply.github.com"
               git add -A
               if ! git diff --cached --quiet; then
                 git commit -q -m "saas: クライアント投稿を更新 $(TZ=Asia/Tokyo date '+%F %H:%M JST')"
-                for i in 1 2 3; do git push && break; git pull --rebase && sleep 2; done
+                # ⚠️ 3回とも push に失敗しても 0 で抜けていた＝生成した在庫が保存されず、
+                # 投稿側の在庫は増えないのに誰にも知らされない（2026-09-14 Sol指摘#3）
+                pushed=0
+                for i in 1 2 3; do git push && { pushed=1; break; }; git pull --rebase && sleep 2; done
+                [ "$pushed" = "1" ] || push_failed=1
               fi
               cd ..
+            fi
+            if [ "${copy_failed:-0}" != "0" ] || [ "$push_failed" != "0" ]; then
+              echo "::error::生成した在庫を private に保存できませんでした（コピー失敗 ${copy_failed:-0} 件／push失敗 $push_failed）"
+              exit 1
             fi
           else
             echo "::warning::private取得に失敗。クライアント投稿を公開ツリーから除外のみ実施（private未更新）"
@@ -171,6 +200,8 @@ jobs:
       # シート読込失敗(exit 2)でも、同一実行で生成済みのローカル定義サロン分は
       # ディスクに書かれているため必ずコミットする（skipすると生成分が消滅する）
       - name: Commit generated posts
+        id: commit
+        timeout-minutes: 4
         if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
@@ -213,17 +244,95 @@ jobs:
           echo "Push failed after 5 attempts"
           exit 1
 
-      - name: Notify LINE on failure
-        # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
-        if: ${{ (failure() || cancelled()) && env.already_notified != '1' }}
+      # ⚠️ この実行で外に出るLINEはここからの最大1通だけ（新規クライアント初回の✅を除く）。
+      # 生成スクリプトが書いた要対応（.saas_alerts.txt）と、各ステップの失敗・中断を束ねる。
+      # 送れなかったらこのステップを失敗にする＝ジョブ失敗のメールが最後の砦（2026-09-14 Sol 2巡目）
+      - name: LINE通知（1実行1通・要対応があるときだけ）
+        if: always()
+        timeout-minutes: 3
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          SALON: ${{ github.event.inputs.salon_name }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          GEN_OUTCOME: ${{ steps.gen_all.outcome }}${{ steps.gen_one.outcome }}
+          ISOLATE_OUTCOME: ${{ steps.isolate.outcome }}
+          COMMIT_OUTCOME: ${{ steps.commit.outcome }}
+          PROMO_OUTCOME: ${{ steps.promo.outcome }}
+          STEPS_JSON: ${{ toJSON(steps) }}
         run: |
-          SALON="${{ github.event.inputs.salon_name }}"
-          if [ -z "$SALON" ]; then SALON="全サロン"; fi
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          TEXT="🚨 とうこさんSaaS 投稿生成ワークフロー失敗\n\n対象：$SALON\nトリガー：${{ github.event_name }}\n\n→ クライアントの自動投稿が始まらないリスクあり。\n\nログ確認：\n$RUN_URL"
-          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
-            -H "Authorization: Bearer $LINE_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          alerts, failed = "", []
+          try:
+              alerts = open(os.environ["SAAS_ALERT_FILE"], encoding="utf-8").read().strip()
+          except FileNotFoundError:
+              pass                                  # 要対応なし＝ファイル未作成
+          except OSError as e:                      # 読めない＝要対応が消えた扱いにしない（Sol 3巡目 指摘#1）
+              failed.append(f"要対応の本文ファイルを読めなかった（{type(e).__name__}）。ログで確認が必要")
+          gen_failed = "failure" in os.environ.get("GEN_OUTCOME", "")
+          if gen_failed and not alerts:
+              failed.append("生成スクリプトが失敗（要対応の中身を書き出せずに落ちた）")
+          if os.environ.get("PROMO_OUTCOME") == "failure":
+              failed.append("月曜宣伝枠（個人）の文章補充に失敗")
+          if os.environ.get("ISOLATE_OUTCOME") == "failure":
+              failed.append("生成した在庫を private に保存できなかった（投稿側の在庫が増えない）")
+          if os.environ.get("COMMIT_OUTCOME") == "failure":
+              failed.append("公開リポへのコミット/pushに失敗")
+          # 名前を付けた以外の工程が落ちていないか、全工程の outcome を総なめする（Sol 4巡目 指摘④）
+          explained = {"gen_all", "gen_one", "isolate", "commit", "promo", "private_checkout"}
+          try:
+              steps = json.loads(os.environ.get("STEPS_JSON") or "{}")
+              if not isinstance(steps, dict):
+                  raise ValueError("steps is not a dict")
+              for sid, info in steps.items():
+                  if sid not in explained and isinstance(info, dict) and info.get("outcome") == "failure":
+                      failed.append(f"工程「{str(sid)[:40]}」が失敗")
+          except ValueError:
+              failed.append("各工程の結果を読めなかった")
+          status = os.environ.get("JOB_STATUS", "")
+          if status == "cancelled":
+              failed.append("途中で中断された（手動キャンセルか runner の停止）")
+          elif status == "failure" and not failed and not (gen_failed and alerts):
+              failed.append("ワークフローのどこかのステップが失敗")
+          if not alerts and not failed:
+              print("要対応なし → LINEは送らない"); sys.exit(0)
+          salon = (os.environ.get("SALON") or "全サロン")[:60]
+          head = f"🚨 とうこさんSaaS 投稿生成：要対応（対象：{salon}）"
+          fail_block = "\n".join(f"・{x}" for x in failed)
+          foot = "saas_generate.yml を手動実行するか、Claudeに伝えてください。\nログ：" + os.environ["RUN_URL"]
+          u16 = lambda t: len(t.encode("utf-16-le")) // 2
+          def cut(t, limit):
+              out, used = [], 0
+              for ch in t:
+                  if used + u16(ch) > limit: break
+                  out.append(ch); used += u16(ch)
+              return "".join(out)
+          # LINE上限5000はUTF-16単位。工程失敗とログURLの領域を先に確保し、
+          # 長いときは要対応本文だけを短くする（後ろの失敗行やURLを切り落とさない）
+          fixed = [head] + ([fail_block] if fail_block else []) + [foot]
+          budget = 4800 - u16("\n\n".join(fixed)) - u16("\n\n")
+          if alerts and u16(alerts) > budget:
+              alerts = cut(alerts, max(budget - 40, 0)) + "\n（以下省略。ログ参照）"
+          parts = [head] + ([alerts] if alerts else []) + ([fail_block] if fail_block else []) + [foot]
+          text = "\n\n".join(parts)
+          if u16(text) > 4900:                      # 最後の砦：固定部分だけで超えても必ず5000以内にする
+              text = cut(text, 4850) + "\n（省略）"
+          print("送る本文:\n" + text)
+          token = os.environ.get("LINE_TOKEN", "")
+          if not token:
+              print("::error::LINEトークンが無く送れません"); sys.exit(1)
+          req = urllib.request.Request(
+              "https://api.line.me/v2/bot/message/broadcast",
+              data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+              method="POST")
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  code = r.status
+          except Exception as e:                    # noqa: BLE001
+              code = getattr(e, "code", 0)
+          if code != 200:
+              print(f"::error::LINE通知の送信に失敗（HTTP {code}）。ジョブ失敗のメールが最後の砦"); sys.exit(1)
+          print("LINE送信 OK（この実行で1通）")
+          PY

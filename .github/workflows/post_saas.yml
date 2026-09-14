@@ -103,7 +103,7 @@ jobs:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
+          if [ -f .line_notified ] || [ "${{ env.line_notified }}" = "1" ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           SLOT="${{ steps.slot.outputs.slot }}"
           EC="${{ steps.post.outputs.exit_code }}"
           code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \

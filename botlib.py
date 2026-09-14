@@ -140,6 +140,15 @@ def line_broadcast(text: str, token: str = "", *, timeout: int = 10) -> bool:
                     f.write("1")
         except Exception:
             pass
+        # 2経路目：GITHUB_ENV。印ファイルが書けなかった回に workflow の汎用通知と
+        # 二重で届くのを防ぐ（2026-09-14 Sol 4巡目）
+        try:
+            env_path = os.environ.get("GITHUB_ENV")
+            if env_path and any(m in text for m in ("🚨", "⚠️", "🔑")):
+                with open(env_path, "a", encoding="utf-8") as f:
+                    f.write("line_notified=1\n")
+        except Exception:
+            pass
         return True
     except Exception as e:
         print(f"::error::[line] 通知送信失敗（処理は継続・通知は届いていない）: {e}", file=sys.stderr)

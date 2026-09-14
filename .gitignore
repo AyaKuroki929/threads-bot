@@ -39,3 +39,4 @@ manual.html
 # 投稿に添付する公開素材だけは追跡する
 !assets/*.png
 gap_checked.json
+.saas_alerts.txt

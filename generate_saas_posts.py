@@ -58,20 +58,58 @@ def _alert(text: str):
     _ALERTS.append(text)
 
 
-def _flush_alerts():
-    """溜めた警告を1通にまとめて送る。何も無ければ送らない（正常時は無音）。"""
+# GitHub Actions では自分で送らず、要対応の本文をこのファイルに書き出す。
+# 送るのはワークフロー最後の1ステップだけ（生成の失敗・保存の失敗・中断を全部そこで1通に束ねる）。
+# ローカル実行など（未設定）のときだけ自分でLINEを送る（2026-09-14 Sol 2巡目：送り手を一本化）。
+ALERT_FILE = os.environ.get("SAAS_ALERT_FILE", "")
+
+
+def _flush_alerts() -> bool:
+    """溜めた要対応を渡す（ファイル or LINE 1通）。何も無ければ何もしない。
+    戻り値＝渡せたか。渡せなかった回は呼び出し側が非0で終わり、ワークフローに拾わせる。"""
     if not _ALERTS:
-        return
-    body = "\n\n".join(f"・{t}" for t in _ALERTS)
-    _notify_admin(f"🚨 SaaS投稿生成で要対応が{len(_ALERTS)}件あります\n\n{body}\n\n"
-                  f"saas_generate.yml を手動実行するか、Claudeに伝えてください。")
+        return True
+    body = "\n".join(f"・{t}" for t in _ALERTS)
     _ALERTS.clear()
+    if ALERT_FILE:
+        try:
+            with open(ALERT_FILE, "a", encoding="utf-8") as f:
+                f.write(body + "\n")
+            return True
+        except OSError as e:
+            print(f"[saas] 要対応をファイルに書けませんでした: {e}")
+            return False
+    text = (f"🚨 SaaS投稿生成で要対応があります\n\n{body}\n\n"
+            f"saas_generate.yml を手動実行するか、Claudeに伝えてください。")
+    # LINEの本文上限5000字はUTF-16単位（絵文字は2単位）。Pythonのlenで数えると
+    # 絵文字だらけの本文が上限超えで拒否される（2026-09-14 Sol指摘#6）
+    tail = "\n\n（長すぎるため以下省略。全文はActionsのログ参照）"
+    if _u16len(text) > 4900:
+        text = _cut_u16(text, 4900 - _u16len(tail)) + tail
+    return _notify_admin(text)
 
 
-def _notify_admin(text: str):
-    """管理者LINE（Claude通知Bot）へ通知。失敗しても生成処理は止めない。"""
+def _u16len(s: str) -> int:
+    return len(s.encode("utf-16-le")) // 2
+
+
+def _cut_u16(s: str, limit: int) -> str:
+    """UTF-16単位で limit 以内に切る。文字の途中では切らない。"""
+    out, used = [], 0
+    for ch in s:
+        n = _u16len(ch)
+        if used + n > limit:
+            break
+        out.append(ch)
+        used += n
+    return "".join(out)
+
+
+def _notify_admin(text: str) -> bool:
+    """管理者LINE（Claude通知Bot）へ通知。失敗しても生成処理は止めない。
+    戻り値＝実際に届いた（HTTP 200）か。"""
     if not ADMIN_LINE_TOKEN:
-        return
+        return False
     try:
         req = urllib.request.Request(
             "https://api.line.me/v2/bot/message/broadcast",
@@ -80,9 +118,11 @@ def _notify_admin(text: str):
                      "Content-Type": "application/json"},
             method="POST",
         )
-        urllib.request.urlopen(req, timeout=10)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
     except Exception as e:
         print(f"[saas] 管理者通知失敗（続行）: {e}")
+        return False
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -1701,6 +1741,10 @@ def main():
         # 最後に exit 2 で失敗させて workflow のLINE通知に乗せる。
         salons = []
         sheet_failed = True
+        # これまではワークフローの失敗通知（exit 2）で拾っていた。まとめ通知に一本化した以上、
+        # ここで溜めないと「シートが読めずクライアント全員を飛ばした」が黙って消える
+        _alert(f"スプレッドシートが読めず、シート由来のクライアント全員を今回は生成できませんでした"
+               f"（{str(e)[:120]}）")
     salons += load_local_salons()
     if not salons:
         sys.exit(1)
@@ -1746,9 +1790,18 @@ def main():
 
 
 if __name__ == "__main__":
-    # ⚠️ finally で必ず流す。sys.exit(2/3/4) も例外も通るので、
-    # 溜めた要対応が黙って消えることがない（沈黙の失敗を作らない）。
+    # ⚠️ どの終わり方（正常・sys.exit・例外）でも必ずまとめ通知を流す。
+    # さらに「要対応があるのにLINEを送れなかった」回は終了コードを 5 にして、
+    # ワークフローの失敗通知に必ず拾わせる（exit 0 のまま黙って消えた穴。2026-09-14 Sol指摘#1）
+    rc = 0
     try:
         main()
-    finally:
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 1
+    except BaseException:
         _flush_alerts()
+        raise
+    if not _flush_alerts() and rc == 0:
+        print("[saas] 要対応があるのに渡せませんでした → exit 5（ワークフローの失敗通知に任せる）")
+        rc = 5
+    sys.exit(rc)

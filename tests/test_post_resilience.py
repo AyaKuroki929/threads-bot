@@ -120,6 +120,9 @@ def reset(**kw):
     post_state._available = None
     post_state._MEM.clear()
     post_saas._retry_spent = 0.0
+    post_saas._REUSED.clear()
+    post_saas._NOTICES.clear()
+    post_saas._GENERATE_DISPATCHED.clear()
     for k, v in kw.items():
         setattr(W, k, v)
 
@@ -3238,7 +3241,15 @@ post_saas.random.random = lambda: 0.0          # 必ず付ける確率にする
 post_saas._maybe_add_instagram_cta_saas = _real_ig_cta      # 本物を使う
 out = post_saas._maybe_add_instagram_cta_saas(["本文"], "https://www.instagram.com/")
 check("取れないときは誘導を付けない", out == ["本文"], out)
-check("知らせる", any("Instagram誘導のリンクを作れません" in m for m in NOTIFY), NOTIFY)
+# 即時には送らず、実行の最後の1通に束ねる（LINEの配信数節約・2026-09-14）
+check("その場では送らない", not any("Instagram誘導" in m for m in NOTIFY), NOTIFY)
+check("最後の1通に載せる候補に入る", any("Instagram誘導のリンクを作れません" in m for m in post_saas._NOTICES),
+      post_saas._NOTICES)
+_before = len(NOTIFY)
+post_saas._notify_reused()
+check("まとめて1通で知らせる", len(NOTIFY) == _before + 1
+      and "Instagram誘導のリンクを作れません" in NOTIFY[-1], NOTIFY[-1:])
+check("送ったら候補が空になる", not post_saas._NOTICES, post_saas._NOTICES)
 out2 = post_saas._maybe_add_instagram_cta_saas(["本文"],
                                                "https://www.instagram.com/nico.lymph/?r=nametag")
 post_saas.random.random = orig_rand
