@@ -44,11 +44,27 @@ def _supabase_headers():
     return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 
 
-def _supabase_get(path_qs):
+def _supabase_get(path_qs, retries=3, wait=5):
+    """Supabaseを読む。一時不調（502/503/504・タイムアウト・接続切れ）は待って再試行する。
+    ⚠️ 再試行0回だと、1回の502でwatchdog自体が落ちて失敗LINEが飛ぶ
+    （2026-09-14 22:28 に実際に起きた。Supabaseは数分で回復していた）。"""
     url = f"{SUPABASE_URL}/rest/v1/{path_qs}"
-    req = urllib.request.Request(url, headers=_supabase_headers())
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read())
+    last = None
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(url, headers=_supabase_headers())
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code not in (500, 502, 503, 504):
+                raise                       # 認証・URL間違いなど、待っても直らないものは即失敗
+            last = e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last = e
+        if attempt < retries:
+            print(f"[watchdog] Supabase一時不調（{attempt}/{retries}）: {last} → {wait}秒待って再試行")
+            time.sleep(wait)
+    raise RuntimeError(f"Supabaseに{retries}回失敗: {last}")
 
 
 def fetch_line_users_step_map():
