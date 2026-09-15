@@ -14,6 +14,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone, timedelta
 
+import botlib
 from botlib import line_broadcast, line_push
 
 SUPABASE_URL        = os.environ.get("SUPABASE_URL", "")
@@ -61,8 +62,7 @@ def fetch_pending_users():
         f"&select=line_user_id,stripe_customer_id,step_sent_at,display_name,expected_threads_id"
     )
     req = urllib.request.Request(url, headers=_supabase_headers())
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read())
+    return botlib.json_list_retry(req, timeout=15, label="Supabase(連携待ち一覧)")
 
 
 def _load_sheet_identity_map():
@@ -110,8 +110,8 @@ def _backfill_line_user(line_uid: str, name: str, tid: str,
         method="PATCH",
     )
     try:
-        with urllib.request.urlopen(req, timeout=10):
-            print(f"[backfill] {line_uid[:8]}…: {list(payload.keys())} をシートから補完")
+        botlib.urlopen_retry(req, timeout=10, label="Supabase(補完)")
+        print(f"[backfill] {line_uid[:8]}…: {list(payload.keys())} をシートから補完")
     except Exception as e:
         print(f"[backfill] 失敗（続行）: {e}", file=sys.stderr)
 
@@ -124,8 +124,7 @@ def fetch_reminded_users():
         f"&select=line_user_id,stripe_customer_id,oauth_reminded_at,display_name,expected_threads_id"
     )
     req = urllib.request.Request(url, headers=_supabase_headers())
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read())
+    return botlib.json_list_retry(req, timeout=15, label="Supabase(リマインド済み一覧)")
 
 
 def salon_exists(customer_id: str) -> bool:
@@ -138,8 +137,7 @@ def salon_exists(customer_id: str) -> bool:
         f"&select=id&limit=1"
     )
     req = urllib.request.Request(url, headers=_supabase_headers())
-    with urllib.request.urlopen(req, timeout=10) as r:
-        rows = json.loads(r.read())
+    rows = botlib.json_list_retry(req, timeout=10, label="Supabase(連携確認)")
     return len(rows) > 0
 
 
@@ -193,8 +191,8 @@ def mark_reminded(line_uid: str):
         headers={**_supabase_headers(), "Prefer": "return=minimal"},
         method="PATCH",
     )
-    with urllib.request.urlopen(req, timeout=10):
-        pass
+    # ⚠️ ここは「リマインドを送った」印。失敗を握りつぶすと同じ人に何度も届く
+    botlib.urlopen_retry(req, timeout=10, label="Supabase(送信済みの記録)")
 
 
 def notify_admin(text: str):
@@ -213,7 +211,15 @@ def _hours_since(iso: str) -> int:
         return 0
 
 
+# 1件送ったあと「送信済み」を記録し終えるのに要る余裕（秒）。
+# これを割ったら、新しく送らずに次回へ回す＝送ったのに記録できない状態を作らない
+RESERVE_FOR_RECORD = 40
+
+
 def main():
+    # ステップ上限360秒より短くする。さらに「送信→記録」の途中で切れないよう、
+    # 送信前に RESERVE_FOR_RECORD 秒の余裕を確認する（2026-09-15 Sol指摘①）
+    botlib.start_run(280)
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("[ERROR] SUPABASE_URL/SUPABASE_SERVICE_KEY が未設定", file=sys.stderr)
         sys.exit(1)
@@ -308,9 +314,16 @@ def main():
         if salon_exists(customer_id):
             continue  # 連携完了済み
 
+        if botlib.run_time_left() < RESERVE_FOR_RECORD:
+            print(f"[skip] {display}: 残り時間が足りないので次回に回します（送信途中で切れないため）")
+            continue
         try:
             send_client_reminder2(line_uid, customer_id)
             reminded2_map[line_uid] = datetime.now(timezone.utc).isoformat()
+            # ⚠️ 送った直後に記録する。ループの最後にまとめて保存すると、途中で落ちた回に
+            # 記録が丸ごと消え、次回この人へもう一度送ってしまう（クライアント宛の二重送信）
+            state["reminded2"] = reminded2_map
+            _save_state(state)
             print(f"[sent2] {display}: 2回目リマインド送信完了（1回目から{_hours_since(reminded_at)}時間）")
             sent2_list.append(f"{who}・1回目から{_hours_since(reminded_at)}h")
         except Exception as e:
@@ -328,7 +341,7 @@ def main():
                 f"手動でフォロー検討してください。"
             )
 
-    if sent2_list:
+    if sent2_list:      # 念のためもう一度（送信直後に保存済み）
         state["reminded2"] = reminded2_map
         _save_state(state)
 

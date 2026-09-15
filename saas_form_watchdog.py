@@ -21,6 +21,9 @@ import os
 import sys
 import time
 import urllib.request
+import uuid
+
+import botlib
 import urllib.parse
 import urllib.error
 
@@ -44,27 +47,13 @@ def _supabase_headers():
     return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
 
 
-def _supabase_get(path_qs, retries=3, wait=5):
-    """Supabaseを読む。一時不調（502/503/504・タイムアウト・接続切れ）は待って再試行する。
-    ⚠️ 再試行0回だと、1回の502でwatchdog自体が落ちて失敗LINEが飛ぶ
-    （2026-09-14 22:28 に実際に起きた。Supabaseは数分で回復していた）。"""
+def _supabase_get(path_qs):
+    """Supabaseから一覧を読む。一時不調（502等）は botlib 側で5→20→60秒待って再試行。
+    ⚠️ 空の応答を0件にしない（取りこぼしを「無し」と報告してしまう）。
+    2026-09-14 22:28 に1回の502でこのwatchdog自体が落ち、無駄な🚨が飛んだ反省。"""
     url = f"{SUPABASE_URL}/rest/v1/{path_qs}"
-    last = None
-    for attempt in range(1, retries + 1):
-        req = urllib.request.Request(url, headers=_supabase_headers())
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                return json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            if e.code not in (500, 502, 503, 504):
-                raise                       # 認証・URL間違いなど、待っても直らないものは即失敗
-            last = e
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            last = e
-        if attempt < retries:
-            print(f"[watchdog] Supabase一時不調（{attempt}/{retries}）: {last} → {wait}秒待って再試行")
-            time.sleep(wait)
-    raise RuntimeError(f"Supabaseに{retries}回失敗: {last}")
+    req = urllib.request.Request(url, headers=_supabase_headers())
+    return botlib.json_list_retry(req, timeout=20, label="Supabase(安全網)")
 
 
 def fetch_line_users_step_map():
@@ -124,17 +113,18 @@ def notify_admin(text):
         print("=== [DRYRUN] ADMIN_NOTIFY_LINE_TOKEN未設定のため送信せず表示のみ ===")
         print(text)
         return
+    # 同じ retry key を付けて再試行する＝受理済みなら409で返り、二重送信で枠を使わない
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/broadcast",
         data=json.dumps({"messages": [{"type": "text", "text": text}]}).encode(),
-        headers={"Authorization": f"Bearer {ADMIN_LINE_TOKEN}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {ADMIN_LINE_TOKEN}", "Content-Type": "application/json",
+                 "X-Line-Retry-Key": str(uuid.uuid4())},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            print(f"[notify] admin LINE HTTP {r.status}")
-    except urllib.error.HTTPError as e:
-        print(f"[notify] admin LINE 失敗 HTTP {e.code}: {e.read().decode()[:200]}", file=sys.stderr)
+    # ⚠️ ここで握りつぶすと「取りこぼしを見つけたのに誰にも届かず、ジョブは成功」になる
+    # （2026-09-15 Sol指摘#1）。検知はもう終わっているので、失敗させてよい
+    botlib.line_post_retry(req, timeout=15)
+    print("[notify] admin LINE 送信OK")
 
 
 def load_cancelled():
@@ -155,6 +145,7 @@ def load_cancelled():
 
 
 def main():
+    botlib.start_run(400)   # ジョブ上限600秒。保存と通知の時間を残す
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("[ERROR] SUPABASE_URL/SUPABASE_SERVICE_KEY 未設定", file=sys.stderr)
         sys.exit(1)

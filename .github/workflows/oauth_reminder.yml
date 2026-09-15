@@ -48,6 +48,7 @@ jobs:
         run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
 
       - name: Run OAuth reminder
+        timeout-minutes: 6
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -60,7 +61,12 @@ jobs:
         run: rm -f google_service_account.json
 
       # stateの保存先はprivateリポ（saas-posts）。公開リポには一切コミットしない
+      # ⚠️ 成功時だけにすると、途中で落ちた回に「送った記録」が保存されず、
+      # 次回また同じクライアントへ送ってしまう（2026-09-15 Sol指摘#3）。
+      # 送信済みの記録は、実行が失敗しても必ず残す
       - name: Commit reminder state (private repo)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
         run: |
           cd .saas_posts_private
           git config user.name "github-actions[bot]"

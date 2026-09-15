@@ -16,6 +16,9 @@ import json
 import os
 import sys
 import urllib.request
+import uuid
+
+import botlib
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -139,8 +142,7 @@ def _sq_post(path, body):
                  "Content-Type": "application/json",
                  "Square-Version": "2025-04-16"}
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read())
+    return botlib.json_retry(req, timeout=20, label="Square(書き込み)")
 
 
 def _sq_get(path):
@@ -150,8 +152,7 @@ def _sq_get(path):
         headers={"Authorization": f"Bearer {token}",
                  "Square-Version": "2025-04-16"}
     )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read())
+    return botlib.json_retry(req, timeout=20, label="Square(読み取り)")
 
 
 def _get_plan_catalog():
@@ -209,6 +210,10 @@ def _get_square_expected_totals(month_str):
         try:
             d_actions = _sq_get(f"/v2/subscriptions/{sub_id}?include=actions").get("subscription", {})
             actions = d_actions.get("actions", []) or []
+        except RuntimeError:
+            # ⚠️ Squareに届かなかったのを「解約・停止の予定なし」に読み替えない。
+            # 解約予定の人を課金対象として集計してしまう（2026-09-15 Sol指摘#5）
+            raise
         except Exception:
             actions = []
 
@@ -286,14 +291,16 @@ def _notify(msg):
         print(f"[LINE通知 skip] {msg}")
         return
     body = json.dumps({"messages": [{"type": "text", "text": msg}]}).encode()
+    # ⚠️ LINEは「受け取ったのに応答だけ失われる」ことがあり、素直に再送すると同じ通知が
+    # 2通届いて配信枠を無駄に使う。同じ retry key を付けるとLINE側が重複を捨ててくれる
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/broadcast",
         data=body,
         headers={"Authorization": f"Bearer {token}",
-                 "Content-Type": "application/json"}
+                 "Content-Type": "application/json",
+                 "X-Line-Retry-Key": str(uuid.uuid4())}
     )
-    with urllib.request.urlopen(req, timeout=10) as r:
-        r.read()
+    botlib.line_post_retry(req, timeout=10)
 
 
 # ── シート構造ヘルパー ────────────────────────────────────────────────────
@@ -529,6 +536,7 @@ def _get_sheets_totals(svc, sheet_name):
 
 # ── エントリポイント ──────────────────────────────────────────────────────
 if __name__ == "__main__":
+    botlib.start_run(600)   # ジョブ上限900秒。再試行の待ちが件数ぶん積み上がっても超えない
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     if cmd == "create":
         cmd_create()

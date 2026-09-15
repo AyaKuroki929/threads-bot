@@ -20,7 +20,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 14
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +35,7 @@ jobs:
 
       # 実測値を取り直し、古い数字が入った未使用ストックを削除する
       - name: Refresh facts and purge stale posts
+        timeout-minutes: 4
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -43,6 +44,7 @@ jobs:
 
       # 削除で在庫が減った分を、新しい数字で作り直す
       - name: Refill promo posts with fresh numbers
+        timeout-minutes: 7
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # 使用済みの正本はDB。渡さないと補充側だけ「未使用」と数えて補充が止まる
@@ -53,6 +55,7 @@ jobs:
       # ⚠️ 補充が失敗しても、数字の更新と古い在庫の除去はリポジトリに残す。
       # 残さないと、次回また古い数字のまま同じ処理をやり直すことになる
       - name: Commit
+        timeout-minutes: 2
         if: "!cancelled()"
         run: |
           git config user.name "github-actions[bot]"
@@ -66,7 +69,7 @@ jobs:
 
       # 失敗＝古い数字のまま配信され続ける状態。沈黙させない
       - name: Warn on failure
-        if: failure()
+        if: ${{ failure() || cancelled() }}   # 時間切れは cancelled 扱いで failure() に掛からない
         env:
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}

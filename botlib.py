@@ -19,12 +19,114 @@ import json
 import os
 import re
 import sys
+import http.client
+import time
+import urllib.error
 import urllib.request
 
 LINE_API = "https://api.line.me/v2/bot/message"
 
 
 # ── JSON状態ファイル ──────────────────────────────────────────
+# 一時的な通信エラー。相手（Supabase / Square / LINE / Threads）の数分の不調を、
+# こちらの「失敗」に変換しないための共通の待ち方。
+# ⚠️ 再試行0回だと、1回の502でスクリプトが落ちて無駄な🚨LINEが飛ぶ
+# （2026-09-14 22:28 watchdogで実際に起きた。Supabaseは数分で回復していた）。
+# 待ち時間は 5→20→60秒（合計85秒）。単発の502だけでなく「1〜2分続いて自然に戻る」
+# 不調まで吸収するため（2026-09-15 Sol指摘#3。0/5/10秒では10秒で諦めていた）。
+_RETRY_CODES = (429, 500, 502, 503, 504)
+_RETRY_WAITS = (5, 20, 60)
+_RETRY_ERRORS = (urllib.error.URLError, TimeoutError, OSError, http.client.IncompleteRead)
+
+
+# 実行全体の持ち時間。再試行の待ちが対象件数ぶん積み上がって、ジョブの制限時間を
+# 超える（＝cancelled になり失敗通知からも外れる）のを防ぐ。
+# 各スクリプトが main の先頭で start_run() を呼び、ジョブ上限より短い値を入れる。
+_RUN_DEADLINE = 0.0
+
+
+def start_run(budget_sec: int):
+    """この実行に使ってよい秒数を決める（ワークフローのジョブ上限より短くすること）。"""
+    global _RUN_DEADLINE
+    _RUN_DEADLINE = time.monotonic() + budget_sec
+    print(f"[budget] この実行の持ち時間：{budget_sec}秒")
+
+
+def run_time_left() -> float:
+    """残り秒数。start_run を呼んでいなければ無制限を意味する大きな値。"""
+    return (_RUN_DEADLINE - time.monotonic()) if _RUN_DEADLINE else float("inf")
+
+
+def urlopen_retry(req, *, timeout: int = 20, waits=_RETRY_WAITS, label: str = "",
+                  deadline: float = 0.0):
+    """urlopen の再試行つき版。返り値は body（bytes）。
+    待っても直らないもの（401/403/404・URL間違いなど）は再試行せず即失敗させる。
+    持ち時間（start_run / deadline）を超える通信も待ちもしない。"""
+    name = label or "通信"
+    last = None
+    for i, wait in enumerate((*waits, None)):
+        left = min(run_time_left(),
+                   (deadline - time.monotonic()) if deadline else float("inf"))
+        if left <= 0:
+            raise RuntimeError(f"{name}：持ち時間を使い切りました（{type(last).__name__ if last else '未通信'}）") from last
+        try:
+            # ⚠️ 残り時間より長いtimeoutを指定しない。1回の遅い応答で持ち時間を
+            # 食い潰すと、保存や通知の時間が残らない（2026-09-15 Sol指摘#2）。
+            # 持ち時間の指定が無いとき left は無限大なので、int にせずそのまま通す
+            t = timeout if left == float("inf") else min(timeout, max(1, int(left)))
+            with urllib.request.urlopen(req, timeout=t) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in _RETRY_CODES:
+                raise
+            last = e
+        except _RETRY_ERRORS as e:
+            last = e
+        if wait is None:
+            break
+        if min(run_time_left(), (deadline - time.monotonic()) if deadline else float("inf")) <= wait:
+            print(f"[retry] {name}：残り時間が足りないので再試行を打ち切ります")
+            break
+        print(f"[retry] {name} 一時不調（{i + 1}/{len(waits) + 1}）: {last}"
+              f" → {wait}秒待って再試行")
+        time.sleep(wait)
+    raise RuntimeError(f"{name}に失敗: {type(last).__name__}: {last}") from last
+
+
+def json_retry(req, **kw):
+    """urlopen_retry の結果をJSONとして読む。
+    ⚠️ 空ボディを None で返さない。呼び出し側が「0件」と誤読して、連携済みの人を
+    未連携と判断したり、ページングを途中で打ち切ったりする（2026-09-15 Sol指摘#1）。"""
+    label = kw.get("label") or "通信"
+    body = urlopen_retry(req, **kw)
+    if not body or not body.strip():
+        raise RuntimeError(f"{label}：中身が空の応答が返りました（0件と区別できません）")
+    return json.loads(body)
+
+
+def line_post_retry(req, *, timeout: int = 10, label: str = "LINE送信"):
+    """LINE送信の再試行。⚠️ 同じ X-Line-Retry-Key を付けたリクエストを使い回すこと。
+    受理済みなのに応答だけ失われた場合、再送すると 409 と x-line-accepted-request-id が
+    返る＝「もう届いている」。これを失敗にすると、無駄な🚨が飛び、次の実行で
+    新しいキーの同じ通知を二重に送ってしまう（2026-09-15 Sol指摘#2）。"""
+    try:
+        return urlopen_retry(req, timeout=timeout, label=label)
+    except urllib.error.HTTPError as e:
+        if e.code == 409 and e.headers is not None \
+                and e.headers.get("x-line-accepted-request-id"):
+            print(f"[retry] {label}：すでに受理済みでした（409・二重送信しません）")
+            return b""
+        raise
+
+
+def json_list_retry(req, **kw):
+    """一覧を取る用。配列で返ってくることまで確かめる（辞書のエラー応答を0件にしない）。"""
+    data = json_retry(req, **kw)
+    if not isinstance(data, list):
+        raise RuntimeError(f"{kw.get('label') or '通信'}：一覧のはずが {type(data).__name__} が返りました")
+    return data
+
+
 def load_json(path: str, default):
     """JSONファイルを読む。無い場合は default。壊れている場合も default だが、
     「ファイルなし」と区別できるよう stderr に警告を出す（静かな状態巻き戻りの検知用）。"""

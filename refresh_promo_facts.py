@@ -23,6 +23,8 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+
+import botlib
 from datetime import datetime, timedelta, timezone
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -37,8 +39,7 @@ BEMOLLE_IG_ID = "17841470478859455"
 
 
 def _get(url: str, timeout: int = 25):
-    with urllib.request.urlopen(url, timeout=timeout) as r:
-        return json.loads(r.read())
+    return botlib.json_retry(url, timeout=timeout, label="外部API")
 
 
 def _sb(path: str):
@@ -51,8 +52,7 @@ def _sb(path: str):
         sep = "&" if "?" in path else "?"
         url = f"{base}/rest/v1/{path}{sep}limit={page}&offset={offset}"
         req = urllib.request.Request(url, headers={"apikey": key, "Authorization": f"Bearer {key}"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            chunk = json.loads(r.read())
+        chunk = botlib.json_list_retry(req, timeout=30, label="Supabase")
         out += chunk
         if len(chunk) < page:
             return out
@@ -159,6 +159,9 @@ def purge_stale(facts: dict) -> int:
 
 
 def main() -> int:
+    # ジョブ上限600秒。このあと generate_promo_posts.py の生成とcommitが控えているので、
+    # ここで使ってよいのは前半だけ（2026-09-15 Sol指摘#4）
+    botlib.start_run(180)
     facts = collect()
     prev = {}
     if os.path.exists(FACTS_FILE):
