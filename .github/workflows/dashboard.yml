@@ -35,6 +35,9 @@ jobs:
         run: pip install markdown
 
       - name: Generate dashboard & manual
+        env:
+          # 残り枠を読むためだけに使う（送信はしない）
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
           python3 dashboard.py
           mkdir -p _site

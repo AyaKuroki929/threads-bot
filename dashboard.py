@@ -7,7 +7,9 @@ self-contained HTML（dashboard.html）を出力する。
 
 使い方: python3 dashboard.py  → dashboard.html を出力
 """
-import json, os, html
+import json, os, html, urllib.request
+
+import botlib
 from datetime import datetime, timezone, timedelta
 
 JST = timezone(timedelta(hours=9))
@@ -124,6 +126,52 @@ for p in [os.path.expanduser("~/threads_bot/.cookie_refresh_last_run")]:
 cards.append(("🔌 基盤", "Cookie自動更新", "good",
               "稼働中", cr_log_ts or "定期", "最終更新" if cr_log_ts else "毎日12/19時(Mac)",
               "ThreadsのログインCookieをSecretに反映"))
+
+
+# --- 基盤: LINE通知の残り枠 ---
+# 彩さんの方針「LINEの通知は貴重。使える件数が決まっている」（2026-09-14）。
+# 残量を見る手段が無かったので、LINEを1通も使わずに見えるここへ出す。
+# ⚠️ トークンが無い環境（手元での実行）でも落とさない。数字は出さず「未取得」にする。
+def _line_quota():
+    token = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")
+    if not token:
+        return None
+    def _get(path):
+        req = urllib.request.Request("https://api.line.me" + path,
+                                     headers={"Authorization": f"Bearer {token}"})
+        return json.loads(botlib.urlopen_retry(req, timeout=15, label="LINE枠"))
+    q = _get("/v2/bot/message/quota")
+    if q.get("type") != "limited":      # 無制限プランなら残量の概念が無い
+        return {"limit": None, "used": _get("/v2/bot/message/quota/consumption").get("totalUsage", 0)}
+    return {"limit": q.get("value", 0),
+            "used": _get("/v2/bot/message/quota/consumption").get("totalUsage", 0)}
+
+
+try:
+    _q = _line_quota()
+except Exception as e:      # noqa: BLE001 枠が取れなくてもダッシュボード全体は出す
+    print(f"[dashboard] LINE枠の取得に失敗（続行）: {e}")
+    _q = None
+
+if _q is None:
+    cards.append(("🔌 基盤", "LINE通知の残り枠", "warn", "未取得", "—", "今月の残り",
+                  "トークンが読めず取得できませんでした"))
+elif _q["limit"] is None:
+    cards.append(("🔌 基盤", "LINE通知の残り枠", "good", "無制限", f"{_q['used']}", "今月の送信数",
+                  "上限なしプランのため残量の制限はありません"))
+else:
+    _left = max(_q["limit"] - _q["used"], 0)
+    _pct = (_left / _q["limit"] * 100) if _q["limit"] else 0
+    _st = "good" if _pct >= 40 else ("warn" if _pct >= 15 else "crit")
+    cards.append(("🔌 基盤", "LINE通知の残り枠", _st,
+                  "余裕あり" if _st == "good" else ("少なめ" if _st == "warn" else "残りわずか"),
+                  f"{_left}", f"通 / {_q['limit']}通中",
+                  f"今月すでに{_q['used']}通。毎月1日に戻ります"))
+    if _st != "good":
+        alerts.append(("LINE通知の残り枠が少なくなっています",
+                       f"今月あと{_left}通（{_q['limit']}通中{_q['used']}通を使用）。"
+                       "急ぎでない通知は止めるか、次の月まで待つ判断を。",
+                       "crit" if _st == "crit" else "warn"))
 
 
 # ── 全体ステータス ───────────────────────────────────────────
