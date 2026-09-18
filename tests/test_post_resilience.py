@@ -15,6 +15,7 @@ import fake_threads_supabase as fakeapi
 fakeapi.install()
 W = fakeapi.W
 
+import botlib
 import post_state, post_saas
 NOTIFY_OK = [True]      # False にすると「送信に失敗した」状況を作れる
 
@@ -45,6 +46,9 @@ class _Clock:
     def sleep(self, sec):
         self.offset += sec
         self.slept += sec
+    def monotonic(self):
+        # botlib の再試行は monotonic で締切を見る。仮想時計に合わせて進める
+        return self.offset
     def time(self):
         if self.frozen is not None:
             return self.frozen + self.offset
@@ -58,6 +62,9 @@ class _Clock:
 import time as _real_time
 CLOCK = _Clock()
 post_saas.time = CLOCK
+# ⚠️ botlib の再試行（Supabaseの一時不調で5秒待つ等）も仮想時計に乗せる。
+# 実時間で待つと136シナリオ分の待ちが積み上がり、テストが数十分かかる
+botlib.time = CLOCK
 fakeapi.W.on_latency = CLOCK.sleep
 post_state_time = CLOCK
 post_state.SUPABASE_URL = os.environ["SUPABASE_URL"]; post_state.SUPABASE_KEY = "fake"
@@ -838,7 +845,11 @@ try:
 except SystemExit:
     pass
 check("投稿しない", len(W.posts) == 0, len(W.posts))
-check("理由を通知する", any("一致しません" in m for m in NOTIFY),
+check("その場では送らない（1実行1通にまとめる）", not NOTIFY, NOTIFY)
+check("理由が最後の1通に乗る", any("一致しません" in r for _, r in post_saas._FAILED_ACCOUNTS),
+      json.dumps(post_saas._FAILED_ACCOUNTS, ensure_ascii=False)[:200])
+post_saas._notify_reused()
+check("まとめて1通で知らせる", len(NOTIFY) == 1 and "一致しません" in NOTIFY[0],
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
 
 # ── 35. ジョブ全体の持ち時間を超えたら、残りは次の実行へ回す ────────────────
@@ -1020,7 +1031,11 @@ try:
 except SystemExit:
     pass
 check("投稿しない", len(W.posts) == 0, len(W.posts))
-check("理由を通知する", any("実アカウント" in m for m in NOTIFY),
+check("その場では送らない（1実行1通にまとめる）", not NOTIFY, NOTIFY)
+check("理由が最後の1通に乗る", any("実アカウント" in r for _, r in post_saas._FAILED_ACCOUNTS),
+      json.dumps(post_saas._FAILED_ACCOUNTS, ensure_ascii=False)[:200])
+post_saas._notify_reused()
+check("まとめて1通で知らせる", len(NOTIFY) == 1 and "実アカウント" in NOTIFY[0],
       json.dumps(NOTIFY, ensure_ascii=False)[:200])
 W.me_behavior = None
 
@@ -1257,8 +1272,12 @@ try:
 except SystemExit as e:
     code = e.code
 check("トークン切れ専用の終了コード3", code == 3, code)
-check("再連携の通知が出る", any("トークン切れ" in m for m in NOTIFY),
-      json.dumps(NOTIFY, ensure_ascii=False)[:150])
+check("その場では送らない（1実行1通にまとめる）", not NOTIFY, NOTIFY)
+check("再連携が必要なアカウントとして積まれる", post_saas._TOKEN_EXPIRED,
+      json.dumps(post_saas._TOKEN_EXPIRED, ensure_ascii=False)[:150])
+post_saas._notify_reused()
+check("まとめて1通で再連携を知らせる", len(NOTIFY) == 1 and "再連携" in NOTIFY[0],
+      json.dumps(NOTIFY, ensure_ascii=False)[:200])
 check("401は再試行しない", W.calls.get("me", 0) == 1, W.calls.get("me"))
 W.me_behavior = None
 

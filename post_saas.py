@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.error
 from datetime import datetime, timezone, timedelta
 
+import botlib
 from botlib import line_broadcast
 import post_state
 
@@ -35,6 +36,21 @@ DRY_RUN = os.environ.get("DRY_RUN") == "1" or "--dry-run" in sys.argv
 THREADS_API = "https://graph.threads.net/v1.0"
 
 
+# 投稿中の通信は「短く数回」。長く待つと他のアカウントの投稿機会を食う。
+# ⚠️ 2026-09-19 07:12 に Connection reset by peer（Errno 104）が1回来て、
+# 再試行が無かったため彩さん個人・piccolo・syoko の3アカウントが朝の投稿に失敗した。
+_SB_WAITS = (2, 5, 10)
+
+
+def _sb_budget():
+    """再試行に使ってよい秒数。ジョブの持ち時間を超えて待たせない。
+    締切が無ければ None（＝制限なし）。⚠️ 残り0を 0.0 で返すこと。None にすると
+    「制限なし」と解釈され、締切を越えて再試行してしまう。
+    ⚠️ ここで time.monotonic() を呼ばない（テストは time を差し替えるため）。"""
+    left = _time_left()
+    return None if left is None else max(left, 0.0)
+
+
 def supabase_get(path, params=None):
     url = f"{SUPABASE_URL}/rest/v1/{path}"
     if params:
@@ -44,8 +60,9 @@ def supabase_get(path, params=None):
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
     })
-    with urllib.request.urlopen(req, timeout=_timeout(30)) as resp:
-        return json.loads(resp.read())
+    body = botlib.urlopen_retry(req, timeout=_timeout(30), waits=_SB_WAITS,
+                                label=f"Supabase GET {path}", budget=_sb_budget())
+    return json.loads(body) if body else []
 
 
 def supabase_post(path, data):
@@ -60,8 +77,9 @@ def supabase_post(path, data):
         },
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=_timeout(30)) as resp:
-        return resp.status
+    botlib.urlopen_retry(req, timeout=_timeout(30), waits=_SB_WAITS,
+                         label=f"Supabase POST {path}", budget=_sb_budget())
+    return 201
 
 
 def get_active_salons():
@@ -292,21 +310,36 @@ def _judge_candidates(salon_name, slot, used_texts):
 # 最後に1通のLINEにまとめる（サロンごとに送ると同じ障害で何通も飛ぶ。LINEの配信数には上限がある）
 _REUSED: list = []
 _NOTICES: list = []
+# この実行で投稿できなかったアカウント。1件ずつ送ると1回の障害で最大11通になる
+# （2026-09-19 実際に3通届いた）。実行の最後に1通へまとめる
+_FAILED_ACCOUNTS: list = []      # (アカウント名, 理由)
+_TOKEN_EXPIRED: list = []        # 再連携が必要なアカウント名
 
 
 def _notify_reused() -> bool:
     """再利用・注意事項があれば1通で知らせる。戻り値＝知らせる必要が無かった／届いた。
     届かなかった回は呼び出し側が非0で終わり、ワークフローの失敗通知に拾わせる。"""
-    if DRY_RUN or not (_REUSED or _NOTICES):
+    if DRY_RUN or not (_REUSED or _NOTICES or _FAILED_ACCOUNTS or _TOKEN_EXPIRED):
         _REUSED.clear(); _NOTICES.clear()
+        _FAILED_ACCOUNTS.clear(); _TOKEN_EXPIRED.clear()
         return True
     blocks = []
+    if _TOKEN_EXPIRED:
+        blocks.append("🔑 とうこさん：Threadsとの再連携が必要なアカウントがあります\n\n"
+                      + "\n".join(f"・@{a}" for a in dict.fromkeys(_TOKEN_EXPIRED))
+                      + f"\n\nスロット：{SLOT}\n連携リンクを送り直してください。")
+    if _FAILED_ACCOUNTS:
+        blocks.append(f"⚠️ とうこさん：{SLOT} の投稿が出なかったアカウントがあります（{len(_FAILED_ACCOUNTS)}件）\n\n"
+                      + "\n".join(f"・@{a}：{r}" for a, r in _FAILED_ACCOUNTS)
+                      + "\n\n次の実行が自動で出し直します（10分以上たった枠から引き継ぐ仕組み）。"
+                      "\n同じ顔ぶれが続くときだけ声をかけてください。")
     if _REUSED:
         blocks.append("⚠️ とうこさん：投稿ストックが尽きて、過去の投稿を再利用する本文を選びました。\n\n"
                       + "\n".join(f"・{x}" for x in _REUSED)
                       + "\n\n続くと同じ本文が繰り返されます。saas_generate.yml を手動実行してください。")
     blocks.extend(dict.fromkeys(_NOTICES))     # 同じ注意は1回だけ
     _REUSED.clear(); _NOTICES.clear()
+    _FAILED_ACCOUNTS.clear(); _TOKEN_EXPIRED.clear()
     text = "\n\n────\n\n".join(blocks)
     # LINEの本文上限5000字はUTF-16単位（絵文字は2単位）
     u16 = lambda t: len(t.encode("utf-16-le")) // 2
@@ -581,8 +614,9 @@ def supabase_patch(path, data, params):
         },
         method="PATCH"
     )
-    with urllib.request.urlopen(req, timeout=_timeout(15)) as resp:
-        return resp.status
+    botlib.urlopen_retry(req, timeout=_timeout(15), waits=_SB_WAITS,
+                         label=f"Supabase PATCH {path}", budget=_sb_budget())
+    return 204
 
 
 def _container_status(creation_id, token):
@@ -2627,11 +2661,11 @@ def main():
         except TokenExpiredError as e:
             print(f"[TOKEN_EXPIRED] {salon_name}: {e}")
             results["token_expired"].append(salon_name)
-            _notify_line(f"🔑 とうこさん トークン切れ\n\nアカウント：{account_label}\nスロット：{SLOT}\n\nThreadsとの再連携が必要です。")
+            _TOKEN_EXPIRED.append(account_label)
         except Exception as e:
             print(f"[ERROR] {salon_name}: {e}")
             results["error"].append(f"{salon_name}: {e}")
-            _notify_line(f"⚠️ とうこさん 投稿エラー\n\nアカウント：{account_label}\nスロット：{SLOT}\nエラー：{str(e)[:100]}")
+            _FAILED_ACCOUNTS.append((account_label, str(e)[:100]))
 
     # ── 本来の枠を出し切ってから、1つ前のスロットの取りこぼしを埋める ────────
     # ⚠️ 先に穴埋めをすると、確実に動く今回の投稿機会を潰す（2026-09-12 Sol指摘#2）。

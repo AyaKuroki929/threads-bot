@@ -7,6 +7,7 @@
 import os
 import shutil
 import subprocess
+import re
 import sys
 import tempfile
 
@@ -444,11 +445,44 @@ def main() -> int:
         for f, text in originals.items():
             open(f, "w", encoding="utf-8").write(text)
 
+    bad += _check_no_disabled_guards()
+
     if bad:
         print(f"\n🚨 {len(bad)}件の安全装置がテストで守られていません")
         return 1
     print(f"\n✅ {len(MUTATIONS)}件の安全装置は、壊すとテストが落ちます")
+    print("✅ 安全装置を無効化したまま置き忘れた箇所もありません")
     return 0
+
+
+# ⚠️ 2026-09-19：編集の途中で `if _out_of_time(...)` を `if False and _out_of_time(...)` に
+# 書き換えてしまい、締切を越えてから投稿要求を送る（＝二重投稿の防止が効かない）状態で
+# 一度コミット寸前まで進んだ。人の目とレビューだけに頼らず、機械で見張る。
+_GUARD_FILES = ("post_saas.py", "post_state.py", "botlib.py", "generate_saas_posts.py",
+                "saas_form_watchdog.py", "oauth_reminder.py", "subsk_ops.py")
+_DISABLED_PATTERNS = (
+    re.compile(r"if\s+False\b"),
+    re.compile(r"if\s+True\s+or\b"),
+    re.compile(r"^\s*#\s*(if|assert)\s.*_out_of_time"),
+    re.compile(r"and\s+False\b"),
+    re.compile(r"or\s+True\b"),
+)
+
+
+def _check_no_disabled_guards():
+    """「常に通る／常に通らない」形に潰された条件が残っていないか、静的に見張る。"""
+    found = []
+    for fn in _GUARD_FILES:
+        path = os.path.join(BASE, fn)
+        if not os.path.exists(path):
+            continue
+        for i, line in enumerate(open(path, encoding="utf-8"), 1):
+            code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else line
+            for pat in _DISABLED_PATTERNS:
+                if pat.search(code):
+                    print(f"🚨 無効化された条件が残っています: {fn}:{i}: {line.strip()[:90]}")
+                    found.append(f"{fn}:{i}")
+    return found
 
 
 if __name__ == "__main__":

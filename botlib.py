@@ -58,11 +58,18 @@ def run_time_left() -> float:
 
 
 def urlopen_retry(req, *, timeout: int = 20, waits=_RETRY_WAITS, label: str = "",
-                  deadline: float = 0.0):
+                  deadline: float = 0.0, budget=None):
     """urlopen の再試行つき版。返り値は body（bytes）。
     待っても直らないもの（401/403/404・URL間違いなど）は再試行せず即失敗させる。
     持ち時間（start_run / deadline）を超える通信も待ちもしない。"""
     name = label or "通信"
+    # budget＝「今から何秒使ってよいか」。呼び出し側が自分の時計（テストで差し替えられる等）で
+    # 残り時間を持っている場合はこちらを使う。monotonic を呼ぶのは botlib 側だけにする。
+    # ⚠️ 0 を「制限なし」と解釈してはいけない。持ち時間を使い切った状態で再試行を
+    # 続けると、締切を越えてから投稿要求を送る＝二重投稿の防止が効かなくなる
+    # （2026-09-19 テスト㊴㊸で実際に検出）。None のときだけ制限なし
+    if budget is not None and not deadline:
+        deadline = time.monotonic() + max(float(budget), 0.0)
     last = None
     for i, wait in enumerate((*waits, None)):
         left = min(run_time_left(),
