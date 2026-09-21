@@ -40,16 +40,31 @@ def _extract_json_array(raw: str) -> list:
     import re
     s = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
     dec = json.JSONDecoder()
+
+    def _looks_like_posts(arr) -> bool:
+        # 投稿らしさ＝要素が「文字列」か「文字列だけの配列」で、1つ以上ある
+        return bool(arr) and all(
+            (isinstance(x, str) and x.strip())
+            or (isinstance(x, list) and x and all(isinstance(y, str) for y in x))
+            for x in arr)
+
+    candidates = []
     idx = s.find("[")
     while idx != -1:
         try:
-            obj, _ = dec.raw_decode(s[idx:])
+            obj, used = dec.raw_decode(s[idx:])
             if isinstance(obj, list):
-                return obj
+                candidates.append(obj)
+                idx = s.find("[", idx + max(used, 1))   # 読めた範囲の内側は飛ばす
+                continue
         except json.JSONDecodeError:
             pass
         idx = s.find("[", idx + 1)
-    raise ValueError("JSON配列が見つからない")
+    # 説明文中の [] や [1] を本体と取り違えない：投稿らしい配列のうち最大の物を採用（2026-09-21 Sol指摘）
+    good = [c for c in candidates if _looks_like_posts(c)]
+    if good:
+        return max(good, key=len)
+    raise ValueError("投稿として読めるJSON配列が見つからない")
 
 
 def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_fn):
@@ -63,7 +78,7 @@ def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_f
             return [], f"期限切れ（残り{int(left)}秒・{attempt - 1}回試行）"
         try:
             resp = client.with_options(
-                timeout=min(CALL_TIMEOUT_SEC, left), max_retries=1,
+                timeout=min(CALL_TIMEOUT_SEC, left), max_retries=0,   # 再試行は外側ループが担う（期限管理を一元化）
             ).messages.create(
                 model=GEN_MODEL, max_tokens=GEN_MAX_TOKENS,
                 system=system_prompt,
@@ -164,6 +179,9 @@ def generate_for_account(account, posts_file, used_file, rules_file):
     needed_slots, filled_slots = [], []   # 枠ごとに「要る」「足せた」を数える
 
     all_slots = [s for s in ["morning", "morning2", "noon", "evening2", "evening"] if s in posts]
+    if not all_slots:
+        print(f"[generate] {posts_file} に投稿枠が1つも無い → 補充不能・異常終了", file=sys.stderr)
+        sys.exit(1)
     for slot in all_slots:
         remaining = _remaining(posts, used, slot)
         if remaining > THRESHOLD:
@@ -321,6 +339,9 @@ def _supabase_used_texts(salon_name: str) -> set:
         sid = rows[0]["id"]
         used, page, offset = set(), 1000, 0
         while True:
+            if _time_left() < 30:   # 実行全体の期限を守る。読み切れなければ「不完全」扱い（安全側）
+                print(f"[generate/saas] Supabase使用済み取得が期限内に終わらず（{salon_name}）→ 不完全として扱います")
+                return used, False
             url = (f"{SUPABASE_URL}/rest/v1/post_logs?salon_id=eq.{sid}"
                    f"&select=post_content&order=id.asc&limit={page}&offset={offset}")
             with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=20) as r:

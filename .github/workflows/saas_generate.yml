@@ -20,7 +20,7 @@ on:
         default: false
 
 concurrency:
-  group: saas-generate
+  group: post-saas   # post_saas.yml と同じ投稿ファイルを書くため同一グループで直列化（並行更新で相手の追加分が消える穴・2026-09-21 Sol指摘）
   cancel-in-progress: false
 
 jobs:

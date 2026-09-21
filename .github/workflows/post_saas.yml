@@ -30,7 +30,7 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # 投稿(最大8分)＋補充(2アカ×最大2分)＋通知・保存の余裕（2026-09-21 Sol指摘）
+    timeout-minutes: 20  # 準備1分＋投稿最大8分＋先行保存＋補充最大4分＋通知1分＋保存1分＝約15分。5分の余裕（2026-09-21 Sol指摘）
     permissions:
       contents: write
 
@@ -127,7 +127,7 @@ jobs:
             noon)    URL="$HC_NOON" ;;
             evening) URL="$HC_EVENING" ;;
           esac
-          [ -n "$URL" ] && curl -sS --retry 3 "$URL" || true
+          [ -n "$URL" ] && curl -sS --max-time 20 --retry 3 "$URL" || true   # 滞留すると先行保存に届かない（Sol指摘）
 
       # 補充より先に「投稿済み」の記録だけ保存する。補充が時間切れ・失敗しても
       # 成功済み投稿の last_run が消えず、heartbeatの誤リカバリ(二重投稿)を防ぐ（2026-09-21 Sol指摘）
@@ -168,7 +168,7 @@ jobs:
         id: refill
         if: success()
         continue-on-error: true
-        timeout-minutes: 6
+        timeout-minutes: 4   # Python側の期限=1アカ120秒×2 に対する外側の保険
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
