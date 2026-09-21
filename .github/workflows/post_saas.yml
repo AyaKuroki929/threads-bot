@@ -30,18 +30,20 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # 各工程に上限あり：準備〜投稿(≤9分)＋HC1＋先行保存2＋補充5＋通知2＋保存3＝最大22分だが投稿は通常1〜3分。全工程が同時に最悪になる確率は極小（2026-09-21 Sol指摘）
+    timeout-minutes: 40  # 全工程に個別上限あり（合計最大≈34分: checkout3+取得2+重ね1+Python3+slot1+pip3+投稿9+LINE1+HC1+先行保存2+補充5+通知2+保存3）→ 必ず通知・保存まで到達する（2026-09-21 Sol指摘）
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 3
 
       # 第三者クライアントの投稿プールは private リポ saas-posts に隔離（公開リポに顧客ファイルを置かない）。
       # 実行時にここへ取得して posts_saas/ に重ねる＝post_saas.py の読込ロジックは不変。
       # continue-on-error 必須：private取得が失敗しても投稿ジョブは止めない。
       # 公開リポにクライアントファイルが残っている間はそれがフォールバックになる。
       - name: クライアント投稿プールを private から取得
+        timeout-minutes: 2
         continue-on-error: true
         uses: actions/checkout@v4
         with:
@@ -50,6 +52,7 @@ jobs:
           path: .saas_posts_private
 
       - name: private投稿プールを posts_saas/ に重ねる
+        timeout-minutes: 1
         continue-on-error: true
         run: |
           mkdir -p posts_saas
@@ -57,11 +60,13 @@ jobs:
           echo "posts_saas/ 合計 $(ls posts_saas/*.json 2>/dev/null | wc -l | tr -d ' ') ファイル（うちprivate $(ls .saas_posts_private/posts_*.json 2>/dev/null | wc -l | tr -d ' ') 件を重ね済み）"
 
       - name: Set up Python
+        timeout-minutes: 3
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Determine slot
+        timeout-minutes: 1
         id: slot
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -75,9 +80,11 @@ jobs:
           fi
 
       - name: Install dependencies
+        timeout-minutes: 3
         run: pip install -q "anthropic<2"
 
       - name: Threads投稿（公式API）
+        timeout-minutes: 9
         id: post
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -98,6 +105,7 @@ jobs:
       # LINE通知済み（.line_notified が置かれる）。ここは「Python到達前のインフラ層
       # 失敗」だけを拾う保険（1障害＝複数broadcastの浪費を防ぐ）。
       - name: LINE通知（インフラ層の失敗のみ）
+        timeout-minutes: 1
         if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
         env:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
