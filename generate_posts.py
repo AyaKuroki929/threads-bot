@@ -13,11 +13,84 @@ Claude API で新規投稿を GENERATE_COUNT 本自動生成して posts.json �
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.parse
 
 THRESHOLD = 5
 GENERATE_COUNT = 12
+GEN_MODEL = "claude-sonnet-4-6"
+GEN_MAX_TOKENS = 8000          # 12本×2部のJSONが4000で途切れた実害（2026-09-21）
+GEN_ATTEMPTS = 3               # 生成→読み取り→検証を通るまでの試行回数（初回込み）
+CALL_TIMEOUT_SEC = 60          # API 1回の通信期限
+# この実行全体の期限。ジョブ(15分)の中で投稿(最大8分)・通知・保存の時間を残すため、
+# 1アカウントあたり既定120秒。超えたら残りの枠は諦めて異常終了（沈黙にはしない）
+REFILL_DEADLINE_SEC = int(os.environ.get("REFILL_DEADLINE_SEC", "120"))
+_DEADLINE = time.monotonic() + REFILL_DEADLINE_SEC
+
+
+def _time_left() -> float:
+    return _DEADLINE - time.monotonic()
+
+
+def _extract_json_array(raw: str) -> list:
+    """本文から最初の「配列として読めるJSON」を取り出す。
+    前後に説明文や角括弧が混ざっても、先頭の [ から順に raw_decode で試すので壊れない
+    （最初の[〜最後の]を切る方式は、末尾に『補足 ]』が付くだけで崩れた・2026-09-21 Sol指摘）。"""
+    import re
+    s = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+    dec = json.JSONDecoder()
+    idx = s.find("[")
+    while idx != -1:
+        try:
+            obj, _ = dec.raw_decode(s[idx:])
+            if isinstance(obj, list):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        idx = s.find("[", idx + 1)
+    raise ValueError("JSON配列が見つからない")
+
+
+def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_fn):
+    """生成→JSON読み取り→検証を「検証済みの投稿が1本以上残る」まで最大 GEN_ATTEMPTS 回。
+    途切れ(max_tokens)・JSON崩れ・全件検証NG・API例外はすべて再試行の対象。
+    期限(_DEADLINE)が近いときは打ち切る。戻り値 = (投稿リスト, 失敗理由)。成功なら理由は ""。"""
+    reason = ""
+    for attempt in range(1, GEN_ATTEMPTS + 1):
+        left = _time_left()
+        if left < 20:
+            return [], f"期限切れ（残り{int(left)}秒・{attempt - 1}回試行）"
+        try:
+            resp = client.with_options(
+                timeout=min(CALL_TIMEOUT_SEC, left), max_retries=1,
+            ).messages.create(
+                model=GEN_MODEL, max_tokens=GEN_MAX_TOKENS,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+        except Exception as e:
+            reason = f"API失敗: {e}"
+            print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}")
+            continue
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            reason = "出力が上限で途切れた"
+            print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}")
+            continue
+        raw = "".join(getattr(b, "text", "") for b in resp.content
+                      if getattr(b, "type", "") == "text").strip()
+        try:
+            arr = _extract_json_array(raw)
+        except ValueError as e:
+            reason = f"JSON崩れ: {e}"
+            print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}（先頭: {raw[:80]!r}）")
+            continue
+        kept = keep_fn(arr)
+        if kept:
+            return kept, ""
+        reason = f"読み取れたが検証を通る投稿が0本（{len(arr)}本中）"
+        print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}")
+    return [], reason or "不明"
 # ツリー1部目の長さ。ここがタイムラインに出る部分で、短いほど見られる（2026-09-13 実測）
 FIRST_PART_MIN = 25
 FIRST_PART_MAX = 160
@@ -68,13 +141,18 @@ def _load_rules(rules_file):
 def generate_for_account(account, posts_file, used_file, rules_file):
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        print("[generate] ANTHROPIC_API_KEY が未設定 → スキップ")
-        return False
+        # 設定漏れは「補充不能」なので静かに0で終わらない（2026-09-21 Sol指摘）
+        print("[generate] ANTHROPIC_API_KEY が未設定 → 補充不能・異常終了", file=sys.stderr)
+        sys.exit(1)
 
     posts_path = os.path.join(_BASE, posts_file)
     used_path = os.path.join(_BASE, used_file)
 
-    posts = json.load(open(posts_path, encoding="utf-8"))
+    try:
+        posts = json.load(open(posts_path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"[generate] {posts_file} を読めません → 補充不能・異常終了: {e}", file=sys.stderr)
+        sys.exit(1)
     used = json.load(open(used_path, encoding="utf-8")) if os.path.exists(used_path) else {}
     rules = _load_rules(rules_file)
     facts = _load_facts(account)
@@ -166,74 +244,45 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 既存投稿のサンプル（この角度は避ける）：
 {existing_samples}"""
 
-        try:
-            resp = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            raw = resp.content[0].text.strip()
-
-            start = raw.find("[")
-            end = raw.rfind("]") + 1
-            if start == -1 or end == 0:
-                print(f"[generate] {slot}: JSONが見つからない → スキップ")
-                print(f"[generate] raw: {raw[:200]}")
-                continue
-
-            new_posts = json.loads(raw[start:end])
-            if not isinstance(new_posts, list) or len(new_posts) == 0:
-                print(f"[generate] {slot}: 不正な形式 → スキップ")
-                continue
-
-            # ⚠️ ここで配列を1本につなげると、せっかくの短い1部目が200字超の
-            # 単発に戻る（2026-09-13 Sol指摘）。つなげず、形が違う物を落とす。
-            kept = [x for x in new_posts if _valid_tree(x)]
-            if len(kept) < len(new_posts):
-                print(f"[generate] {slot}: 形か長さが基準外 {len(new_posts) - len(kept)}本を除外"
+        def _keep(arr, _slot=slot):
+            # ⚠️ 配列を1本につなげると短い1部目が200字超に戻る（2026-09-13 Sol指摘）。形が違う物を落とす
+            kept = [x for x in arr if _valid_tree(x)]
+            if len(kept) < len(arr):
+                print(f"[generate] {_slot}: 形か長さが基準外 {len(arr) - len(kept)}本を除外"
                       f"（ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字）")
-            new_posts = kept
             if facts:
                 from botlib import judge_fact_violations
                 checked = []
                 skip_money = bool(facts.get("_金額は照合しない"))
-                for x in new_posts:
+                for x in kept:
                     why = judge_fact_violations(x, facts)
                     if why and skip_money and "金額" in why:
                         why = None      # 価格はご本人の判断。場所と営業時間だけ見る
                     if why:
-                        print(f"[generate] {slot}: 事実照合NGで除外 → {why}: {str(x)[:50]}")
+                        print(f"[generate] {_slot}: 事実照合NGで除外 → {why}: {str(x)[:50]}")
                     else:
                         checked.append(x)
-                new_posts = checked
-            if not new_posts:
-                print(f"[generate] {slot}: 追加なし")
-                continue
-
-            # 最終バリデーション: 空/短すぎ/薬機法NG語/プロンプト漏れ/ハングルを
-            # プールに入れる前に落とす（プロンプト任せにしない最後の防波堤）
+                kept = checked
+            # 最終バリデーション: 空/短すぎ/薬機法NG語/プロンプト漏れ/ハングルを落とす最後の防波堤
             from botlib import validate_post_content
-            valid_posts = []
-            for p in new_posts:
-                reason = validate_post_content(p)
-                if reason:
-                    print(f"[generate] {slot}: 検証NGで除外 → {reason}: {str(p)[:60]}")
+            out = []
+            for x in kept:
+                r = validate_post_content(x)
+                if r:
+                    print(f"[generate] {_slot}: 検証NGで除外 → {r}: {str(x)[:60]}")
                 else:
-                    valid_posts.append(p)
-            new_posts = valid_posts
-            if not new_posts:
-                print(f"[generate] {slot}: 全件検証NG → このスロットは追加なし")
-                continue
+                    out.append(x)
+            return out
 
-            posts[slot].extend(new_posts)
-            print(f"[generate] {account} {slot}: {len(new_posts)}本を追加（合計{len(posts[slot])}本）")
-            generated_any = True
-            filled_slots.append(slot)
-
-        except Exception as e:
-            print(f"[generate] {account} {slot}: 生成エラー → スキップ: {e}")
+        new_posts, why = _generate_valid_posts(client, system_prompt, user_prompt,
+                                               f"{account} {slot}", _keep)
+        if not new_posts:
+            print(f"[generate] {account} {slot}: 補充できず → {why}")
             continue
+        posts[slot].extend(new_posts)
+        print(f"[generate] {account} {slot}: {len(new_posts)}本を追加（合計{len(posts[slot])}本）")
+        generated_any = True
+        filled_slots.append(slot)
 
     if generated_any:
         with open(posts_path, "w", encoding="utf-8") as f:
@@ -317,15 +366,20 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
     """SaaSモード: posts_saas/から読んでSupabaseで残数確認、生成してposts_saas/に書き戻す"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        print("[generate/saas] ANTHROPIC_API_KEY が未設定 → スキップ")
-        return False
+        # 設定漏れ・ファイル欠落は「補充不能」なので静かに0で終わらない（2026-09-21 Sol指摘）
+        print("[generate/saas] ANTHROPIC_API_KEY が未設定 → 補充不能・異常終了", file=sys.stderr)
+        sys.exit(1)
 
     posts_path = os.path.join(_BASE, posts_file)
-    if not os.path.exists(posts_path):
-        print(f"[generate/saas] {posts_file} が見つかりません → スキップ")
-        return False
-
-    posts = json.load(open(posts_path, encoding="utf-8"))
+    try:
+        posts = json.load(open(posts_path, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print(f"[generate/saas] {posts_file} を読めません → 補充不能・異常終了: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not any(slot in posts for slot in ("morning", "noon", "evening")):
+        print(f"[generate/saas] {posts_file} に morning/noon/evening の枠が無い → 補充不能・異常終了",
+              file=sys.stderr)
+        sys.exit(1)
     rules = _load_rules(rules_file)
     facts = _load_facts(salon_name)
 
@@ -338,7 +392,7 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
     def _key(p):
         return p if isinstance(p, str) else (p[0] if p else "")
 
-    needed, filled = [], []
+    needed, filled, degraded = [], [], []
     for slot in ["morning", "noon", "evening"]:
         if slot not in posts:
             continue
@@ -351,7 +405,8 @@ def generate_for_saas(salon_name: str, posts_file: str, rules_file: str):
         if not used_complete:
             if len(posts[slot]) > THRESHOLD * 3:
                 print(f"[generate/saas] {salon_name} {slot}: 使用済みを数え切れず、"
-                      f"在庫は{len(posts[slot])}本あるので補充を見送ります")
+                      f"在庫は{len(posts[slot])}本あるので補充を見送ります（在庫十分とは区別・要確認）")
+                degraded.append(slot)
                 continue
             print(f"[generate/saas] {salon_name} {slot}: 使用済みを数え切れないため安全側に倒して補充します")
         needed.append(slot)
@@ -422,68 +477,45 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 既存投稿のサンプル（この角度は避ける）：
 {existing_samples}"""
 
-        try:
-            # 生成→JSON読み取りを最大3回試す（出力がトークン上限で途中で切れる/形式が崩れると
-            # 1回きりでは補充ゼロになり🚨が飛ぶ実害・2026-09-21 bemolle noon）
-            new_posts = None
-            for attempt in range(3):
-                resp = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=8000,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_prompt}]
-                )
-                if resp.stop_reason == "max_tokens":
-                    print(f"[generate/saas] {slot}: 出力が上限で途切れた → 再生成 {attempt + 1}/3")
-                    continue
-                raw = resp.content[0].text.strip()
-                start = raw.find("[")
-                end = raw.rfind("]") + 1
-                if start == -1 or end == 0:
-                    print(f"[generate/saas] {slot}: JSONが見つからない → 再生成 {attempt + 1}/3")
-                    continue
-                try:
-                    new_posts = json.loads(raw[start:end])
-                    break
-                except json.JSONDecodeError as e:
-                    print(f"[generate/saas] {slot}: JSON崩れ → 再生成 {attempt + 1}/3: {e}")
-                    continue
-            if new_posts is None:
-                print(f"[generate/saas] {slot}: 3回とも読み取れず → スキップ")
-                continue
-            if not isinstance(new_posts, list) or len(new_posts) == 0:
-                print(f"[generate/saas] {slot}: 不正な形式 → スキップ")
-                continue
-            # ⚠️ ここで配列を1本につなげると、せっかくの短い1部目が200字超の
-            # 単発に戻る（2026-09-13 Sol指摘）。つなげず、形が違う物を落とす。
-            kept = [x for x in new_posts if _valid_tree(x)]
-            if len(kept) < len(new_posts):
-                print(f"[generate] {slot}: 形か長さが基準外 {len(new_posts) - len(kept)}本を除外"
+        def _keep(arr, _slot=slot):
+            # ⚠️ 配列を1本につなげると短い1部目が200字超に戻る（2026-09-13 Sol指摘）。形が違う物を落とす
+            kept = [x for x in arr if _valid_tree(x)]
+            if len(kept) < len(arr):
+                print(f"[generate] {_slot}: 形か長さが基準外 {len(arr) - len(kept)}本を除外"
                       f"（ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字）")
-            new_posts = kept
             if facts:
                 from botlib import judge_fact_violations
                 checked = []
                 skip_money = bool(facts.get("_金額は照合しない"))
-                for x in new_posts:
+                for x in kept:
                     why = judge_fact_violations(x, facts)
                     if why and skip_money and "金額" in why:
                         why = None      # 価格はご本人の判断。場所と営業時間だけ見る
                     if why:
-                        print(f"[generate] {slot}: 事実照合NGで除外 → {why}: {str(x)[:50]}")
+                        print(f"[generate] {_slot}: 事実照合NGで除外 → {why}: {str(x)[:50]}")
                     else:
                         checked.append(x)
-                new_posts = checked
-            if not new_posts:
-                print(f"[generate] {slot}: 追加なし")
-                continue
-            posts[slot].extend(new_posts)
-            print(f"[generate/saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
-            generated_any = True
-            filled.append(slot)
-        except Exception as e:
-            print(f"[generate/saas] {salon_name} {slot}: 生成エラー → スキップ: {e}")
+                kept = checked
+            # 最終バリデーション（非SaaSと同じ防波堤。SaaSだけ素通りしていた・2026-09-21 Sol指摘）
+            from botlib import validate_post_content
+            out = []
+            for x in kept:
+                r = validate_post_content(x)
+                if r:
+                    print(f"[generate/saas] {_slot}: 検証NGで除外 → {r}: {str(x)[:60]}")
+                else:
+                    out.append(x)
+            return out
+
+        new_posts, why = _generate_valid_posts(client, system_prompt, user_prompt,
+                                               f"{salon_name} {slot}", _keep)
+        if not new_posts:
+            print(f"[generate/saas] {salon_name} {slot}: 補充できず → {why}")
             continue
+        posts[slot].extend(new_posts)
+        print(f"[generate/saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
+        generated_any = True
+        filled.append(slot)
 
     if generated_any:
         with open(posts_path, "w", encoding="utf-8") as f:
@@ -496,6 +528,11 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
     if missed:
         print(f"[generate/saas] {salon_name}: 補充できなかった枠 {', '.join(missed)} → 異常終了",
               file=sys.stderr)
+        sys.exit(1)
+    if degraded:
+        # Supabaseが読めず補充の要否を判断できなかった枠。在庫はあるが「正常」ではない
+        print(f"[generate/saas] {salon_name}: 使用済みを数え切れず判断不能の枠 {', '.join(degraded)}"
+              f" → 異常終了（Supabase接続を確認）", file=sys.stderr)
         sys.exit(1)
 
     return generated_any

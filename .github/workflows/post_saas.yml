@@ -30,7 +30,7 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15  # 投稿(最大8分)＋補充(2アカ×最大2分)＋通知・保存の余裕（2026-09-21 Sol指摘）
     permissions:
       contents: write
 
@@ -129,42 +129,93 @@ jobs:
           esac
           [ -n "$URL" ] && curl -sS --retry 3 "$URL" || true
 
+      # 補充より先に「投稿済み」の記録だけ保存する。補充が時間切れ・失敗しても
+      # 成功済み投稿の last_run が消えず、heartbeatの誤リカバリ(二重投稿)を防ぐ（2026-09-21 Sol指摘）
+      - name: 投稿状態を先に保存（last_run）
+        if: ${{ !cancelled() }}
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot"
+          git pull --rebase --autostash origin main 2>&1 || true
+          git add last_run.json last_run_personal.json promo_used_personal.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "no last_run changes"
+          else
+            git commit -m "state: last_run ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            ok=""
+            for i in 1 2 3; do
+              git pull --rebase --autostash -X theirs origin main 2>&1 || true
+              if git push; then ok=1; break; fi
+              sleep 5
+            done
+            if [ -z "$ok" ]; then
+              code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
+                -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: last_runのpush 3回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
+              touch .line_notified
+              exit 1
+            fi
+          fi
+
       # ⚠️ continue-on-error と `|| echo` で異常終了を握りつぶしていたため、
       # 補充が止まっても誰も気づかなかった（2026-09-13 Sol指摘）。
       # 片方が落ちても両方走らせるが、落ちたことは必ず残して最後にLINEで知らせる。
+      # pip失敗・時間切れも「失敗」として通知に乗せる（2026-09-21 Sol指摘：pip失敗が無通知で緑だった）
       - name: 投稿ストック自動補充（ベモーレ・個人）
+        id: refill
         if: success()
         continue-on-error: true
+        timeout-minutes: 6
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REFILL_DEADLINE_SEC: "120"   # 1アカウントあたりの生成期限（Python側で打ち切り→異常終了）
         run: |
-          pip install -q "anthropic<2"
           failed=""
-          python3 generate_posts.py saas_bemolle  || failed="$failed bemolle"
-          python3 generate_posts.py saas_personal || failed="$failed personal"
+          python3 -c "import anthropic" 2>/dev/null || pip install -q "anthropic<2" || failed="$failed pip"
+          if [ -z "$failed" ]; then
+            python3 generate_posts.py saas_bemolle  || failed="$failed bemolle"
+            python3 generate_posts.py saas_personal || failed="$failed personal"
+          fi
           if [ -n "$failed" ]; then
             echo "refill_failed=$failed" >> "$GITHUB_ENV"
             echo "::warning::投稿ストックの補充に失敗:$failed"
+            exit 1
           fi
 
+      # 補充ステップが「失敗フラグを立てずに死んだ」場合（時間切れ・想定外の異常終了）も拾う
       - name: 補充失敗を知らせる
-        if: ${{ !cancelled() && env.refill_failed != '' }}
+        if: ${{ !cancelled() && (env.refill_failed != '' || steps.refill.outcome == 'failure') }}
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          REFILL_FAILED: ${{ env.refill_failed }}
+          REFILL_OUTCOME: ${{ steps.refill.outcome }}
         run: |
-          [ -z "$LINE_TOKEN" ] && exit 0
-          MSG="⚠️ 投稿ストックの補充に失敗しました\n\n対象:${{ env.refill_failed }}\n\nこのままだと在庫が尽きて同じ投稿が再利用されます。\nsaas_generate を手動実行するか、ログを確認してください。"
-          curl -sS -X POST https://api.line.me/v2/bot/message/broadcast \
-            -H "Authorization: Bearer $LINE_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$MSG\"}]}" || true
-          exit 1
+          TARGET="${REFILL_FAILED:-（不明：ステップが $REFILL_OUTCOME で終了＝時間切れ等）}"
+          MSG="⚠️ 投稿ストックの補充に失敗しました\n\n対象:${TARGET}\n\nこのままだと在庫が尽きて同じ投稿が再利用されます。\nGitHub Actions（post_saas）のログを確認してください。"
+          if [ -z "$LINE_TOKEN" ]; then
+            echo "::error::LINEトークン未設定のため補充失敗を通知できません（対象:${TARGET}）"
+            exit 1
+          fi
+          sent=""
+          for i in 1 2 3; do
+            code=$(curl -sS --max-time 15 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer $LINE_TOKEN" -H "Content-Type: application/json" \
+              -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$MSG\"}]}") || code=000
+            if [ "$code" = "200" ]; then sent=1; break; fi
+            echo "LINE送信失敗 HTTP $code（$i/3）"; sleep 5
+          done
+          [ -n "$sent" ] || echo "::error::補充失敗のLINE通知が届きませんでした（対象:${TARGET}）"
+          exit 1   # 補充失敗はジョブを赤くして残す（保存ステップは !cancelled() なので走る）
 
       # if: success() だと、クライアント1件の失敗で成功済みアカウントの last_run が
       # pushされず、heartbeatが「未投稿」と誤判定して旧プールから二重投稿していた。
       # 失敗時も必ず走らせて last_run を保存する。
-      - name: Commit posts files（補充・last_runの保存）
+      - name: Commit posts files（補充分の保存）
         if: ${{ !cancelled() }}
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
