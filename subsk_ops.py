@@ -80,6 +80,16 @@ CREATE_AUTO_QTY = {
 }
 
 
+# ── シート作成時に丸ごと消す顧客（定期便ストップ＝解約）─────────────────
+# 「ストップ」は1ヶ月スキップと違い、翌月以降ずっと無くなる。前月コピーだと行が
+# 残り続けるため、その顧客の行を名前で丸ごと削除する（2026-08-01 彩さん「不要な行は消してね」）。
+# 一部の商品だけやめる場合は行削除ではなく CREATE_AUTO_QTY で数量を "" にする。
+# 形式: {"作成するシートの月": [(顧客名, メモ), ...]}
+CREATE_AUTO_REMOVE = {
+    "2026-11": [("若松さん", "定期便ストップ（2026-09-21指示・Ruby Fit2個）")],
+}
+
+
 # ── Google Sheets 認証 ────────────────────────────────────────────────────
 def _sheets():
     if SA_PATH.exists():
@@ -322,6 +332,50 @@ def _col_letter(col_idx):
     return letters[col_idx // 26 - 1] + letters[col_idx % 26]
 
 
+# ── シート整形ヘルパー ────────────────────────────────────────────────────
+def _remove_rows_by_name(svc, sheet_name, sheet_id, names):
+    """指定した顧客名の行を丸ごと削除する。同名が複数行あれば全部消す。
+    行番号のズレを避けるため下の行から削除する。戻り値は削除した行の説明リスト。"""
+    rows = _read_sheet(svc, sheet_name)
+    targets = []
+    for idx, row in enumerate(rows):          # idx は 0-indexed
+        nm = (row[COL_NAME] if len(row) > COL_NAME else "").strip()
+        if nm and nm in names:
+            targets.append((idx, nm))
+    if not targets:
+        return []
+    _batch_update(svc, [
+        {"deleteDimension": {"range": {"sheetId": sheet_id, "dimension": "ROWS",
+                                       "startIndex": i, "endIndex": i + 1}}}
+        for i, _ in sorted(targets, reverse=True)
+    ])
+    return [f"{nm}（{idx + 1}行目）" for idx, nm in targets]
+
+
+def _fix_total_formulas(svc, sheet_name):
+    """合計行のSUM範囲を「4行目〜合計行の1つ上」に張り直す。
+    行を挿入・削除しても集計から漏れないようにするため（2026-09-18 氏井さん追加時に
+    挿入した行が合計に入らなかった実例・2026-09-21 自動化）。"""
+    rows = _read_sheet(svc, sheet_name)
+    total_row = None
+    for idx, row in enumerate(rows):
+        if (row[COL_NAME] if len(row) > COL_NAME else "").strip() == "合計":
+            total_row = idx + 1               # 1-indexed
+            break
+    if not total_row or total_row < 5:
+        return None
+    amt_idx = _amount_col_idx(rows)           # 0-indexed
+    last = total_row - 1
+    cols = [_col_letter(i) for i in range(2, amt_idx + 1)]   # C列〜金額列
+    svc.spreadsheets().values().update(
+        spreadsheetId=SID,
+        range=f"'{sheet_name}'!C{total_row}:{cols[-1]}{total_row}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[f"=SUM({c}4:{c}{last})" for c in cols]]}
+    ).execute()
+    return f"合計行{total_row}の集計範囲を4〜{last}行に更新"
+
+
 # ── CREATE: 翌月シートの作成 ──────────────────────────────────────────────
 def cmd_create():
     svc = _sheets()
@@ -384,13 +438,30 @@ def cmd_create():
         restored = [f"・{memo}（{cell}={qty}）" for cell, qty, memo in entries]
         print("[create] 自動投入:\n" + "\n".join(restored))
 
-    # 6. LINE通知
+    # 6. 定期便ストップの顧客を行ごと削除（必ず数量投入の後。先に消すとセル位置がズレる）
+    removed = []
+    stop_entries = CREATE_AUTO_REMOVE.get(nxt_str, [])
+    if stop_entries:
+        names = {nm for nm, _ in stop_entries}
+        deleted = _remove_rows_by_name(svc, nxt_name, new_sheet_id, names)
+        memo_by_name = dict(stop_entries)
+        removed = [f"・{d} — {memo_by_name.get(d.split('（')[0], '')}" for d in deleted]
+        print("[create] 行削除:\n" + ("\n".join(removed) if removed else "対象なし"))
+
+    # 7. 合計行の集計範囲を張り直す（行の挿入・削除で漏れないように毎回実行）
+    fixed = _fix_total_formulas(svc, nxt_name)
+    if fixed:
+        print(f"[create] {fixed}")
+
+    # 8. LINE通知
     msg = (f"[サブスク表] {nxt_name} シートを作成しました。\n"
            f"数量は{cur_name}の内容を引き継いでいます。\n"
            f"スキップ・追加・解約などの変更分だけ調整してください。\n"
            f"https://docs.google.com/spreadsheets/d/{SID}/edit")
     if restored:
         msg += "\n\n以下は自動で数量を入れました（1ヶ月スキップの再開・課金月商品）：\n" + "\n".join(restored)
+    if removed:
+        msg += "\n\n以下は定期便ストップのため行ごと削除しました：\n" + "\n".join(removed)
     _notify(msg)
     print(msg)
 
