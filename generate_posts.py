@@ -423,19 +423,34 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 {existing_samples}"""
 
         try:
-            resp = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            raw = resp.content[0].text.strip()
-            start = raw.find("[")
-            end = raw.rfind("]") + 1
-            if start == -1 or end == 0:
-                print(f"[generate/saas] {slot}: JSONが見つからない → スキップ")
+            # 生成→JSON読み取りを最大3回試す（出力がトークン上限で途中で切れる/形式が崩れると
+            # 1回きりでは補充ゼロになり🚨が飛ぶ実害・2026-09-21 bemolle noon）
+            new_posts = None
+            for attempt in range(3):
+                resp = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=8000,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}]
+                )
+                if resp.stop_reason == "max_tokens":
+                    print(f"[generate/saas] {slot}: 出力が上限で途切れた → 再生成 {attempt + 1}/3")
+                    continue
+                raw = resp.content[0].text.strip()
+                start = raw.find("[")
+                end = raw.rfind("]") + 1
+                if start == -1 or end == 0:
+                    print(f"[generate/saas] {slot}: JSONが見つからない → 再生成 {attempt + 1}/3")
+                    continue
+                try:
+                    new_posts = json.loads(raw[start:end])
+                    break
+                except json.JSONDecodeError as e:
+                    print(f"[generate/saas] {slot}: JSON崩れ → 再生成 {attempt + 1}/3: {e}")
+                    continue
+            if new_posts is None:
+                print(f"[generate/saas] {slot}: 3回とも読み取れず → スキップ")
                 continue
-            new_posts = json.loads(raw[start:end])
             if not isinstance(new_posts, list) or len(new_posts) == 0:
                 print(f"[generate/saas] {slot}: 不正な形式 → スキップ")
                 continue
