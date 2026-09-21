@@ -25,12 +25,48 @@ GEN_ATTEMPTS = 3               # 生成→読み取り→検証を通るまで�
 CALL_TIMEOUT_SEC = 60          # API 1回の通信期限
 # この実行全体の期限。ジョブ(15分)の中で投稿(最大8分)・通知・保存の時間を残すため、
 # 1アカウントあたり既定120秒。超えたら残りの枠は諦めて異常終了（沈黙にはしない）
-REFILL_DEADLINE_SEC = int(os.environ.get("REFILL_DEADLINE_SEC", "120"))
+REFILL_DEADLINE_SEC = int(os.environ.get("REFILL_DEADLINE_SEC", "90"))
 _DEADLINE = time.monotonic() + REFILL_DEADLINE_SEC
 
 
 def _time_left() -> float:
     return _DEADLINE - time.monotonic()
+
+
+class _RefillTimeout(Exception):
+    pass
+
+
+def _arm_hard_deadline() -> None:
+    """期限を実時間で強制する。HTTPのtimeoutは『待ち時間』の上限で経過時間の上限ではないため、
+    少しずつ受信が続くと120秒を超えられた（2026-09-21 Sol指摘）。alarmで通信中でも中断する。"""
+    import signal
+
+    def _on_alarm(signum, frame):
+        raise _RefillTimeout(f"実行全体の期限 {REFILL_DEADLINE_SEC}秒を超過")
+
+    try:
+        signal.signal(signal.SIGALRM, _on_alarm)
+        signal.alarm(REFILL_DEADLINE_SEC)
+    except (AttributeError, ValueError):
+        pass   # SIGALRM が無い環境（Windows等）では従来の残時間チェックのみ
+
+
+def _disarm_deadline() -> None:
+    """保存（ファイル書き込み）中に期限で中断されて壊れたJSONを残さないよう、生成が終わったら解除する。"""
+    try:
+        import signal
+        signal.alarm(0)
+    except (AttributeError, ValueError):
+        pass
+
+
+def _save_json_atomic(path: str, data) -> None:
+    """書きかけで止まっても元ファイルが壊れないよう、一時ファイルに書いてから差し替える。"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 def _extract_json_array(raw: str) -> list:
@@ -84,6 +120,8 @@ def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_f
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
+        except _RefillTimeout as e:
+            return [], f"期限切れ（通信中に超過）: {e}"
         except Exception as e:
             reason = f"API失敗: {e}"
             print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}")
@@ -292,8 +330,11 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
                     out.append(x)
             return out
 
-        new_posts, why = _generate_valid_posts(client, system_prompt, user_prompt,
+        try:
+            new_posts, why = _generate_valid_posts(client, system_prompt, user_prompt,
                                                f"{account} {slot}", _keep)
+        except _RefillTimeout as e:
+            new_posts, why = [], f"期限切れ: {e}"
         if not new_posts:
             print(f"[generate] {account} {slot}: 補充できず → {why}")
             continue
@@ -302,9 +343,9 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
         generated_any = True
         filled_slots.append(slot)
 
+    _disarm_deadline()
     if generated_any:
-        with open(posts_path, "w", encoding="utf-8") as f:
-            json.dump(posts, f, ensure_ascii=False, indent=2)
+        _save_json_atomic(posts_path, posts)
         print(f"[generate] {posts_file} を更新しました")
 
     # 補充が必要だったのに1本も生成できなかった＝このままではプールが枯渇して
@@ -528,8 +569,11 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
                     out.append(x)
             return out
 
-        new_posts, why = _generate_valid_posts(client, system_prompt, user_prompt,
+        try:
+            new_posts, why = _generate_valid_posts(client, system_prompt, user_prompt,
                                                f"{salon_name} {slot}", _keep)
+        except _RefillTimeout as e:
+            new_posts, why = [], f"期限切れ: {e}"
         if not new_posts:
             print(f"[generate/saas] {salon_name} {slot}: 補充できず → {why}")
             continue
@@ -538,9 +582,9 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
         generated_any = True
         filled.append(slot)
 
+    _disarm_deadline()
     if generated_any:
-        with open(posts_path, "w", encoding="utf-8") as f:
-            json.dump(posts, f, ensure_ascii=False, indent=2)
+        _save_json_atomic(posts_path, posts)
         print(f"[generate/saas] {posts_file} を更新しました")
 
     # ⚠️ 1枠でも成功すると全体が成功に見えてしまうと、朝夜の失敗に誰も気づかない。
@@ -561,6 +605,7 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 
 if __name__ == "__main__":
     account = sys.argv[1] if len(sys.argv) > 1 else "bemolle"
+    _arm_hard_deadline()
 
     if account == "bemolle":
         generate_for_account("bemolle", "posts.json", "used_posts.json", "GENERATE_RULES.md")

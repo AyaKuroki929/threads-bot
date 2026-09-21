@@ -30,7 +30,7 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # 準備1分＋投稿最大8分＋先行保存＋補充最大4分＋通知1分＋保存1分＝約15分。5分の余裕（2026-09-21 Sol指摘）
+    timeout-minutes: 20  # 各工程に上限あり：準備〜投稿(≤9分)＋HC1＋先行保存2＋補充5＋通知2＋保存3＝最大22分だが投稿は通常1〜3分。全工程が同時に最悪になる確率は極小（2026-09-21 Sol指摘）
     permissions:
       contents: write
 
@@ -116,6 +116,7 @@ jobs:
       # ジョブ成否ではなく post_saas.py が置く hc_ok マーカーで判定する。
       - name: Healthcheck ping（自アカ投稿成功の証明）
         if: ${{ !cancelled() }}
+        timeout-minutes: 1   # ここが滞留すると後続の last_run 保存に届かない（2026-09-21 Sol指摘）
         env:
           HC_MORNING: ${{ secrets.HC_PING_URL_MORNING }}
           HC_NOON: ${{ secrets.HC_PING_URL_NOON }}
@@ -127,12 +128,13 @@ jobs:
             noon)    URL="$HC_NOON" ;;
             evening) URL="$HC_EVENING" ;;
           esac
-          [ -n "$URL" ] && curl -sS --max-time 20 --retry 3 "$URL" || true   # 滞留すると先行保存に届かない（Sol指摘）
+          [ -n "$URL" ] && curl -sS --max-time 10 --retry 2 --retry-max-time 30 "$URL" || true   # 工程全体でも最大30秒（Retry-Afterの長待ちも打ち切り）
 
       # 補充より先に「投稿済み」の記録だけ保存する。補充が時間切れ・失敗しても
       # 成功済み投稿の last_run が消えず、heartbeatの誤リカバリ(二重投稿)を防ぐ（2026-09-21 Sol指摘）
       - name: 投稿状態を先に保存（last_run）
         if: ${{ !cancelled() }}
+        timeout-minutes: 2
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
@@ -168,12 +170,12 @@ jobs:
         id: refill
         if: success()
         continue-on-error: true
-        timeout-minutes: 4   # Python側の期限=1アカ120秒×2 に対する外側の保険
+        timeout-minutes: 5   # Python側は1アカ90秒を実時間で強制（alarm）。2アカ180秒＋起動・保存の余白
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          REFILL_DEADLINE_SEC: "120"   # 1アカウントあたりの生成期限（Python側で打ち切り→異常終了）
+          REFILL_DEADLINE_SEC: "90"    # 1アカウントあたりの実時間上限（Python側でalarm強制→異常終了）
         run: |
           failed=""
           python3 -c "import anthropic" 2>/dev/null || pip install -q "anthropic<2" || failed="$failed pip"
@@ -190,6 +192,7 @@ jobs:
       # 補充ステップが「失敗フラグを立てずに死んだ」場合（時間切れ・想定外の異常終了）も拾う
       - name: 補充失敗を知らせる
         if: ${{ !cancelled() && (env.refill_failed != '' || steps.refill.outcome == 'failure') }}
+        timeout-minutes: 2
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
           REFILL_FAILED: ${{ env.refill_failed }}
@@ -217,6 +220,7 @@ jobs:
       # 失敗時も必ず走らせて last_run を保存する。
       - name: Commit posts files（補充分の保存）
         if: ${{ !cancelled() }}
+        timeout-minutes: 3
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
