@@ -22,10 +22,15 @@ GENERATE_COUNT = 12
 GEN_MODEL = "claude-sonnet-4-6"
 GEN_MAX_TOKENS = 8000          # 12本×2部のJSONが4000で途切れた実害（2026-09-21）
 GEN_ATTEMPTS = 3               # 生成→読み取り→検証を通るまでの試行回数（初回込み）
-CALL_TIMEOUT_SEC = 60          # API 1回の通信期限
-# この実行全体の期限。ジョブ(15分)の中で投稿(最大8分)・通知・保存の時間を残すため、
-# 1アカウントあたり既定120秒。超えたら残りの枠は諦めて異常終了（沈黙にはしない）
-REFILL_DEADLINE_SEC = int(os.environ.get("REFILL_DEADLINE_SEC", "90"))
+# ⚠️ 60秒では 12本×2部（max_tokens 8000）の生成が終わらず、1回目で必ずタイムアウト →
+# 90秒の全体予算を使い切って3回目に行けず、補充が3回連続で失敗した（2026-09-21 実測）。
+# 直近30実行でこの枠の補充が成功した記録は0件。1回の期限と全体の予算を実際の生成時間に合わせる。
+CALL_TIMEOUT_SEC = int(os.environ.get("CALL_TIMEOUT_SEC", "120"))   # API 1回の通信期限
+# この実行全体の期限（1アカウントあたり）。1回120秒×3試行＝360秒が丸ごと収まる長さにする
+# （300秒だと3回目が60秒しか使えず、60秒では終わらないので実質2回しか試せない）。
+# 短すぎると「3回試せる」と書いてあるのに2回で時間切れになる（2026-09-21 実測）。
+# 超えたら残りの枠は諦めて異常終了（沈黙にはしない）
+REFILL_DEADLINE_SEC = int(os.environ.get("REFILL_DEADLINE_SEC", "380"))
 _DEADLINE = time.monotonic() + REFILL_DEADLINE_SEC
 
 

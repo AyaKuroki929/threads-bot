@@ -30,7 +30,7 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 40  # 全工程に個別上限あり（合計最大≈34分: checkout3+取得2+重ね1+Python3+slot1+pip3+投稿9+LINE1+HC1+先行保存2+補充5+通知2+保存3）→ 必ず通知・保存まで到達する（2026-09-21 Sol指摘）
+    timeout-minutes: 50  # 全工程に個別上限あり（合計最大≈34分: checkout3+取得2+重ね1+Python3+slot1+pip3+投稿9+LINE1+HC1+先行保存2+補充5+通知2+保存3）→ 必ず通知・保存まで到達する（2026-09-21 Sol指摘）
     permissions:
       contents: write
 
@@ -178,12 +178,13 @@ jobs:
         id: refill
         if: success()
         continue-on-error: true
-        timeout-minutes: 5   # Python側は1アカ90秒を実時間で強制（alarm）。2アカ180秒＋起動・保存の余白
+        timeout-minutes: 14   # Python側は1アカ380秒を実時間で強制（alarm）。2アカ760秒＋pip・起動の余白
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          REFILL_DEADLINE_SEC: "90"    # 1アカウントあたりの実時間上限（Python側でalarm強制→異常終了）
+          REFILL_DEADLINE_SEC: "380"   # 1アカウントあたりの実時間上限（120秒×3試行が収まる。Python側でalarm強制）
+          CALL_TIMEOUT_SEC: "120"      # API 1回の通信期限。60秒では生成が終わらず必ず時間切れだった
         run: |
           failed=""
           python3 -c "import anthropic" 2>/dev/null || pip install -q "anthropic<2" || failed="$failed pip"
