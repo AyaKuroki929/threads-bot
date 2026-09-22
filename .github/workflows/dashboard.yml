@@ -9,6 +9,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read    # 見回りworkflowの最終成功時刻を読む
 
 concurrency:
   group: dashboard

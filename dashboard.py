@@ -183,7 +183,8 @@ def _last_success_hours(workflow_file: str):
         return None
     try:
         req = urllib.request.Request(
-            f"https://api.github.com/repos/AyaKuroki929/threads-bot/actions/workflows/{workflow_file}/runs?status=success&per_page=1",
+            # event=schedule：手動の試運転（dry）を「本番が動いた」と数えない
+            f"https://api.github.com/repos/AyaKuroki929/threads-bot/actions/workflows/{workflow_file}/runs?status=success&event=schedule&per_page=1",
             headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=15) as r:
             runs = json.loads(r.read()).get("workflow_runs", [])
@@ -198,6 +199,8 @@ def _last_success_hours(workflow_file: str):
 _h = _last_success_hours("payment_remind.yml")
 if _h is None:
     cards.append(("🔌 基盤", "支払い失敗リマインドの見回り", "warn", "未取得", "—", "最終成功", "GitHubに聞けませんでした"))
+    alerts.append(("支払い失敗リマインドの見回りの状態が読めません",
+                   "GitHubに最終成功時刻を聞けませんでした。止まっていても気づけない状態なので、Actionsを直接確認してください。", "warn"))
 elif _h == float("inf") or _h > 30:
     cards.append(("🔌 基盤", "支払い失敗リマインドの見回り", "crit", "止まっている", "—" if _h == float("inf") else f"{int(_h)}", "時間前に最終成功",
                   "毎朝9:30に動くはずの見回りが動いていません"))

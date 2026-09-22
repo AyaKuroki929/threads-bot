@@ -186,6 +186,13 @@ def line_push_client(uid: str, text: str):
 
 
 # ── Stripe API ───────────────────────────────────────────────
+def _stripe_get(path: str) -> dict:
+    req = urllib.request.Request("https://api.stripe.com/v1/" + path)
+    req.add_header("Authorization", f"Bearer {STRIPE_SECRET_KEY}")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read())
+
+
 def get_session_line_items(session_id: str) -> list:
     """Fetch line items for a checkout session (with price.product expanded)"""
     if not STRIPE_SECRET_KEY or not session_id:
@@ -344,6 +351,9 @@ def handle_subscription_deleted(obj: dict):
 
 def handle_payment_failed(obj: dict):
     lines = obj.get("lines", {}).get("data", [])
+    if obj.get("lines", {}).get("has_more") and obj.get("id"):
+        # 明細が2ページ目以降にある請求書は payload だけでは商品を判定できない
+        lines = _stripe_get(f"invoices/{urllib.parse.quote(obj['id'])}/lines?limit=100").get("data", lines)
     if not _is_toukosan_product(lines):
         return
     subscription_id = obj.get("subscription", "")
@@ -373,28 +383,20 @@ def handle_payment_failed(obj: dict):
     # 判断と文面は見回り（api/payment_remind.py）に一本化し、ここからはHTTPで「1通目を起こして」と頼むだけ
     # （同じapi/内のimportはVercelの束ね方に依存するため使わない・Sol指摘#6）。
     # start側は最新の状態を見て前にしか進めないので、同じ通知が2回来ても巻き戻らない。
-    # 頼めなかった時だけ従来の⚠️を1通出す（翌朝の見回りが承認依頼を出すので、その日は最大2通）。
-    if (obj.get("metadata") or {}).get("tk_remind"):
-        _log("payment_failed: リマインド進行中のため何もしない")
-        return
+    # 頼めなかった時も⚠️は出さない：start側が承認依頼を送った直後に応答だけ失われると、
+    # ここで⚠️を足して彩さんに2通届く（Sol指摘#6）。翌朝の見回りが必ず同じ判断で拾うので、ログだけ残す。
     try:
         day = (time.gmtime(time.time() + 9 * 3600))
-        tok = hmac.new(SUPABASE_KEY.encode(), f"poll:{day.tm_year:04d}-{day.tm_mon:02d}-{day.tm_mday:02d}".encode(), hashlib.sha256).hexdigest()[:32]
+        tok = hmac.new(SUPABASE_KEY.encode(), f"start:{day.tm_year:04d}-{day.tm_mon:02d}-{day.tm_mday:02d}".encode(), hashlib.sha256).hexdigest()[:32]
         req = urllib.request.Request(
             f"{PUBLIC_BASE_URL}/api/payment-remind?mode=start&invoice={urllib.parse.quote(obj.get('id', ''))}",
             headers={"Authorization": f"Bearer {tok}"}, method="POST", data=b"")
         with urllib.request.urlopen(req, timeout=25) as r:
             body = r.read().decode("utf-8", "replace")
         _log(f"payment_failed → start: {body[:120]}")
-        return
-    except Exception as e:  # noqa: BLE001 見回りに任せる
-        _log(f"payment_failed: start failed (翌朝の見回りに任せる): {type(e).__name__}: {e}")
-    line_push_admin(
-        f"⚠️ とうこさん 支払い失敗（{attempt}回目）\n\n"
-        f"サロン: {salon['salon_name']}\n\n"
-        f"Stripeが自動リトライします。3回失敗でサービス自動停止。{url_block}\n\n"
-        f"https://dashboard.stripe.com"
-    )
+    except Exception as e:  # noqa: BLE001
+        _log(f"payment_failed: start failed → 翌朝の見回りに任せる: {type(e).__name__}: {e}")
+    return
 
 
 # ── 解約待ちリスト（2026-09-06 追加・うらかたさんの cancel watch と同じ考え方）─────

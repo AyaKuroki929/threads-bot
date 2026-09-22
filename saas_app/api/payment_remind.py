@@ -7,18 +7,18 @@
   それでも3日未払い → 彩さんに「手動フォロー必要」
   ※本人へ届く経路は「彩さんの承認ボタン」だけ。承認なしで送る分岐は持たない（Sol指摘#10）
 
-状態は Stripe の請求書 metadata に持つ（新しいテーブルを作らない）:
-  tk_remind    = pending1 / sending1 / sent1 / pending2 / … / sent3 / escalated / no_line / paid_skip
-  tk_nonce     = 承認URLの一回限りの合言葉の元（pendingのときだけ存在。送ったら消す＝古いURLは死ぬ）
-  tk_lock      = 送信権の印（同時タップの片方だけが進む。Stripeに比較更新が無いので書いて読み直す）
-  tk_sentN_at  = N通目を本人へ送った日時（JST）
-  tk_at        = 最後に状態を変えた日時
+状態は Supabase の台帳 payment_reminder_attempts に持つ（1行＝請求書×通番、主キーで二重作成不可）:
+  pending_notify → pending（彩さんへ承認依頼を送れた）→ sending（送信権を取った）→ sent（本人へ送付済み）
+  sending から LINE の応答が失われたら unknown（人の確認待ち・自動では二度と送らない）
+  3通目から3日たっても未払いなら attempt=4 の行を escalated として作り、彩さんへ手動フォロー通知
+  Stripe の metadata は使わない（同時更新の制御ができないため・Sol指摘#2,#3）。Stripeは読むだけ。
 支払われた請求書は Stripe の「未払い一覧」から消えるので、それが「解決」の印。
-状態は前にしか進めない（sent→pending へ戻さない。古いwebhookや見回りの取得結果で巻き戻さない・Sol指摘#3）。
+送信権の取得は「status=pending かつ nonce=… の行だけを sending に更新して、更新できた行が返ったら自分」＝1つの
+UPDATE文なので同時タップでも1人だけ進む。承認依頼の作成も INSERT の主キー衝突で1回だけ。
 
 エンドポイント（/api/payment-remind）:
   GET  ?mode=poll[&dry=1]      毎朝の見回り。Authorization: Bearer <HMAC(SUPABASE_SERVICE_KEY,"poll:<日付>")>
-  POST ?mode=start&invoice=…  webhookからの「1通目を起こす」。同じBearer
+  POST ?mode=start&invoice=…  webhookからの「1通目を起こす」。Bearer は "start:<日付>"（用途別・Sol指摘#4）
   POST ?mode=mark&invoice=…&attempt=N   彩さんが手で送ったときの印。Bearer は "mark:<日付>"
   GET  ?mode=approve&invoice=…&attempt=N&token=…   彩さんがタップする承認ページ
   POST ?mode=execute&invoice=…&attempt=N&token=…   承認ページのボタンが呼ぶ（本人へ送信）
@@ -36,7 +36,6 @@ CLIENT_LINE_TOKEN     = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")  # と�
 TOUKOSAN_PRODUCT_ID   = "prod_UWa5BZv291uQts"
 BASE_URL              = os.environ.get("PUBLIC_BASE_URL", "https://saas.shikisai.work")
 REMIND_INTERVAL_DAYS  = 3
-LOCK_SETTLE_SEC       = float(os.environ.get("TK_LOCK_SETTLE_SEC", "1.5"))
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 
@@ -111,12 +110,25 @@ def _stripe(method: str, path: str, form: dict = None) -> dict:
         return json.loads(r.read())
 
 
-def stripe_get_invoice(invoice_id: str) -> dict:
-    inv = _stripe("GET", f"invoices/{urllib.parse.quote(invoice_id)}")
-    lines = inv.get("lines") or {}
-    if lines.get("has_more"):    # 明細が2ページ目にある請求書で対象商品を取りこぼさない（Sol指摘）
-        inv["lines"] = {"data": _stripe("GET", f"invoices/{urllib.parse.quote(invoice_id)}/lines?limit=100").get("data", [])}
+def _all_lines(invoice_id: str) -> list:
+    out, after = [], None
+    while True:
+        page = _stripe("GET", f"invoices/{urllib.parse.quote(invoice_id)}/lines?limit=100" + (f"&starting_after={after}" if after else ""))
+        out += page.get("data", [])
+        if not page.get("has_more") or not page.get("data"):
+            return out
+        after = page["data"][-1]["id"]
+
+
+def with_all_lines(inv: dict) -> dict:
+    """明細が2ページ目以降にある請求書で対象商品を取りこぼさない（Sol指摘）。一覧で来た請求書にも使う"""
+    if (inv.get("lines") or {}).get("has_more"):
+        inv["lines"] = {"data": _all_lines(inv["id"]), "has_more": False}
     return inv
+
+
+def stripe_get_invoice(invoice_id: str) -> dict:
+    return with_all_lines(_stripe("GET", f"invoices/{urllib.parse.quote(invoice_id)}"))
 
 
 def stripe_open_invoices() -> list:
@@ -128,12 +140,6 @@ def stripe_open_invoices() -> list:
         if not page.get("has_more") or not page.get("data"):
             return out
         starting_after = page["data"][-1]["id"]
-
-
-def set_meta(invoice_id: str, **kv) -> dict:
-    """metadata を書く。値が "" のキーは削除される（Stripeの仕様）。書いた後の請求書を返す。"""
-    form = {f"metadata[{k}]": v for k, v in kv.items()}
-    return _stripe("POST", f"invoices/{urllib.parse.quote(invoice_id)}", form)
 
 
 def _line_product_ids(line: dict) -> list:
@@ -164,11 +170,53 @@ def is_failed_open(inv: dict) -> bool:
 
 
 # ── Supabase ─────────────────────────────────────────────────────
-def _sb(path: str) -> list:
-    req = urllib.request.Request(f"{SUPABASE_URL}/rest/v1/{path}",
-                                 headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read())
+LEDGER = "payment_reminder_attempts"
+
+
+class LedgerMissing(Exception):
+    pass
+
+
+def _sb(path: str, method: str = "GET", body: dict = None, prefer: str = "") -> list:
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
+    if prefer:
+        headers["Prefer"] = prefer
+    req = urllib.request.Request(f"{SUPABASE_URL}/rest/v1/{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else []
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:200]
+        if path.startswith(LEDGER) and e.code in (404, 400) and ("PGRST205" in detail or "does not exist" in detail or "Could not find the table" in detail):
+            raise LedgerMissing(f"台帳テーブル {LEDGER} がありません（supabase_tables.sql をSQL Editorで実行）") from e
+        e.detail = detail
+        raise
+
+
+def ledger_rows(invoice_id: str) -> list:
+    return _sb(f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&order=attempt.asc")
+
+
+def ledger_insert(row: dict) -> bool:
+    """主キー衝突（同じ請求書×通番が既にある）なら False。それ以外の失敗は例外。"""
+    try:
+        _sb(LEDGER, "POST", row, prefer="return=minimal")
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            return False
+        raise
+
+
+def ledger_update(invoice_id: str, attempt: int, where: dict, patch: dict) -> bool:
+    """条件付き更新。1つのUPDATE文なので同時実行でも更新できるのは1人。更新できた行が無ければ False。"""
+    q = f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}"
+    for k, v in where.items():
+        q += f"&{k}=eq.{urllib.parse.quote(str(v))}"
+    rows = _sb(q, "PATCH", patch, prefer="return=representation")
+    return len(rows) == 1
 
 
 def customer_info(customer_id: str) -> dict:
@@ -212,52 +260,59 @@ def line_client(uid: str, text: str, retry_key: str) -> None:
     _line_post("push", CLIENT_LINE_TOKEN, {"to": uid, "messages": [{"type": "text", "text": text}]}, retry_key)
 
 
-# ── 状態遷移 ───────────────────────────────────────────────────────
-def _meta(inv: dict) -> dict:
-    return inv.get("metadata") or {}
+# ── 状態遷移（台帳ベース）───────────────────────────────────────
+def _latest(rows: list) -> dict:
+    return rows[-1] if rows else {}
 
 
-def _prev_state_for(attempt: int) -> str:
-    return "" if attempt == 1 else f"sent{attempt - 1}"
-
-
-def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
-    """N通目の承認依頼を彩さんへ出す。最新の請求書を取り直し、期待した状態のときだけ進める（巻き戻し禁止）。
-    順序＝①LINEを送る ②metadataに pendingN＋nonce を書く。②が失敗しても①は届いているので翌朝もう一度依頼が出る（消えるよりまし）。"""
-    inv = stripe_get_invoice(invoice_id)
-    if not is_toukosan(inv) or not is_failed_open(inv):
-        return f"対象外（状態 {inv.get('status')} / 失敗{inv.get('attempt_count')}回）: {invoice_id}"
-    state = _meta(inv).get("tk_remind", "")
-    if state != _prev_state_for(attempt):
-        return f"進めない（今の状態 {state or 'なし'} / 期待 {_prev_state_for(attempt) or 'なし'}）: {invoice_id}"
-    info = customer_info(inv.get("customer", ""))
-    who = _who(info, inv)
-    if not info["line_user_id"]:
-        if not dry:
-            line_admin(f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{who}\ncustomer: {inv.get('customer')}\n"
-                       f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}")
-            set_meta(invoice_id, tk_remind="no_line", tk_at=_iso())
-        return f"紐付けなし: {who}"
-    if dry:
-        return f"[dry] {attempt}通目の承認依頼を出す: {who} [{invoice_id}]"
-    nonce = secrets.token_hex(8)
-    url = inv.get("hosted_invoice_url", "") or ""
+def _notify_request(inv: dict, attempt: int, info: dict, nonce: str) -> None:
+    """彩さんへ承認依頼を送る（失敗は例外）"""
+    invoice_id = inv["id"]; url = inv.get("hosted_invoice_url", "") or ""
     approve_url = (f"{BASE_URL}/api/payment-remind?mode=approve&invoice={urllib.parse.quote(invoice_id)}"
                    f"&attempt={attempt}&token={approve_token(invoice_id, attempt, nonce)}")
     line_admin(f"[とうこさん要承認 {attempt}通目]\n"
-               f"👤 {who}\n"
+               f"👤 {_who(info, inv)}\n"
                f"金額: ¥{int(inv.get('amount_due', 0) or 0):,}（失敗{inv.get('attempt_count')}回）\n"
                f"invoice: {invoice_id}\n\n"
                f"--- 文面プレビュー ---\n{build_message(attempt, url)}\n\n"
                f"✅ 承認して送信:\n{approve_url}\n\n"
                f"（送らない場合は何もせず無視してください）")
-    set_meta(invoice_id, tk_remind=f"pending{attempt}", tk_nonce=nonce, tk_lock="", tk_at=_iso())
+
+
+def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
+    """N通目の承認依頼を出す。台帳に行を INSERT できた1人だけが進む（主キー衝突＝他が先に進んでいる）。
+    順序＝①行を pending_notify で作る ②彩さんへLINE ③pending に更新。②が失敗しても行は残り、翌朝の見回りが②からやり直す。"""
+    inv = stripe_get_invoice(invoice_id)
+    if not is_toukosan(inv) or not is_failed_open(inv):
+        return f"対象外（状態 {inv.get('status')} / 失敗{inv.get('attempt_count')}回）: {invoice_id}"
+    rows = ledger_rows(invoice_id)
+    last = _latest(rows)
+    if attempt == 1 and rows:
+        return f"進めない（既に {last['attempt']}通目 {last['status']}）: {invoice_id}"
+    if attempt > 1 and not (last.get("attempt") == attempt - 1 and last.get("status") == "sent"):
+        return f"進めない（今 {last.get('attempt')}通目 {last.get('status')} / 期待 {attempt - 1}通目 sent）: {invoice_id}"
+    info = customer_info(inv.get("customer", ""))
+    who = _who(info, inv)
+    if not info["line_user_id"]:
+        if not dry and ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "no_line",
+                                      "customer_id": inv.get("customer", ""), "note": "名簿にLINE IDなし"}):
+            line_admin(f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{who}\ncustomer: {inv.get('customer')}\n"
+                       f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}")
+        return f"紐付けなし: {who}"
+    if dry:
+        return f"[dry] {attempt}通目の承認依頼を出す: {who} [{invoice_id}]"
+    nonce = secrets.token_hex(8)
+    if not ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "pending_notify", "nonce": nonce,
+                          "customer_id": inv.get("customer", ""), "line_user_id": info["line_user_id"]}):
+        return f"進めない（同時に別の処理が先に作成）: {invoice_id}"
+    _notify_request(inv, attempt, info, nonce)
+    ledger_update(invoice_id, attempt, {"status": "pending_notify"}, {"status": "pending"})
     return f"承認依頼を出した: {attempt}通目 {who} [{invoice_id}]"
 
 
 def _days_since(iso: str) -> float:
     try:
-        return (_now() - datetime.datetime.fromisoformat(iso)).total_seconds() / 86400
+        return (_now() - datetime.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))).total_seconds() / 86400
     except Exception:
         return 0.0
 
@@ -267,46 +322,53 @@ def process_invoice(inv: dict, dry: bool = False) -> str:
         return ""
     if not is_failed_open(inv):
         return f"未試行・期限前などのため対象外: [{inv['id']}]"
-    m = _meta(inv); st = m.get("tk_remind", "")
+    rows = ledger_rows(inv["id"])
+    last = _latest(rows)
     label = f"[{inv['id']}]"
-    if st.startswith("pending"):
-        return f"承認待ち（{st}）{label}"
-    if st.startswith("sending"):
-        # 送信権を取って送ったあと、記録の書き込みだけ失敗した形。二度と送らず、送った扱いで記録を直す（Sol指摘#2）
-        n = st[-1]
-        if not dry:
-            set_meta(inv["id"], tk_remind=f"sent{n}", tk_nonce="", tk_lock="", **{f"tk_sent{n}_at": m.get("tk_at") or _iso()}, tk_at=_iso())
-        return f"送信済みとして記録を修復（{st}→sent{n}）{label}"
-    if st in ("escalated", "no_line", "paid_skip"):
-        return f"対応済み（{st}）{label}"
-    if not st:
+    if not rows:
         return request_attempt(inv["id"], 1, dry)
-    for n in (1, 2):
-        if st == f"sent{n}" and _days_since(m.get(f"tk_sent{n}_at", "")) >= REMIND_INTERVAL_DAYS:
-            return request_attempt(inv["id"], n + 1, dry)
-    if st == "sent3" and _days_since(m.get("tk_sent3_at", "")) >= REMIND_INTERVAL_DAYS:
-        info = customer_info(inv.get("customer", ""))
+    st, n = last["status"], int(last["attempt"])
+    if st == "pending_notify":
+        # 行はあるが彩さんへの依頼が届いていない（前回LINEが失敗）→ 依頼だけやり直す
         if not dry:
+            info = customer_info(inv.get("customer", ""))
+            _notify_request(inv, n, info, last.get("nonce") or "")
+            ledger_update(inv["id"], n, {"status": "pending_notify"}, {"status": "pending"})
+        return f"承認依頼を再送（{n}通目）{label}"
+    if st in ("pending", "sending"):
+        return f"承認待ち・送信中（{n}通目 {st}）{label}"
+    if st in ("unknown", "escalated", "no_line"):
+        return f"人の確認待ち・対応済み（{n}通目 {st}）{label}"
+    if st == "sent" and n < 3 and _days_since(last.get("sent_at") or "") >= REMIND_INTERVAL_DAYS:
+        return request_attempt(inv["id"], n + 1, dry)
+    if st == "sent" and n == 3 and _days_since(last.get("sent_at") or "") >= REMIND_INTERVAL_DAYS:
+        if not dry and ledger_insert({"invoice_id": inv["id"], "attempt": 4, "status": "escalated", "customer_id": inv.get("customer", "")}):
+            info = customer_info(inv.get("customer", ""))
             line_admin(f"⚠️【手動フォロー必要】\n{_who(info, inv)} さんが3通目のリマインドから3日経っても未払いです。\n"
                        f"直接連絡またはサービス停止を検討してください。\ncustomer: {inv.get('customer')}\ninvoice: {inv['id']}")
-            set_meta(inv["id"], tk_remind="escalated", tk_at=_iso())
         return f"手動フォロー通知 {label}"
-    return f"待機中（{st}）{label}"
+    return f"待機中（{n}通目 {st}）{label}"
 
 
 def poll(dry: bool = False) -> dict:
     _require_config()
     results, errors, scanned = [], [], []
-    for inv in stripe_open_invoices():
-        try:
-            if dry:
-                scanned.append({"invoice": inv.get("id"), "amount": inv.get("amount_due"), "attempt_count": inv.get("attempt_count"),
-                                "toukosan": is_toukosan(inv), "failed_open": is_failed_open(inv), "meta": _meta(inv).get("tk_remind", "")})
-            r = process_invoice(inv, dry)
-            if r:
-                results.append(r)
-        except Exception as e:  # noqa: BLE001 1件の失敗で他を止めない。失敗は返して見回り側（GitHub）を赤にする
-            errors.append(f"{inv.get('id')}: {type(e).__name__}: {e}")
+    try:
+        for inv in stripe_open_invoices():
+            try:
+                inv = with_all_lines(inv)
+                if dry:
+                    scanned.append({"invoice": inv.get("id"), "amount": inv.get("amount_due"), "attempt_count": inv.get("attempt_count"),
+                                    "toukosan": is_toukosan(inv), "failed_open": is_failed_open(inv)})
+                r = process_invoice(inv, dry)
+                if r:
+                    results.append(r)
+            except LedgerMissing:
+                raise
+            except Exception as e:  # noqa: BLE001 1件の失敗で他を止めない。失敗は返して見回り側（GitHub）を赤にする
+                errors.append(f"{inv.get('id')}: {type(e).__name__}: {e}")
+    except LedgerMissing as e:
+        errors.append(str(e))
     _log(f"poll dry={dry} results={results} errors={errors}")
     out = {"ok": not errors, "dry": dry, "results": results, "errors": errors}
     if dry:
@@ -315,50 +377,65 @@ def poll(dry: bool = False) -> dict:
 
 
 def mark_sent(invoice_id: str, attempt: int) -> str:
-    """彩さんが自分の手で送ったとき用。前に進める方向にしか書かない。"""
+    """彩さんが自分の手で送ったとき用。"""
     inv = stripe_get_invoice(invoice_id)
     if not is_toukosan(inv):
         return "NG: とうこさんの請求書ではありません"
-    st = _meta(inv).get("tk_remind", "")
-    if st not in (_prev_state_for(attempt), f"pending{attempt}"):
-        return f"NG: 今の状態 {st or 'なし'} からは {attempt}通目の印を付けられません"
-    set_meta(invoice_id, tk_remind=f"sent{attempt}", tk_nonce="", tk_lock="", **{f"tk_sent{attempt}_at": _iso()}, tk_at=_iso())
-    return f"OK: {invoice_id} を {attempt}通目送付済みにしました（次は{REMIND_INTERVAL_DAYS}日後に{attempt + 1}通目の承認依頼）"
+    rows = ledger_rows(invoice_id); last = _latest(rows)
+    if last and last.get("attempt") == attempt and last.get("status") in ("pending_notify", "pending"):
+        ok = ledger_update(invoice_id, attempt, {"status": last["status"]}, {"status": "sent", "sent_at": _iso(), "nonce": None, "note": "彩さんが手動で送付"})
+        return "OK: 承認待ちだった行を送付済みにしました" if ok else "NG: 同時に別の処理が進みました"
+    if (attempt == 1 and not rows) or (attempt > 1 and last.get("attempt") == attempt - 1 and last.get("status") == "sent"):
+        ok = ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "sent", "sent_at": _iso(),
+                            "customer_id": inv.get("customer", ""), "note": "彩さんが手動で送付"})
+        return f"OK: {invoice_id} を {attempt}通目送付済みにしました（次は{REMIND_INTERVAL_DAYS}日後に{attempt + 1}通目の承認依頼）" if ok else "NG: 既に行があります"
+    return f"NG: 今の状態（{last.get('attempt')}通目 {last.get('status')}）からは {attempt}通目の印を付けられません"
 
 
 def execute(invoice_id: str, attempt: int, token: str) -> tuple:
-    """承認ボタンから。(ok, text)。送信権は「tk_lock に自分の印を書き、読み直して自分の印が残っていたら進む」で1人だけ取る。"""
+    """承認ボタンから。(ok, text)。送信権＝「status=pending かつ nonce一致」の行だけを sending に更新できた1人。"""
     _require_config()
-    inv = stripe_get_invoice(invoice_id)
-    m = _meta(inv)
-    if m.get("tk_remind") != f"pending{attempt}" or not m.get("tk_nonce") \
-            or not hmac.compare_digest(approve_token(invoice_id, attempt, m["tk_nonce"]), token or ""):
-        return False, f"NG: この依頼は処理済みか、承認待ちの状態ではありません（今: {m.get('tk_remind') or 'なし'}）。"
+    rows = ledger_rows(invoice_id)
+    row = next((r for r in rows if int(r["attempt"]) == attempt), None)
+    if not row or row.get("status") != "pending" or not row.get("nonce") \
+            or not hmac.compare_digest(approve_token(invoice_id, attempt, row["nonce"]), token or ""):
+        return False, f"NG: この依頼は処理済みか、承認待ちの状態ではありません（今: {row.get('status') if row else 'なし'}）。"
     my_lock = secrets.token_hex(8)
-    set_meta(invoice_id, tk_remind=f"sending{attempt}", tk_lock=my_lock, tk_at=_iso())
-    # Stripeには「前の値がXなら書く」が無い。同時タップは両方が自分の印を書けるので、
-    # 少し待ってから読み直し、最後に書かれた印を持つ1人だけが進む。
-    # それでも抜ける幅（1.5秒より遅く2人目が来る）は、同じ retry key でLINE側が二重配信を捨てる
-    time.sleep(LOCK_SETTLE_SEC)
-    inv = stripe_get_invoice(invoice_id)
-    m = _meta(inv)
-    if m.get("tk_lock") != my_lock or m.get("tk_remind") != f"sending{attempt}":
+    if not ledger_update(invoice_id, attempt, {"status": "pending", "nonce": row["nonce"]}, {"status": "sending", "lock_id": my_lock}):
         return False, "NG: 同時に別の操作が進んでいます。もう一方の結果をお待ちください。"
-    if not is_failed_open(inv):                                # 送る直前にも最新の状態を見る（Sol指摘#9）
-        set_meta(invoice_id, tk_remind="paid_skip", tk_nonce="", tk_lock="", tk_at=_iso())
+    info = customer_info(row.get("customer_id") or "")
+    inv = stripe_get_invoice(invoice_id)                       # 宛先を取り終えた「送る直前」に最新の状態を見る
+    if not is_failed_open(inv):
+        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "sent", "sent_at": _iso(), "nonce": None, "note": "送信前に支払い済み・送らず"})
         return False, f"NG: この請求書はもう「{inv.get('status')}」（支払い済みなど）です。送信しません。"
-    info = customer_info(inv.get("customer", ""))
-    if not info["line_user_id"]:
-        set_meta(invoice_id, tk_remind=f"pending{attempt}", tk_lock="", tk_at=_iso())
+    uid = row.get("line_user_id") or info["line_user_id"]
+    if not uid:
+        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "pending"})
         return False, "NG: 名簿にLINE IDがありません。"
     retry_key = str(uuid.uuid5(uuid.NAMESPACE_URL, f"toukosan-remind:{invoice_id}:{attempt}"))
     try:
-        line_client(info["line_user_id"], build_message(attempt, inv.get("hosted_invoice_url", "") or ""), retry_key)
-    except Exception as e:  # noqa: BLE001 送れなかったので承認待ちに戻す（同じURLでやり直せる）
-        set_meta(invoice_id, tk_remind=f"pending{attempt}", tk_lock="", tk_at=_iso())
-        return False, f"NG: LINEの送信に失敗しました（{type(e).__name__}）。少し待ってもう一度押してください。"
-    set_meta(invoice_id, tk_remind=f"sent{attempt}", tk_nonce="", tk_lock="", **{f"tk_sent{attempt}_at": _iso()}, tk_at=_iso())
+        line_client(uid, build_message(attempt, inv.get("hosted_invoice_url", "") or ""), retry_key)
+    except urllib.error.HTTPError as e:
+        if 400 <= e.code < 500:                                # LINEが受け取っていないと分かる失敗 → 承認待ちに戻す
+            ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "pending"})
+            return False, f"NG: LINEが受け付けませんでした（HTTP {e.code}）。宛先や設定を確認してください。"
+        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "unknown", "nonce": None, "note": f"LINE HTTP {e.code}"})
+        _notify_unknown(invoice_id, attempt, info, inv)
+        return False, "NG: 送れたかどうか確認できませんでした。本人に届いているか確認してください（自動では再送しません）。"
+    except Exception as e:  # noqa: BLE001 タイムアウト・応答喪失＝届いたかもしれない → 結果不明として人に渡す（Sol指摘#2）
+        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "unknown", "nonce": None, "note": f"{type(e).__name__}"})
+        _notify_unknown(invoice_id, attempt, info, inv)
+        return False, "NG: 送れたかどうか確認できませんでした。本人に届いているか確認してください（自動では再送しません）。"
+    ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "sent", "sent_at": _iso(), "nonce": None})
     return True, f"✅ 送信しました\n\n{attempt}通目を {info['name'] or '本人'} さんへ送りました。\nこのページは閉じて大丈夫です。"
+
+
+def _notify_unknown(invoice_id: str, attempt: int, info: dict, inv: dict) -> None:
+    try:
+        line_admin(f"⚠️ とうこさん {attempt}通目：送れたか不明\n\n{_who(info, inv)}\ninvoice: {invoice_id}\n\n"
+                   f"LINEの応答が確認できませんでした。本人に届いているかを確認し、届いていなければ手動で送ってください。自動では再送しません。")
+    except Exception as e:  # noqa: BLE001
+        _log(f"unknown-notify failed: {e}")
 
 
 # ── 承認ページ（.format は使わない。CSSの {} と衝突して500になる・Sol指摘#1）──
@@ -393,12 +470,12 @@ _DONE_PAGE = """<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta
 
 def render_approve_page(invoice_id: str, attempt: int, token: str) -> tuple:
     """(HTTPコード, HTML)。処理済み・無効な依頼ではお客様の情報を出さない（Sol指摘#4）"""
-    inv = stripe_get_invoice(invoice_id)
-    m = _meta(inv)
-    if m.get("tk_remind") != f"pending{attempt}" or not m.get("tk_nonce") \
-            or not hmac.compare_digest(approve_token(invoice_id, attempt, m["tk_nonce"]), token or ""):
+    row = next((r for r in ledger_rows(invoice_id) if int(r["attempt"]) == attempt), None)
+    if not row or row.get("status") != "pending" or not row.get("nonce") \
+            or not hmac.compare_digest(approve_token(invoice_id, attempt, row["nonce"]), token or ""):
         return 403, _DONE_PAGE.replace("__TEXT__", "この依頼は処理済みか、無効なリンクです。")
-    info = customer_info(inv.get("customer", ""))
+    inv = stripe_get_invoice(invoice_id)
+    info = customer_info(row.get("customer_id") or inv.get("customer", ""))
     execute_url = json.dumps(f"{BASE_URL}/api/payment-remind?mode=execute&invoice={urllib.parse.quote(invoice_id)}&attempt={attempt}&token={token}")
     page = (_PAGE.replace("__ATTEMPT__", str(attempt)).replace("__WHO__", html.escape(_who(info, inv)))
             .replace("__AMOUNT__", f"{int(inv.get('amount_due', 0) or 0):,}").replace("__ATTEMPTS__", str(inv.get("attempt_count") or 0))
@@ -431,7 +508,7 @@ class handler(BaseHTTPRequestHandler):
                 out = poll(dry=g("dry") == "1")
                 return self._send(200 if out["ok"] else 500, json.dumps(out, ensure_ascii=False, indent=1), "application/json; charset=utf-8")
             if mode == "start" and method == "POST":
-                if not bearer_ok(auth, "poll") or not invoice_id:
+                if not bearer_ok(auth, "start") or not invoice_id:
                     return self._send(403, "NG: 認証")
                 _require_config()
                 return self._send(200, request_attempt(invoice_id, 1))

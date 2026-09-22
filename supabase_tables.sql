@@ -39,3 +39,21 @@ create table if not exists line_users (
 
 -- インデックス（投稿ログの検索を高速化）
 create index if not exists idx_post_logs_salon_slot on post_logs(salon_id, slot);
+
+-- 支払い失敗リマインドの送信台帳（2026-09-22・うらかたさんと同じ流れをとうこさん側に移植）
+-- 1行 = 請求書 × 通番。主キーで同じ行は2度作れない＝同時に2人が動いても承認依頼・送信は1回だけ。
+-- status: pending_notify（彩さんへの承認依頼を送る前）/ pending（承認待ち）/ sending（送信中）
+--         / sent（本人へ送付済み）/ unknown（送ったか不明・人の確認待ち）/ escalated（手動フォロー通知済み）
+create table if not exists payment_reminder_attempts (
+  invoice_id    text not null,
+  attempt       int  not null,
+  status        text not null,
+  nonce         text,                 -- 承認URLの合言葉の元（送ったら消す）
+  lock_id       text,                 -- 送信権を取った実行の印
+  customer_id   text,
+  line_user_id  text,
+  created_at    timestamptz not null default now(),
+  sent_at       timestamptz,
+  note          text,
+  primary key (invoice_id, attempt)
+);
