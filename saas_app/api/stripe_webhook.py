@@ -649,6 +649,14 @@ class handler(BaseHTTPRequestHandler):
             self._handle_event(etype, obj)
         except Exception as e:  # noqa: BLE001
             _log(f"event handling failed ({etype}): {type(e).__name__}: {e}")
+            # ⚠️ 新規決済（checkout）だけは再送させない：フォーム送付には「送った記録」が無く、
+            # 送付後に別の理由で落ちて再送されると同じ方にフォームが2回届く（Sol指摘）。
+            # 取りこぼしは invoice.paid 側の「🎉新規登録」通知とフォーム安全網が拾う。
+            # 失敗通知・入金・解約は再実行しても二重にならない作りなので、500でStripeに再送してもらう
+            if etype == "checkout.session.completed":
+                self.send_response(200)
+                self.end_headers()
+                return
             self.send_response(500)
             self.end_headers()
             return
