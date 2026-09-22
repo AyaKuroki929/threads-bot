@@ -1,11 +1,36 @@
 {
   "routes": [
-    { "src": "/connect", "dest": "/api/connect.py" },
-    { "src": "/dashboard", "dest": "/api/dashboard.py" },
-    { "src": "/callback", "dest": "/api/callback.py" },
-    { "src": "/api/line-webhook", "dest": "/api/line_webhook.py" },
-    { "src": "/api/stripe-webhook", "dest": "/api/stripe_webhook.py" },
-    { "src": "/signup", "dest": "/public/signup.html" },
-    { "src": "/", "dest": "/public/index.html" }
+    {
+      "src": "/api/payment-remind",
+      "dest": "/api/payment_remind.py"
+    },
+    {
+      "src": "/connect",
+      "dest": "/api/connect.py"
+    },
+    {
+      "src": "/dashboard",
+      "dest": "/api/dashboard.py"
+    },
+    {
+      "src": "/callback",
+      "dest": "/api/callback.py"
+    },
+    {
+      "src": "/api/line-webhook",
+      "dest": "/api/line_webhook.py"
+    },
+    {
+      "src": "/api/stripe-webhook",
+      "dest": "/api/stripe_webhook.py"
+    },
+    {
+      "src": "/signup",
+      "dest": "/public/signup.html"
+    },
+    {
+      "src": "/",
+      "dest": "/public/index.html"
+    }
   ]
 }

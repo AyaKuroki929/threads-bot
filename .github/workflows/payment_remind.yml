@@ -1,0 +1,42 @@
+name: SaaS - 支払い失敗リマインド見回り
+
+# 毎朝、Stripeの「未払いの請求書」を直接見に行き、うらかたさんと同じ流れでリマインドを進める。
+# 中身（判断・送信）は Vercel 側 api/payment_remind.py。ここは決まった時刻に叩くだけ。
+# Stripeからの通知（webhook）を取りこぼしても、これが拾う（2026-09-22 真理子さんの1回目が届かなかった反省）。
+on:
+  schedule:
+    - cron: '30 0 * * *'   # 毎日 09:30 JST
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: '送らずに一覧だけ返す（1で試運転）'
+        required: false
+        default: ''
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 見回りを呼ぶ
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRY: ${{ github.event.inputs.dry }}
+        run: |
+          set -e
+          TOKEN=$(python3 -c "import hmac,hashlib,os,datetime;d=(datetime.datetime.utcnow()+datetime.timedelta(hours=9)).date().isoformat();print(hmac.new(os.environ['SUPABASE_SERVICE_KEY'].encode(),f'poll:{d}'.encode(),hashlib.sha256).hexdigest()[:32])")
+          URL="https://saas.shikisai.work/api/payment-remind?mode=poll&token=$TOKEN"
+          [ "$DRY" = "1" ] && URL="$URL&dry=1"
+          code=$(curl -sS --max-time 120 -o out.json -w "%{http_code}" "$URL")
+          echo "HTTP $code"; cat out.json
+          [ "$code" = "200" ] || { echo "::error::見回りが失敗（HTTP $code）"; exit 1; }
+
+      - name: 失敗をLINEで知らせる
+        if: failure() || cancelled()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS --max-time 20 -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"🚨 支払い失敗リマインドの見回りが動いていません\\n\\nログ：$RUN_URL\"}]}" || true

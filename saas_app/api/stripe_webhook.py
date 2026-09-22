@@ -2,7 +2,8 @@
 Stripe Webhook ハンドラ（とうこさん SaaS）
 - checkout.session.completed   → クライアントにフォームURL自動送信 + 管理者通知
 - customer.subscription.deleted → is_active=false + LINE通知
-- invoice.payment_failed        → LINE警告通知（即停止はしない）
+- invoice.payment_failed        → 1〜2回目: 彩さんへ「承認して送信」付きの依頼（タップで本人へリマインド。
+                                  うらかたさんと同じ流れ・2026-09-22）／3回目: 投稿を自動停止＋通知
 """
 import sys
 from http.server import BaseHTTPRequestHandler
@@ -217,20 +218,23 @@ def get_stripe_customer(customer_id: str) -> dict:
 
 
 # ── 商品チェック ─────────────────────────────────────────────
+def _line_product_ids(line: dict) -> list:
+    """請求書の明細から商品IDを取り出す。Stripeは版によって置き場所が違う:
+    旧: line.price.product / line.plan.product  新(2025〜): line.pricing.price_details.product
+    （2026-09-22 新しい置き場所を見ていなかったため、とうこさんの失敗通知を取りこぼしていた）"""
+    out = []
+    for key in ("price", "plan"):
+        v = line.get(key)
+        if isinstance(v, dict) and v.get("product"):
+            p = v["product"]; out.append(p.get("id") if isinstance(p, dict) else p)
+    pd = (line.get("pricing") or {}).get("price_details") or {}
+    if pd.get("product"):
+        p = pd["product"]; out.append(p.get("id") if isinstance(p, dict) else p)
+    return [x for x in out if x]
+
+
 def _is_toukosan_product(items: list) -> bool:
-    for item in items:
-        for key in ("price", "plan"):
-            val = item.get(key)
-            if not isinstance(val, dict):
-                continue
-            product = val.get("product")
-            # string IDの場合
-            if isinstance(product, str) and product == TOUKOSAN_PRODUCT_ID:
-                return True
-            # 展開されたオブジェクトの場合
-            if isinstance(product, dict) and product.get("id") == TOUKOSAN_PRODUCT_ID:
-                return True
-    return False
+    return any(TOUKOSAN_PRODUCT_ID in _line_product_ids(item) for item in items)
 
 
 # ── イベント処理 ──────────────────────────────────────────────
@@ -363,13 +367,26 @@ def handle_payment_failed(obj: dict):
             f"Stripeのサブスクは継続中のため、入金されれば自動で投稿再開します。{url_block}\n\n"
             f"https://dashboard.stripe.com"
         )
-    else:
-        line_push_admin(
-            f"⚠️ とうこさん 支払い失敗（{attempt}回目）\n\n"
-            f"サロン: {salon['salon_name']}\n\n"
-            f"Stripeが自動リトライします。3回失敗でサービス自動停止。{url_block}\n\n"
-            f"https://dashboard.stripe.com"
-        )
+        return
+    # 1〜2回目：うらかたさんと同じく、本人へのリマインドを「承認して送信」の形で彩さんに出す。
+    # 既に進行中（metadata に印がある）なら二重に起こさない。毎朝の見回り（payment_remind）が
+    # 同じ判断をするので、ここが失敗しても翌朝に拾われる。
+    try:
+        import payment_remind as pr   # 同じ api/ 内の見回りと同じ判断・同じ文面を使う
+        if pr.APPROVAL_REQUIRED and not (obj.get("metadata") or {}).get("tk_remind"):
+            inv = pr.stripe_get_invoice(obj.get("id", "")) if obj.get("id") else obj
+            info = pr.customer_info(customer_id)
+            if info["line_user_id"]:
+                _log("payment_failed → 1通目の承認依頼: " + pr.request_attempt(inv, 1, info))
+                return
+    except Exception as e:  # noqa: BLE001 見回りに任せる
+        _log(f"payment_failed: remind start failed (見回りに任せる): {type(e).__name__}: {e}")
+    line_push_admin(
+        f"⚠️ とうこさん 支払い失敗（{attempt}回目）\n\n"
+        f"サロン: {salon['salon_name']}\n\n"
+        f"Stripeが自動リトライします。3回失敗でサービス自動停止。{url_block}\n\n"
+        f"https://dashboard.stripe.com"
+    )
 
 
 # ── 解約待ちリスト（2026-09-06 追加・うらかたさんの cancel watch と同じ考え方）─────
