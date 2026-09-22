@@ -174,6 +174,39 @@ else:
                        "crit" if _st == "crit" else "warn"))
 
 
+# --- 基盤: 支払い失敗リマインドの見回り（毎朝9:30・GitHub Actions）---
+# 見回りのworkflow自体が止まると、その中の🚨も出ない（2026-09-22 Sol指摘）。
+# ここは「最後に成功した時刻」をGitHubに聞き、30時間以上あいていたら要注意に載せる（LINEは使わない）。
+def _last_success_hours(workflow_file: str):
+    tok = os.environ.get("GH_TOKEN", "")
+    if not tok:
+        return None
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/AyaKuroki929/threads-bot/actions/workflows/{workflow_file}/runs?status=success&per_page=1",
+            headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            runs = json.loads(r.read()).get("workflow_runs", [])
+        if not runs:
+            return float("inf")
+        t = datetime.fromisoformat(runs[0]["updated_at"].replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - t).total_seconds() / 3600
+    except Exception as e:
+        print(f"[dashboard] GitHub runs取得に失敗（続行）: {e}")
+        return None
+
+_h = _last_success_hours("payment_remind.yml")
+if _h is None:
+    cards.append(("🔌 基盤", "支払い失敗リマインドの見回り", "warn", "未取得", "—", "最終成功", "GitHubに聞けませんでした"))
+elif _h == float("inf") or _h > 30:
+    cards.append(("🔌 基盤", "支払い失敗リマインドの見回り", "crit", "止まっている", "—" if _h == float("inf") else f"{int(_h)}", "時間前に最終成功",
+                  "毎朝9:30に動くはずの見回りが動いていません"))
+    alerts.append(("支払い失敗リマインドの見回りが止まっています",
+                   "GitHub Actions「SaaS - 支払い失敗リマインド見回り」を確認してください。止まっている間、未払いの方への催促が進みません。", "crit"))
+else:
+    cards.append(("🔌 基盤", "支払い失敗リマインドの見回り", "good", "稼働中", f"{int(_h)}", "時間前に成功", "毎朝9:30・未払いの請求書を確認"))
+
+
 # ── 全体ステータス ───────────────────────────────────────────
 n_crit = sum(1 for a in alerts if a[2] == "crit")
 n_warn = sum(1 for a in alerts if a[2] == "warn")

@@ -15,6 +15,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 LINE_TOKEN         = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN", "")   # Claude通知bot（管理者用）
 TOUKOSAN_LINE_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "") # とうこさんLINE bot（クライアント用）
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://saas.shikisai.work")
 
 TOUKOSAN_PRODUCT_ID  = "prod_UWa5BZv291uQts"
 GOOGLE_FORM_URL      = "https://docs.google.com/forms/d/e/1FAIpQLSc4RAj_6O1nP6_9Ehm5FyLp_tFv4qgO3mQTUf2FHs9hsvz1cw/viewform"
@@ -369,18 +370,25 @@ def handle_payment_failed(obj: dict):
         )
         return
     # 1〜2回目：うらかたさんと同じく、本人へのリマインドを「承認して送信」の形で彩さんに出す。
-    # 既に進行中（metadata に印がある）なら二重に起こさない。毎朝の見回り（payment_remind）が
-    # 同じ判断をするので、ここが失敗しても翌朝に拾われる。
+    # 判断と文面は見回り（api/payment_remind.py）に一本化し、ここからはHTTPで「1通目を起こして」と頼むだけ
+    # （同じapi/内のimportはVercelの束ね方に依存するため使わない・Sol指摘#6）。
+    # start側は最新の状態を見て前にしか進めないので、同じ通知が2回来ても巻き戻らない。
+    # 頼めなかった時だけ従来の⚠️を1通出す（翌朝の見回りが承認依頼を出すので、その日は最大2通）。
+    if (obj.get("metadata") or {}).get("tk_remind"):
+        _log("payment_failed: リマインド進行中のため何もしない")
+        return
     try:
-        import payment_remind as pr   # 同じ api/ 内の見回りと同じ判断・同じ文面を使う
-        if pr.APPROVAL_REQUIRED and not (obj.get("metadata") or {}).get("tk_remind"):
-            inv = pr.stripe_get_invoice(obj.get("id", "")) if obj.get("id") else obj
-            info = pr.customer_info(customer_id)
-            if info["line_user_id"]:
-                _log("payment_failed → 1通目の承認依頼: " + pr.request_attempt(inv, 1, info))
-                return
+        day = (time.gmtime(time.time() + 9 * 3600))
+        tok = hmac.new(SUPABASE_KEY.encode(), f"poll:{day.tm_year:04d}-{day.tm_mon:02d}-{day.tm_mday:02d}".encode(), hashlib.sha256).hexdigest()[:32]
+        req = urllib.request.Request(
+            f"{PUBLIC_BASE_URL}/api/payment-remind?mode=start&invoice={urllib.parse.quote(obj.get('id', ''))}",
+            headers={"Authorization": f"Bearer {tok}"}, method="POST", data=b"")
+        with urllib.request.urlopen(req, timeout=25) as r:
+            body = r.read().decode("utf-8", "replace")
+        _log(f"payment_failed → start: {body[:120]}")
+        return
     except Exception as e:  # noqa: BLE001 見回りに任せる
-        _log(f"payment_failed: remind start failed (見回りに任せる): {type(e).__name__}: {e}")
+        _log(f"payment_failed: start failed (翌朝の見回りに任せる): {type(e).__name__}: {e}")
     line_push_admin(
         f"⚠️ とうこさん 支払い失敗（{attempt}回目）\n\n"
         f"サロン: {salon['salon_name']}\n\n"

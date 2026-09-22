@@ -25,9 +25,10 @@ jobs:
         run: |
           set -e
           TOKEN=$(python3 -c "import hmac,hashlib,os,datetime;d=(datetime.datetime.utcnow()+datetime.timedelta(hours=9)).date().isoformat();print(hmac.new(os.environ['SUPABASE_SERVICE_KEY'].encode(),f'poll:{d}'.encode(),hashlib.sha256).hexdigest()[:32])")
-          URL="https://saas.shikisai.work/api/payment-remind?mode=poll&token=$TOKEN"
+          echo "::add-mask::$TOKEN"
+          URL="https://saas.shikisai.work/api/payment-remind?mode=poll"
           [ "$DRY" = "1" ] && URL="$URL&dry=1"
-          code=$(curl -sS --max-time 120 -o out.json -w "%{http_code}" "$URL")
+          code=$(curl -sS --max-time 120 -H "Authorization: Bearer $TOKEN" -o out.json -w "%{http_code}" "$URL")
           echo "HTTP $code"; cat out.json
           [ "$code" = "200" ] || { echo "::error::見回りが失敗（HTTP $code）"; exit 1; }
 
@@ -39,4 +40,5 @@ jobs:
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -sS --max-time 20 -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_TOKEN" -H "Content-Type: application/json" \
-            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"🚨 支払い失敗リマインドの見回りが動いていません\\n\\nログ：$RUN_URL\"}]}" || true
+            -o /dev/null -w "%{http_code}" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"🚨 支払い失敗リマインドの見回りが動いていません\\n\\nログ：$RUN_URL\"}]}" | grep -q "^200$" || echo "::error::LINE通知の送信に失敗"
