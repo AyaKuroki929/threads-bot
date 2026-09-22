@@ -229,12 +229,20 @@ NOTIFY_MAX_TRIES = 3   # 彩さん宛の通知は3日（3回）まで試す。�
 _NEW_NOTICE = {"notified_at": None, "notify_lock": None, "notify_tries": 0}
 
 
-def deliver_notice(invoice_id: str, attempt: int, kind: str, build_text) -> bool:
-    """行に紐づく彩さん宛LINEを「一度だけ」届ける。notify_lock を取れた1人だけが送り、届いたら notified_at を書く。
-    失敗したら lock を外して tries+1（翌朝やり直し）。build_text() は送る直前に呼ぶ（無駄な組み立てをしない）。"""
+def deliver_notice(invoice_id: str, attempt: int, kind: str, build_text, on_done: dict = None, expect_status: str = "") -> bool:
+    """行に紐づく彩さん宛LINEを「一度だけ」届ける。notify_lock を取れた1人だけが送り、届いたら notified_at（と on_done）を
+    同じ1文で書く。失敗したら lock を外して tries+1（翌朝やり直し）。build_text() は送る直前に呼ぶ。
+    expect_status を渡すと、その状態の行だけを対象にする（別の状態に進んだ行の配送権を取らない・Sol指摘#5）"""
     my = secrets.token_hex(8)
-    base = f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}&notified_at=is.null&notify_lock=is.null&notify_tries=lt.{NOTIFY_MAX_TRIES}"
-    got = _sb(base, "PATCH", {"notify_lock": my, "updated_at": _iso()}, prefer="return=representation")
+    key = f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}"
+    if expect_status:
+        key += f"&status=eq.{expect_status}"
+    # 取ったまま10分以上進んでいない印は死んだ実行のもの＝回収してから取りに行く（Sol指摘#1）
+    stale = (_now() - datetime.timedelta(minutes=10)).isoformat(timespec="seconds")
+    _sb(f"{key}&notify_lock=not.is.null&notify_lock_at=lt.{urllib.parse.quote(stale)}", "PATCH",
+        {"notify_lock": None, "notify_lock_at": None, "updated_at": _iso()}, prefer="return=minimal")
+    got = _sb(f"{key}&notified_at=is.null&notify_lock=is.null&notify_tries=lt.{NOTIFY_MAX_TRIES}", "PATCH",
+              {"notify_lock": my, "notify_lock_at": _iso(), "updated_at": _iso()}, prefer="return=representation")
     if len(got) != 1:
         return False
     try:
@@ -242,11 +250,12 @@ def deliver_notice(invoice_id: str, attempt: int, kind: str, build_text) -> bool
     except Exception as e:  # noqa: BLE001
         tries = int(got[0].get("notify_tries") or 0) + 1
         _sb(f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}&notify_lock=eq.{my}",
-            "PATCH", {"notify_lock": None, "notify_tries": tries, "updated_at": _iso()}, prefer="return=minimal")
+            "PATCH", {"notify_lock": None, "notify_lock_at": None, "notify_tries": tries, "updated_at": _iso()}, prefer="return=minimal")
         _log(f"notice failed ({kind} {invoice_id} #{attempt}, tries={tries}): {type(e).__name__}: {e}")
         raise
+    # 届いた印と状態の変更（承認依頼なら pending）を同じ1文で書く。別々だと片方だけ成功して承認URLが永久403になる（Sol指摘#2）
     _sb(f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}&notify_lock=eq.{my}",
-        "PATCH", {"notified_at": _iso(), "notify_lock": None, "updated_at": _iso()}, prefer="return=minimal")
+        "PATCH", {"notified_at": _iso(), "notify_lock": None, "notify_lock_at": None, "updated_at": _iso(), **(on_done or {})}, prefer="return=minimal")
     return True
 
 
@@ -311,11 +320,9 @@ def _request_text(inv: dict, attempt: int, info: dict, nonce: str) -> str:
 
 
 def _deliver_request(inv: dict, attempt: int, info: dict, nonce: str) -> bool:
-    """承認依頼を一度だけ届け、届いたら pending にする"""
-    ok = deliver_notice(inv["id"], attempt, "request", lambda: _request_text(inv, attempt, info, nonce))
-    if ok:
-        ledger_update(inv["id"], attempt, {"status": "pending_notify"}, {"status": "pending"})
-    return ok
+    """承認依頼を一度だけ届け、届いたら同じ更新で pending にする"""
+    return deliver_notice(inv["id"], attempt, "request", lambda: _request_text(inv, attempt, info, nonce),
+                          on_done={"status": "pending"}, expect_status="pending_notify")
 
 
 def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
@@ -333,10 +340,9 @@ def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
     info = customer_info(inv.get("customer", ""))
     who = _who(info, inv)
     if not info["line_user_id"]:
-        if not dry:
-            ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "no_line",
-                           "customer_id": inv.get("customer", ""), "note": "名簿にLINE IDなし"})
-            deliver_notice(invoice_id, attempt, "no_line", lambda: (
+        if not dry and ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "no_line",
+                                      "customer_id": inv.get("customer", ""), "note": "名簿にLINE IDなし"}):
+            deliver_notice(invoice_id, attempt, "no_line", expect_status="no_line", build_text=lambda: (
                 f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{who}\ncustomer: {inv.get('customer')}\n"
                 f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}"))
         return f"紐付けなし: {who}"
@@ -368,6 +374,13 @@ def process_invoice(inv: dict, dry: bool = False) -> str:
     if not rows:
         return request_attempt(inv["id"], 1, dry)
     st, n = last["status"], int(last["attempt"])
+    if st == "pending_notify" and last.get("notified_at"):
+        if not dry:
+            ledger_update(inv["id"], n, {"status": "pending_notify"}, {"status": "pending"})
+        return f"承認依頼は届いていたので承認待ちに修復（{n}通目）{label}"
+    # 3回試しても届かなかった知らせは、正常扱いに戻さず失敗として返す（GitHubが赤→🚨、ダッシュボードにも出る・Sol指摘#4）
+    if not last.get("notified_at") and int(last.get("notify_tries") or 0) >= NOTIFY_MAX_TRIES and st in ("pending_notify", "no_line", "unknown", "escalated"):
+        raise RuntimeError(f"彩さんへの知らせが{NOTIFY_MAX_TRIES}回とも届いていません（{n}通目 {st}）。LINEの設定を確認し、台帳の notify_tries を0に戻すと再送します")
     # 業務上の状態と「彩さんへの知らせが届いたか」は別に持つ。届いていなければ届くまで（3回まで）やり直す（Sol指摘#5,#6,#7）
     if not last.get("notified_at") and int(last.get("notify_tries") or 0) < NOTIFY_MAX_TRIES and st in ("pending_notify", "no_line", "unknown", "escalated"):
         if not dry:
@@ -375,11 +388,11 @@ def process_invoice(inv: dict, dry: bool = False) -> str:
             if st == "pending_notify":
                 _deliver_request(inv, n, info, last.get("nonce") or "")
             elif st == "unknown":
-                deliver_notice(inv["id"], n, "unknown", lambda: _unknown_text(inv["id"], n, info, inv))
+                deliver_notice(inv["id"], n, "unknown", lambda: _unknown_text(inv["id"], n, info, inv), expect_status="unknown")
             elif st == "escalated":
-                deliver_notice(inv["id"], n, "escalated", lambda: _escalate_text(info, inv))
+                deliver_notice(inv["id"], n, "escalated", lambda: _escalate_text(info, inv), expect_status="escalated")
             elif st == "no_line":
-                deliver_notice(inv["id"], n, "no_line", lambda: (
+                deliver_notice(inv["id"], n, "no_line", expect_status="no_line", build_text=lambda: (
                     f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{_who(info, inv)}\ncustomer: {inv.get('customer')}\n"
                     f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}"))
         return f"知らせを再送（{n}通目 {st}）{label}"
@@ -388,7 +401,7 @@ def process_invoice(inv: dict, dry: bool = False) -> str:
         if _days_since(last.get("updated_at") or "") * 24 * 60 >= 10:
             if not dry and ledger_update(inv["id"], n, {"status": "sending"}, {"status": "unknown", "nonce": None, "note": "送信中のまま停止", **_NEW_NOTICE}):
                 info = customer_info(inv.get("customer", ""))
-                deliver_notice(inv["id"], n, "unknown", lambda: _unknown_text(inv["id"], n, info, inv))
+                deliver_notice(inv["id"], n, "unknown", lambda: _unknown_text(inv["id"], n, info, inv), expect_status="unknown")
             return f"送信中のまま止まっていたので結果不明に（{n}通目）{label}"
         return f"送信中（{n}通目）{label}"
     if st in ("pending", "pending_notify"):
@@ -399,9 +412,9 @@ def process_invoice(inv: dict, dry: bool = False) -> str:
         return request_attempt(inv["id"], n + 1, dry)
     if st == "sent" and n == 3 and _days_since(last.get("sent_at") or "") >= REMIND_INTERVAL_DAYS:
         if not dry:
-            ledger_insert({"invoice_id": inv["id"], "attempt": 4, "status": "escalated", "customer_id": inv.get("customer", "")})
-            info = customer_info(inv.get("customer", ""))
-            deliver_notice(inv["id"], 4, "escalated", lambda: _escalate_text(info, inv))
+            if ledger_insert({"invoice_id": inv["id"], "attempt": 4, "status": "escalated", "customer_id": inv.get("customer", "")}):
+                info = customer_info(inv.get("customer", ""))
+                deliver_notice(inv["id"], 4, "escalated", lambda: _escalate_text(info, inv), expect_status="escalated")
         return f"手動フォロー通知 {label}"
     return f"待機中（{n}通目 {st}）{label}"
 
@@ -502,7 +515,7 @@ def execute(invoice_id: str, attempt: int, token: str) -> tuple:
 def _try_notify_unknown(invoice_id: str, attempt: int, info: dict, inv: dict) -> None:
     """届かなくても行の notified_at が空のまま残るので、翌朝の見回りがやり直す"""
     try:
-        deliver_notice(invoice_id, attempt, "unknown", lambda: _unknown_text(invoice_id, attempt, info, inv))
+        deliver_notice(invoice_id, attempt, "unknown", lambda: _unknown_text(invoice_id, attempt, info, inv), expect_status="unknown")
     except Exception as e:  # noqa: BLE001
         _log(f"unknown-notify failed (翌朝やり直し): {e}")
 

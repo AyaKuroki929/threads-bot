@@ -57,10 +57,17 @@ create table if not exists payment_reminder_attempts (
   note          text,
   notified_at   timestamptz,        -- この行に紐づく彩さん宛LINE（承認依頼／結果不明／手動フォロー）が届いた時刻
   notify_lock   text,               -- 彩さん宛LINEを送る権利を取った実行の印（同時実行で2通にしない）
+  notify_lock_at timestamptz,       -- その印を取った時刻（10分以上進まなければ回収する）
   notify_tries  int not null default 0,
   updated_at    timestamptz not null default now(),
   primary key (invoice_id, attempt)
 );
+-- 旧版で作成済みのときは列だけ足す（何度実行しても安全）
+alter table payment_reminder_attempts add column if not exists notified_at   timestamptz;
+alter table payment_reminder_attempts add column if not exists notify_lock   text;
+alter table payment_reminder_attempts add column if not exists notify_lock_at timestamptz;
+alter table payment_reminder_attempts add column if not exists notify_tries  int not null default 0;
+alter table payment_reminder_attempts add column if not exists updated_at    timestamptz not null default now();
 -- サーバー（service role）だけが触る。一般利用者（anon / authenticated）からは読めない・書けない
 alter table payment_reminder_attempts enable row level security;
 revoke all on payment_reminder_attempts from anon, authenticated;

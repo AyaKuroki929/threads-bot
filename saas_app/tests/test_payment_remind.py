@@ -47,8 +47,13 @@ def fake_urlopen(req, timeout=20):
                 if k in ("order", "select", "limit"): continue
                 if v == "is.null":
                     if row.get(k) is not None: return False
+                elif v == "not.is.null":
+                    if row.get(k) is None: return False
                 elif v.startswith("lt."):
-                    if not (int(row.get(k) or 0) < int(v[3:])): return False
+                    val = row.get(k)
+                    if k.endswith("_at"):
+                        if val is None or not (str(val) < urllib.parse.unquote(v[3:])): return False
+                    elif not (int(val or 0) < int(v[3:])): return False
                 elif str(row.get(k)) != v[len("eq."):]: return False
             return True
         if W.notify_hook and method == "PATCH":
@@ -59,7 +64,7 @@ def fake_urlopen(req, timeout=20):
             if method == "POST":
                 row = json.loads(req.data); key = (row["invoice_id"], int(row["attempt"]))
                 if key in W.ledger: raise _err(url, 409, body=b'{"code":"23505"}')
-                W.ledger[key] = {"notified_at": None, "notify_lock": None, "notify_tries": 0, "updated_at": pr._iso(), **row}; return R(b"")
+                W.ledger[key] = {"notified_at": None, "notify_lock": None, "notify_lock_at": None, "notify_tries": 0, "updated_at": pr._iso(), **row}; return R(b"")
             if method == "PATCH":
                 patch = json.loads(req.data); hit = [r for r in W.ledger.values() if match(r)]
                 for r in hit: r.update(patch)
@@ -226,6 +231,21 @@ check("本人へは送らない", not any(c[0] == "U_A" and "in_16" in c[1] for 
 print("(18) 請求書0件の朝でも台帳が無ければ気づける")
 saved = dict(W.invoices); W.invoices.clear(); W.ledger_missing = True; out = pr.poll(dry=True); W.ledger_missing = False; W.invoices.update(saved)
 check("ok=false", not out["ok"] and any("台帳" in e for e in out["errors"]), out)
+
+print("(19) 取ったまま10分以上止まった配送の印は回収して届ける")
+W.add("in_17"); W.ledger[("in_17", 1)] = {"invoice_id": "in_17", "attempt": 1, "status": "pending_notify", "nonce": "n", "customer_id": "cus_A", "line_user_id": "U_A", "notified_at": None, "notify_lock": "dead", "notify_lock_at": "2026-09-01T09:00:00+09:00", "notify_tries": 0, "updated_at": pr._iso()}
+W.admin.clear(); r = pr.process_invoice(W.invoices["in_17"])
+check("回収して届く・pendingに", len(W.admin) == 1 and st("in_17", 1) == "pending", (r, st("in_17", 1)))
+W.ledger[("in_17", 1)].update({"notified_at": None, "notify_lock": "alive", "notify_lock_at": pr._iso(), "status": "pending_notify"}); W.admin.clear()
+r = pr.process_invoice(W.invoices["in_17"]); check("生きている印は奪わない", W.admin == [], (r, W.admin))
+
+print("(20) 『届いた』と『承認待ちにする』は同じ更新（承認URLが永久403にならない）")
+W.add("in_18"); W.ledger[("in_18", 1)] = {"invoice_id": "in_18", "attempt": 1, "status": "pending_notify", "nonce": "n", "customer_id": "cus_A", "line_user_id": "U_A", "notified_at": pr._iso(), "notify_lock": None, "notify_lock_at": None, "notify_tries": 0, "updated_at": pr._iso()}
+r = pr.process_invoice(W.invoices["in_18"]); check("中間状態を修復", st("in_18", 1) == "pending", (r, st("in_18", 1)))
+
+print("(21) 3回届かなかった知らせは正常扱いに戻さず失敗として返す")
+W.add("in_19"); W.ledger[("in_19", 1)] = {"invoice_id": "in_19", "attempt": 1, "status": "unknown", "customer_id": "cus_A", "line_user_id": "U_A", "notified_at": None, "notify_lock": None, "notify_lock_at": None, "notify_tries": 3, "updated_at": pr._iso()}
+out = pr.poll(); check("poll が ok=false", not out["ok"] and any("in_19" in e or "3回" in e for e in out["errors"]), out["errors"])
 
 print("(13) 彩さんが手で送った印（mark）")
 W.add("in_11"); check("1通目を手動送付済みに", pr.mark_sent("in_11", 1).startswith("OK") and st("in_11", 1) == "sent")

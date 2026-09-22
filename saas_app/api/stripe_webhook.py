@@ -241,6 +241,20 @@ def _line_product_ids(line: dict) -> list:
     return [x for x in out if x]
 
 
+def _all_invoice_lines(obj: dict) -> list:
+    """請求書の明細を全ページ読む。payload には先頭ページしか無い（2ページ目以降に対象商品があると取りこぼす）"""
+    lines = (obj.get("lines") or {}).get("data", [])
+    if (obj.get("lines") or {}).get("has_more") and obj.get("id"):
+        lines, after = [], None
+        while True:
+            page = _stripe_get(f"invoices/{urllib.parse.quote(obj['id'])}/lines?limit=100" + (f"&starting_after={after}" if after else ""))
+            lines += page.get("data", [])
+            if not page.get("has_more") or not page.get("data"):
+                break
+            after = page["data"][-1]["id"]
+    return lines
+
+
 def _is_toukosan_product(items: list) -> bool:
     return any(TOUKOSAN_PRODUCT_ID in _line_product_ids(item) for item in items)
 
@@ -350,16 +364,7 @@ def handle_subscription_deleted(obj: dict):
 
 
 def handle_payment_failed(obj: dict):
-    lines = obj.get("lines", {}).get("data", [])
-    if obj.get("lines", {}).get("has_more") and obj.get("id"):
-        # 明細が2ページ目以降にある請求書は payload だけでは商品を判定できない → 全ページ読む
-        lines, after = [], None
-        while True:
-            page = _stripe_get(f"invoices/{urllib.parse.quote(obj['id'])}/lines?limit=100" + (f"&starting_after={after}" if after else ""))
-            lines += page.get("data", [])
-            if not page.get("has_more") or not page.get("data"):
-                break
-            after = page["data"][-1]["id"]
+    lines = _all_invoice_lines(obj)
     if not _is_toukosan_product(lines):
         return
     subscription_id = obj.get("subscription", "")
@@ -454,7 +459,7 @@ def handle_invoice_paid(obj: dict):
     # 解約待ちの方は、この課金が「最終課金」なので最優先で彩さんへ知らせる
     if handle_cancel_watch(obj):
         return
-    lines = obj.get("lines", {}).get("data", [])
+    lines = _all_invoice_lines(obj)
     _log(f"handle_invoice_paid: lines_count={len(lines)}, subscription={obj.get('subscription')!r}")
 
     if lines and not _is_toukosan_product(lines):
