@@ -352,8 +352,14 @@ def handle_subscription_deleted(obj: dict):
 def handle_payment_failed(obj: dict):
     lines = obj.get("lines", {}).get("data", [])
     if obj.get("lines", {}).get("has_more") and obj.get("id"):
-        # 明細が2ページ目以降にある請求書は payload だけでは商品を判定できない
-        lines = _stripe_get(f"invoices/{urllib.parse.quote(obj['id'])}/lines?limit=100").get("data", lines)
+        # 明細が2ページ目以降にある請求書は payload だけでは商品を判定できない → 全ページ読む
+        lines, after = [], None
+        while True:
+            page = _stripe_get(f"invoices/{urllib.parse.quote(obj['id'])}/lines?limit=100" + (f"&starting_after={after}" if after else ""))
+            lines += page.get("data", [])
+            if not page.get("has_more") or not page.get("data"):
+                break
+            after = page["data"][-1]["id"]
     if not _is_toukosan_product(lines):
         return
     subscription_id = obj.get("subscription", "")

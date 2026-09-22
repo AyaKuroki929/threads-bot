@@ -14,7 +14,7 @@ class World:
         self.fail_admin = False; self.client_mode = "ok"; self.ledger_missing = False
         self.line_users = {"cus_A": {"line_user_id": "U_A", "display_name": "杉村真理子"}}
         self.salons = {"cus_A": {"salon_name": "okaosori.piccolo"}}
-        self.before_client_send = None
+        self.before_client_send = None; self.notify_hook = None; self.admin_calls = 0
     def add(self, iid, cust="cus_A", product=PROD, status="open", attempts=1, remaining=2750):
         self.invoices[iid] = {"id": iid, "customer": cust, "status": status, "attempt_count": attempts, "amount_due": 2750,
                               "amount_remaining": remaining, "collection_method": "charge_automatically", "hosted_invoice_url": "https://inv/" + iid,
@@ -44,14 +44,22 @@ def fake_urlopen(req, timeout=20):
         q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
         def match(row):
             for k, v in q.items():
-                if k in ("order",): continue
-                if str(row.get(k)) != v[len("eq."):]: return False
+                if k in ("order", "select", "limit"): continue
+                if v == "is.null":
+                    if row.get(k) is not None: return False
+                elif v.startswith("lt."):
+                    if not (int(row.get(k) or 0) < int(v[3:])): return False
+                elif str(row.get(k)) != v[len("eq."):]: return False
             return True
+        if W.notify_hook and method == "PATCH":
+            body = json.loads(req.data or b"{}")
+            if body.get("notify_lock") and "notified_at" not in body:   # 送信権を取りに来た瞬間だけ
+                W.notify_hook()
         with LOCK:
             if method == "POST":
                 row = json.loads(req.data); key = (row["invoice_id"], int(row["attempt"]))
                 if key in W.ledger: raise _err(url, 409, body=b'{"code":"23505"}')
-                W.ledger[key] = {**row, "sent_at": row.get("sent_at")}; return R(b"")
+                W.ledger[key] = {"notified_at": None, "notify_lock": None, "notify_tries": 0, "updated_at": pr._iso(), **row}; return R(b"")
             if method == "PATCH":
                 patch = json.loads(req.data); hit = [r for r in W.ledger.values() if match(r)]
                 for r in hit: r.update(patch)
@@ -63,8 +71,19 @@ def fake_urlopen(req, timeout=20):
     if url.startswith("https://sb.test/rest/v1/salons"):
         cus = urllib.parse.unquote(url.split("eq.")[1].split("&")[0]); s_ = W.salons.get(cus); return R(json.dumps([s_] if s_ else []).encode())
     if url.endswith("/broadcast"):
+        W.admin_calls += 1
+        if W.fail_admin == "lost":      # LINEは受理したのに応答だけ失われる
+            key = req.get_header("X-line-retry-key")
+            with LOCK:
+                if key not in W.seen_keys: W.seen_keys.add(key); W.admin.append(json.loads(req.data)["messages"][0]["text"])
+            raise TimeoutError("lost")
         if W.fail_admin: raise _err(url, 500)
-        W.admin.append(json.loads(req.data)["messages"][0]["text"]); return R(b"{}")
+        key = req.get_header("X-line-retry-key")
+        with LOCK:
+            if key and key in W.seen_keys: raise _err(url, 409, {"x-line-accepted-request-id": "dup"})
+            if key: W.seen_keys.add(key)
+            W.admin.append(json.loads(req.data)["messages"][0]["text"])
+        return R(b"{}")
     if url.endswith("/push"):
         if W.before_client_send: W.before_client_send()
         key = req.get_header("X-line-retry-key")
@@ -123,8 +142,9 @@ print("(7) 彩さん宛LINEが失敗したら翌朝やり直す（行は残る�
 W.add("in_4"); W.fail_admin = True
 try: pr.request_attempt("in_4", 1); check("例外", False)
 except Exception: check("例外", True)
-W.fail_admin = False; check("行は pending_notify", st("in_4", 1) == "pending_notify"); W.admin.clear()
+W.fail_admin = False; check("行は pending_notify", st("in_4", 1) == "pending_notify" and W.ledger[("in_4",1)]["notify_tries"] == 1); W.admin.clear()
 r = pr.process_invoice(W.invoices["in_4"]); check("翌朝は依頼を再送", "再送" in r and len(W.admin) == 1 and st("in_4", 1) == "pending", r)
+check("届いた印", W.ledger[("in_4",1)]["notified_at"] is not None)
 
 print("(8) 送れたか分からない（タイムアウト）は unknown。再送しない。彩さんに1通")
 W.add("in_5"); pr.request_attempt("in_5", 1); t5 = tok("in_5", 1); W.client.clear(); W.admin.clear(); W.client_mode = "timeout"
@@ -166,11 +186,53 @@ pr.STRIPE_WEBHOOK_SECRET = "whsec_x"
 W.ledger_missing = True; out = pr.poll(dry=True); W.ledger_missing = False
 check("台帳が無ければ失敗として返す（黙らない）", not out["ok"] and any("supabase_tables.sql" in e for e in out["errors"]), out["errors"])
 
+print("(14) 彩さん宛の依頼：受理されたのに応答だけ失われても、翌朝2通目にならない")
+W.add("in_13"); W.admin.clear(); W.fail_admin = "lost"
+try: pr.request_attempt("in_13", 1)
+except Exception: pass
+W.fail_admin = False
+check("1通は届いている・行は pending_notify", len(W.admin) == 1 and st("in_13", 1) == "pending_notify")
+r = pr.process_invoice(W.invoices["in_13"]); check("翌朝の再送はLINE側で重複排除→2通にならない", len(W.admin) == 1 and st("in_13", 1) == "pending", (r, W.admin))
+
+print("(15) pending_notify の再送が同時に走っても依頼は1通")
+W.add("in_14"); W.ledger[("in_14", 1)] = {"invoice_id": "in_14", "attempt": 1, "status": "pending_notify", "nonce": "n", "customer_id": "cus_A", "line_user_id": "U_A", "notified_at": None, "notify_lock": None, "notify_tries": 0, "updated_at": pr._iso()}
+W.admin.clear(); W.admin_calls = 0; barrier = threading.Barrier(2)
+_hits = [0]
+def _hook():
+    _hits[0] += 1
+    if _hits[0] <= 2: barrier.wait(timeout=2)
+W.notify_hook = _hook
+ts = [threading.Thread(target=lambda: pr.process_invoice(W.invoices["in_14"])) for _ in range(2)]; [t.start() for t in ts]; [t.join() for t in ts]
+W.notify_hook = None
+check("LINE呼び出し1回・届いた1通", W.admin_calls == 1 and len(W.admin) == 1, (W.admin_calls, len(W.admin)))
+
+print("(16) 3回失敗したら諦める（毎朝増えない）／手動フォロー通知が失敗しても翌朝やり直す")
+W.add("in_15"); W.ledger[("in_15", 4)] = {"invoice_id": "in_15", "attempt": 4, "status": "escalated", "customer_id": "cus_A", "notified_at": None, "notify_lock": None, "notify_tries": 0, "updated_at": pr._iso()}
+W.fail_admin = True; W.admin.clear()
+for _ in range(5):
+    try: pr.process_invoice(W.invoices["in_15"])
+    except Exception: pass
+W.fail_admin = False
+check("試行は3回で止まる", W.ledger[("in_15", 4)]["notify_tries"] == 3, W.ledger[("in_15", 4)]["notify_tries"])
+W.ledger[("in_15", 4)]["notify_tries"] = 0
+r = pr.process_invoice(W.invoices["in_15"]); check("復旧後は届く", len(W.admin) == 1 and "手動フォロー必要" in W.admin[0], r)
+
+print("(17) 送信中のまま10分以上止まった行は結果不明にして人に渡す")
+W.add("in_16"); W.ledger[("in_16", 1)] = {"invoice_id": "in_16", "attempt": 1, "status": "sending", "lock_id": "x", "nonce": "n", "customer_id": "cus_A", "line_user_id": "U_A", "notified_at": None, "notify_lock": None, "notify_tries": 0, "updated_at": "2026-09-01T09:00:00+09:00"}
+W.admin.clear(); r = pr.process_invoice(W.invoices["in_16"])
+check("unknown に", st("in_16", 1) == "unknown" and len(W.admin) == 1 and "送れたか不明" in W.admin[0], (r, st("in_16", 1)))
+check("本人へは送らない", not any(c[0] == "U_A" and "in_16" in c[1] for c in W.client))
+
+print("(18) 請求書0件の朝でも台帳が無ければ気づける")
+saved = dict(W.invoices); W.invoices.clear(); W.ledger_missing = True; out = pr.poll(dry=True); W.ledger_missing = False; W.invoices.update(saved)
+check("ok=false", not out["ok"] and any("台帳" in e for e in out["errors"]), out)
+
 print("(13) 彩さんが手で送った印（mark）")
 W.add("in_11"); check("1通目を手動送付済みに", pr.mark_sent("in_11", 1).startswith("OK") and st("in_11", 1) == "sent")
 check("同じ通番は二重に付けない", pr.mark_sent("in_11", 1).startswith("NG"))
 pr.request_attempt("in_12", 1) if W.add("in_12") is None else None
 check("承認待ちの行を手動送付済みに", pr.mark_sent("in_12", 1).startswith("OK") and st("in_12", 1) == "sent")
+check("結果不明も彩さんの確認で解決できる", pr.mark_sent("in_5", 1).startswith("OK") and st("in_5", 1) == "sent")
 
 print("\n" + ("🚨 失敗: " + ", ".join(fails) if fails else "✅ 全項目パス"))
 sys.exit(1 if fails else 0)

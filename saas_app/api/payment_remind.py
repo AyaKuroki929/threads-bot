@@ -205,7 +205,7 @@ def ledger_insert(row: dict) -> bool:
         _sb(LEDGER, "POST", row, prefer="return=minimal")
         return True
     except urllib.error.HTTPError as e:
-        if e.code == 409:
+        if e.code == 409 and "23505" in (getattr(e, "detail", "") or ""):   # 主キー衝突だけを「他が先」とみなす（Sol指摘）
             return False
         raise
 
@@ -215,8 +215,39 @@ def ledger_update(invoice_id: str, attempt: int, where: dict, patch: dict) -> bo
     q = f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}"
     for k, v in where.items():
         q += f"&{k}=eq.{urllib.parse.quote(str(v))}"
-    rows = _sb(q, "PATCH", patch, prefer="return=representation")
+    rows = _sb(q, "PATCH", {**patch, "updated_at": _iso()}, prefer="return=representation")
     return len(rows) == 1
+
+
+def ledger_exists() -> None:
+    """台帳が無ければ LedgerMissing（請求書0件の朝でも気づけるように、見回りの冒頭で必ず触る）"""
+    _sb(f"{LEDGER}?select=invoice_id&limit=1")
+
+
+NOTIFY_MAX_TRIES = 3   # 彩さん宛の通知は3日（3回）まで試す。それ以上はLINE側の重複排除（24時間）の外なので止める
+# 行の状態が変わって「新しい用件」を知らせるとき（承認依頼→結果不明 など）は配送欄を空にして届け直せるようにする
+_NEW_NOTICE = {"notified_at": None, "notify_lock": None, "notify_tries": 0}
+
+
+def deliver_notice(invoice_id: str, attempt: int, kind: str, build_text) -> bool:
+    """行に紐づく彩さん宛LINEを「一度だけ」届ける。notify_lock を取れた1人だけが送り、届いたら notified_at を書く。
+    失敗したら lock を外して tries+1（翌朝やり直し）。build_text() は送る直前に呼ぶ（無駄な組み立てをしない）。"""
+    my = secrets.token_hex(8)
+    base = f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}&notified_at=is.null&notify_lock=is.null&notify_tries=lt.{NOTIFY_MAX_TRIES}"
+    got = _sb(base, "PATCH", {"notify_lock": my, "updated_at": _iso()}, prefer="return=representation")
+    if len(got) != 1:
+        return False
+    try:
+        line_admin(build_text(), str(uuid.uuid5(uuid.NAMESPACE_URL, f"toukosan-notice:{invoice_id}:{attempt}:{kind}")))
+    except Exception as e:  # noqa: BLE001
+        tries = int(got[0].get("notify_tries") or 0) + 1
+        _sb(f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}&notify_lock=eq.{my}",
+            "PATCH", {"notify_lock": None, "notify_tries": tries, "updated_at": _iso()}, prefer="return=minimal")
+        _log(f"notice failed ({kind} {invoice_id} #{attempt}, tries={tries}): {type(e).__name__}: {e}")
+        raise
+    _sb(f"{LEDGER}?invoice_id=eq.{urllib.parse.quote(invoice_id)}&attempt=eq.{attempt}&notify_lock=eq.{my}",
+        "PATCH", {"notified_at": _iso(), "notify_lock": None, "updated_at": _iso()}, prefer="return=minimal")
+    return True
 
 
 def customer_info(customer_id: str) -> dict:
@@ -248,9 +279,10 @@ def _line_post(path: str, token: str, body: dict, retry_key: str = "") -> int:
         raise
 
 
-def line_admin(text: str) -> None:
-    """彩さん宛。失敗したら例外＝呼び出し側は状態を進めない（承認依頼が黙って消えない・Sol指摘#5）"""
-    _line_post("broadcast", ADMIN_LINE_TOKEN, {"messages": [{"type": "text", "text": text}]})
+def line_admin(text: str, retry_key: str = "") -> None:
+    """彩さん宛。失敗したら例外＝呼び出し側は状態を進めない（承認依頼が黙って消えない・Sol指摘#5）。
+    同じ用件には同じ retry key を付け、応答だけ失われた再送で2通にしない"""
+    _line_post("broadcast", ADMIN_LINE_TOKEN, {"messages": [{"type": "text", "text": text}]}, retry_key)
 
 
 def line_client(uid: str, text: str, retry_key: str) -> None:
@@ -265,18 +297,25 @@ def _latest(rows: list) -> dict:
     return rows[-1] if rows else {}
 
 
-def _notify_request(inv: dict, attempt: int, info: dict, nonce: str) -> None:
-    """彩さんへ承認依頼を送る（失敗は例外）"""
+def _request_text(inv: dict, attempt: int, info: dict, nonce: str) -> str:
     invoice_id = inv["id"]; url = inv.get("hosted_invoice_url", "") or ""
     approve_url = (f"{BASE_URL}/api/payment-remind?mode=approve&invoice={urllib.parse.quote(invoice_id)}"
                    f"&attempt={attempt}&token={approve_token(invoice_id, attempt, nonce)}")
-    line_admin(f"[とうこさん要承認 {attempt}通目]\n"
-               f"👤 {_who(info, inv)}\n"
-               f"金額: ¥{int(inv.get('amount_due', 0) or 0):,}（失敗{inv.get('attempt_count')}回）\n"
-               f"invoice: {invoice_id}\n\n"
-               f"--- 文面プレビュー ---\n{build_message(attempt, url)}\n\n"
-               f"✅ 承認して送信:\n{approve_url}\n\n"
-               f"（送らない場合は何もせず無視してください）")
+    return (f"[とうこさん要承認 {attempt}通目]\n"
+            f"👤 {_who(info, inv)}\n"
+            f"金額: ¥{int(inv.get('amount_due', 0) or 0):,}（失敗{inv.get('attempt_count')}回）\n"
+            f"invoice: {invoice_id}\n\n"
+            f"--- 文面プレビュー ---\n{build_message(attempt, url)}\n\n"
+            f"✅ 承認して送信:\n{approve_url}\n\n"
+            f"（送らない場合は何もせず無視してください）")
+
+
+def _deliver_request(inv: dict, attempt: int, info: dict, nonce: str) -> bool:
+    """承認依頼を一度だけ届け、届いたら pending にする"""
+    ok = deliver_notice(inv["id"], attempt, "request", lambda: _request_text(inv, attempt, info, nonce))
+    if ok:
+        ledger_update(inv["id"], attempt, {"status": "pending_notify"}, {"status": "pending"})
+    return ok
 
 
 def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
@@ -294,10 +333,12 @@ def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
     info = customer_info(inv.get("customer", ""))
     who = _who(info, inv)
     if not info["line_user_id"]:
-        if not dry and ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "no_line",
-                                      "customer_id": inv.get("customer", ""), "note": "名簿にLINE IDなし"}):
-            line_admin(f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{who}\ncustomer: {inv.get('customer')}\n"
-                       f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}")
+        if not dry:
+            ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "no_line",
+                           "customer_id": inv.get("customer", ""), "note": "名簿にLINE IDなし"})
+            deliver_notice(invoice_id, attempt, "no_line", lambda: (
+                f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{who}\ncustomer: {inv.get('customer')}\n"
+                f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}"))
         return f"紐付けなし: {who}"
     if dry:
         return f"[dry] {attempt}通目の承認依頼を出す: {who} [{invoice_id}]"
@@ -305,8 +346,7 @@ def request_attempt(invoice_id: str, attempt: int, dry: bool = False) -> str:
     if not ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "pending_notify", "nonce": nonce,
                           "customer_id": inv.get("customer", ""), "line_user_id": info["line_user_id"]}):
         return f"進めない（同時に別の処理が先に作成）: {invoice_id}"
-    _notify_request(inv, attempt, info, nonce)
-    ledger_update(invoice_id, attempt, {"status": "pending_notify"}, {"status": "pending"})
+    _deliver_request(inv, attempt, info, nonce)
     return f"承認依頼を出した: {attempt}通目 {who} [{invoice_id}]"
 
 
@@ -328,32 +368,60 @@ def process_invoice(inv: dict, dry: bool = False) -> str:
     if not rows:
         return request_attempt(inv["id"], 1, dry)
     st, n = last["status"], int(last["attempt"])
-    if st == "pending_notify":
-        # 行はあるが彩さんへの依頼が届いていない（前回LINEが失敗）→ 依頼だけやり直す
+    # 業務上の状態と「彩さんへの知らせが届いたか」は別に持つ。届いていなければ届くまで（3回まで）やり直す（Sol指摘#5,#6,#7）
+    if not last.get("notified_at") and int(last.get("notify_tries") or 0) < NOTIFY_MAX_TRIES and st in ("pending_notify", "no_line", "unknown", "escalated"):
         if not dry:
             info = customer_info(inv.get("customer", ""))
-            _notify_request(inv, n, info, last.get("nonce") or "")
-            ledger_update(inv["id"], n, {"status": "pending_notify"}, {"status": "pending"})
-        return f"承認依頼を再送（{n}通目）{label}"
-    if st in ("pending", "sending"):
-        return f"承認待ち・送信中（{n}通目 {st}）{label}"
+            if st == "pending_notify":
+                _deliver_request(inv, n, info, last.get("nonce") or "")
+            elif st == "unknown":
+                deliver_notice(inv["id"], n, "unknown", lambda: _unknown_text(inv["id"], n, info, inv))
+            elif st == "escalated":
+                deliver_notice(inv["id"], n, "escalated", lambda: _escalate_text(info, inv))
+            elif st == "no_line":
+                deliver_notice(inv["id"], n, "no_line", lambda: (
+                    f"⚠️ とうこさん 支払い失敗（LINEの紐付けなし）\n\n{_who(info, inv)}\ncustomer: {inv.get('customer')}\n"
+                    f"名簿にLINE IDが無いため自動リマインドできません。手動でご連絡ください。\n{inv.get('hosted_invoice_url', '')}"))
+        return f"知らせを再送（{n}通目 {st}）{label}"
+    if st == "sending":
+        # 送信権を取ったまま10分以上進んでいない＝実行が途中で死んだ。届いたか分からないので unknown にして人に渡す
+        if _days_since(last.get("updated_at") or "") * 24 * 60 >= 10:
+            if not dry and ledger_update(inv["id"], n, {"status": "sending"}, {"status": "unknown", "nonce": None, "note": "送信中のまま停止", **_NEW_NOTICE}):
+                info = customer_info(inv.get("customer", ""))
+                deliver_notice(inv["id"], n, "unknown", lambda: _unknown_text(inv["id"], n, info, inv))
+            return f"送信中のまま止まっていたので結果不明に（{n}通目）{label}"
+        return f"送信中（{n}通目）{label}"
+    if st in ("pending", "pending_notify"):
+        return f"承認待ち（{n}通目 {st}）{label}"
     if st in ("unknown", "escalated", "no_line"):
         return f"人の確認待ち・対応済み（{n}通目 {st}）{label}"
     if st == "sent" and n < 3 and _days_since(last.get("sent_at") or "") >= REMIND_INTERVAL_DAYS:
         return request_attempt(inv["id"], n + 1, dry)
     if st == "sent" and n == 3 and _days_since(last.get("sent_at") or "") >= REMIND_INTERVAL_DAYS:
-        if not dry and ledger_insert({"invoice_id": inv["id"], "attempt": 4, "status": "escalated", "customer_id": inv.get("customer", "")}):
+        if not dry:
+            ledger_insert({"invoice_id": inv["id"], "attempt": 4, "status": "escalated", "customer_id": inv.get("customer", "")})
             info = customer_info(inv.get("customer", ""))
-            line_admin(f"⚠️【手動フォロー必要】\n{_who(info, inv)} さんが3通目のリマインドから3日経っても未払いです。\n"
-                       f"直接連絡またはサービス停止を検討してください。\ncustomer: {inv.get('customer')}\ninvoice: {inv['id']}")
+            deliver_notice(inv["id"], 4, "escalated", lambda: _escalate_text(info, inv))
         return f"手動フォロー通知 {label}"
     return f"待機中（{n}通目 {st}）{label}"
+
+
+def _escalate_text(info: dict, inv: dict) -> str:
+    return (f"⚠️【手動フォロー必要】\n{_who(info, inv)} さんが3通目のリマインドから3日経っても未払いです。\n"
+            f"直接連絡またはサービス停止を検討してください。\ncustomer: {inv.get('customer')}\ninvoice: {inv['id']}")
+
+
+def _unknown_text(invoice_id: str, attempt: int, info: dict, inv: dict) -> str:
+    return (f"⚠️ とうこさん {attempt}通目：送れたか不明\n\n{_who(info, inv)}\ninvoice: {invoice_id}\n\n"
+            f"LINEの応答が確認できませんでした。本人に届いているかを確認し、届いていなければ手動で送ってください。自動では再送しません。\n"
+            f"確認後は Claude に「{invoice_id} の{attempt}通目は届いていた／手動で送った」と伝えてください。")
 
 
 def poll(dry: bool = False) -> dict:
     _require_config()
     results, errors, scanned = [], [], []
     try:
+        ledger_exists()
         for inv in stripe_open_invoices():
             try:
                 inv = with_all_lines(inv)
@@ -382,9 +450,10 @@ def mark_sent(invoice_id: str, attempt: int) -> str:
     if not is_toukosan(inv):
         return "NG: とうこさんの請求書ではありません"
     rows = ledger_rows(invoice_id); last = _latest(rows)
-    if last and last.get("attempt") == attempt and last.get("status") in ("pending_notify", "pending"):
-        ok = ledger_update(invoice_id, attempt, {"status": last["status"]}, {"status": "sent", "sent_at": _iso(), "nonce": None, "note": "彩さんが手動で送付"})
-        return "OK: 承認待ちだった行を送付済みにしました" if ok else "NG: 同時に別の処理が進みました"
+    if last and last.get("attempt") == attempt and last.get("status") in ("pending_notify", "pending", "unknown"):
+        ok = ledger_update(invoice_id, attempt, {"status": last["status"]}, {"status": "sent", "sent_at": _iso(), "nonce": None,
+                                                                              "note": "彩さんが確認（届いていた／手動で送付）", "notified_at": _iso()})
+        return f"OK: {attempt}通目を送付済みにしました" if ok else "NG: 同時に別の処理が進みました"
     if (attempt == 1 and not rows) or (attempt > 1 and last.get("attempt") == attempt - 1 and last.get("status") == "sent"):
         ok = ledger_insert({"invoice_id": invoice_id, "attempt": attempt, "status": "sent", "sent_at": _iso(),
                             "customer_id": inv.get("customer", ""), "note": "彩さんが手動で送付"})
@@ -419,23 +488,23 @@ def execute(invoice_id: str, attempt: int, token: str) -> tuple:
         if 400 <= e.code < 500:                                # LINEが受け取っていないと分かる失敗 → 承認待ちに戻す
             ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "pending"})
             return False, f"NG: LINEが受け付けませんでした（HTTP {e.code}）。宛先や設定を確認してください。"
-        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "unknown", "nonce": None, "note": f"LINE HTTP {e.code}"})
-        _notify_unknown(invoice_id, attempt, info, inv)
+        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "unknown", "nonce": None, "note": f"LINE HTTP {e.code}", **_NEW_NOTICE})
+        _try_notify_unknown(invoice_id, attempt, info, inv)
         return False, "NG: 送れたかどうか確認できませんでした。本人に届いているか確認してください（自動では再送しません）。"
     except Exception as e:  # noqa: BLE001 タイムアウト・応答喪失＝届いたかもしれない → 結果不明として人に渡す（Sol指摘#2）
-        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "unknown", "nonce": None, "note": f"{type(e).__name__}"})
-        _notify_unknown(invoice_id, attempt, info, inv)
+        ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "unknown", "nonce": None, "note": f"{type(e).__name__}", **_NEW_NOTICE})
+        _try_notify_unknown(invoice_id, attempt, info, inv)
         return False, "NG: 送れたかどうか確認できませんでした。本人に届いているか確認してください（自動では再送しません）。"
     ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "sent", "sent_at": _iso(), "nonce": None})
     return True, f"✅ 送信しました\n\n{attempt}通目を {info['name'] or '本人'} さんへ送りました。\nこのページは閉じて大丈夫です。"
 
 
-def _notify_unknown(invoice_id: str, attempt: int, info: dict, inv: dict) -> None:
+def _try_notify_unknown(invoice_id: str, attempt: int, info: dict, inv: dict) -> None:
+    """届かなくても行の notified_at が空のまま残るので、翌朝の見回りがやり直す"""
     try:
-        line_admin(f"⚠️ とうこさん {attempt}通目：送れたか不明\n\n{_who(info, inv)}\ninvoice: {invoice_id}\n\n"
-                   f"LINEの応答が確認できませんでした。本人に届いているかを確認し、届いていなければ手動で送ってください。自動では再送しません。")
+        deliver_notice(invoice_id, attempt, "unknown", lambda: _unknown_text(invoice_id, attempt, info, inv))
     except Exception as e:  # noqa: BLE001
-        _log(f"unknown-notify failed: {e}")
+        _log(f"unknown-notify failed (翌朝やり直し): {e}")
 
 
 # ── 承認ページ（.format は使わない。CSSの {} と衝突して500になる・Sol指摘#1）──
