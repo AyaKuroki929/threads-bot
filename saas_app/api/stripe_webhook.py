@@ -273,7 +273,14 @@ def handle_checkout_session(obj: dict):
     # とうこさんの商品か確認（他サービスのStripe決済を除外）
     if session_id:
         items = get_session_line_items(session_id)
-        if items and not _is_toukosan_product(items):
+        if not items:
+            # 商品を確認できないまま進むと、他社商品のお客様にもフォーム送信・紐付けをしてしまう（Sol指摘）。
+            # 止めたうえで、本物の申込を取りこぼさないよう彩さんに手動確認を頼む
+            _log(f"handle_checkout_session: line items unavailable for {session_id} → 手動確認")
+            line_push_admin(f"⚠️ とうこさん 新規決済の商品を確認できませんでした\n\n"
+                            f"session: {session_id}\n\nStripeで商品を確認し、とうこさんの申込ならフォーム送付を手動でお願いします。\nhttps://dashboard.stripe.com")
+            return
+        if not _is_toukosan_product(items):
             _log(f"handle_checkout_session: product not matched, skipping (session={session_id})")
             return
     details     = obj.get("customer_details") or {}
@@ -382,6 +389,16 @@ def handle_payment_failed(obj: dict):
     url_block = f"\n\n💳 再決済URL（本人にリマインドを送る時にこのまま使えます）:\n{invoice_url}" if invoice_url else ""
 
     if isinstance(attempt, int) and attempt >= 3:
+        # Stripeのイベントは順番が前後することがある。入金後に届いた古い失敗通知で投稿を止めないよう、
+        # 止める直前に請求書の今の状態を確認する（Sol指摘）
+        try:
+            now_inv = _stripe_get(f"invoices/{urllib.parse.quote(obj.get('id', ''))}") if obj.get("id") else {}
+        except Exception as e:  # noqa: BLE001 確認できないときは止めない（止める方が取り返しがつきにくい）
+            _log(f"payment_failed: 現在の請求書を確認できず停止を見送り: {e}")
+            return
+        if now_inv.get("status") != "open" or int(now_inv.get("amount_remaining") or 0) <= 0:
+            _log(f"payment_failed: 請求書はもう {now_inv.get('status')}（支払い済み等）→ 停止しない")
+            return
         deactivate_salon(salon["id"])
         line_push_admin(
             f"🔴 とうこさん 自動停止（支払い失敗 {attempt}回）\n\n"
@@ -462,8 +479,9 @@ def handle_invoice_paid(obj: dict):
     lines = _all_invoice_lines(obj)
     _log(f"handle_invoice_paid: lines_count={len(lines)}, subscription={obj.get('subscription')!r}")
 
-    if lines and not _is_toukosan_product(lines):
-        _log("handle_invoice_paid: product not matched, skipping")
+    if not lines or not _is_toukosan_product(lines):
+        # 明細が取れない（＝商品を確認できない）ときも進まない。他社商品の入金でサロンを再開しない（Sol指摘）
+        _log("handle_invoice_paid: product not matched or unavailable, skipping")
         return
 
     subscription_id = obj.get("subscription", "")
@@ -613,18 +631,31 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(b"Invalid signature")
             return
 
-        self.send_response(200)
-        self.end_headers()
-
         try:
             event = json.loads(raw)
         except Exception as e:
             _log(f"json parse error: {e}")
+            self.send_response(400)
+            self.end_headers()
             return
 
         etype = event.get("type", "")
         obj   = event.get("data", {}).get("object", {})
         _log(f"received event: {etype}")
+        # ⚠️ 先に200を返してから処理していたため、処理の途中で時間切れになると Stripe は「成功」と見なして
+        # 二度と送ってこなかった（入金後の再開を取りこぼす・Sol指摘）。処理を終えてから返す。
+        # 処理中の例外は500で返して Stripe に再送してもらう（各処理は再実行しても二重にならない作り）
+        try:
+            self._handle_event(etype, obj)
+        except Exception as e:  # noqa: BLE001
+            _log(f"event handling failed ({etype}): {type(e).__name__}: {e}")
+            self.send_response(500)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.end_headers()
+
+    def _handle_event(self, etype: str, obj: dict):
 
         if etype == "checkout.session.completed":
             handle_checkout_session(obj)

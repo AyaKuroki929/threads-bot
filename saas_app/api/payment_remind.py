@@ -486,7 +486,10 @@ def execute(invoice_id: str, attempt: int, token: str) -> tuple:
     if not ledger_update(invoice_id, attempt, {"status": "pending", "nonce": row["nonce"]}, {"status": "sending", "lock_id": my_lock}):
         return False, "NG: 同時に別の操作が進んでいます。もう一方の結果をお待ちください。"
     info = customer_info(row.get("customer_id") or "")
-    inv = stripe_get_invoice(invoice_id)                       # 宛先を取り終えた「送る直前」に最新の状態を見る
+    inv = stripe_get_invoice(invoice_id)                       # 宛先を取り終えたあと、明細まで読み直す
+    # 明細の追加取得に時間がかかる間に支払われることがある。送る直前に請求書本体だけをもう一度読む（Sol指摘）
+    fresh = _stripe("GET", f"invoices/{urllib.parse.quote(invoice_id)}")
+    inv.update({k: fresh.get(k) for k in ("status", "amount_remaining", "attempt_count", "hosted_invoice_url") if k in fresh})
     if not is_failed_open(inv):
         ledger_update(invoice_id, attempt, {"status": "sending", "lock_id": my_lock}, {"status": "sent", "sent_at": _iso(), "nonce": None, "note": "送信前に支払い済み・送らず"})
         return False, f"NG: この請求書はもう「{inv.get('status')}」（支払い済みなど）です。送信しません。"
