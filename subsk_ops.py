@@ -47,7 +47,8 @@ TRANSFER_ADJUSTMENTS = {
 # ── 消費税率 ──────────────────────────────────────────────────────────────
 # サプリ等の食品は軽減税率8%だが、食品でない商品は10%（例: マックスボディー）。
 # ヘッダー行の商品名（改行無視・部分一致）がここに載っていれば税込換算を10%で行う。
-TAX10_PRODUCTS = ("マックスボディー",)
+# エキスパートローション＝化粧品（2026-09-24 長原さんの差¥152の原因として実測確認）
+TAX10_PRODUCTS = ("マックスボディー", "エキスパートローション")
 
 
 # ── シート作成直後に自動で入れる数量 ─────────────────────────────────────
@@ -74,9 +75,8 @@ CREATE_AUTO_QTY = {
     "2026-11": [
         ("G8", 1, "桑原さん HRプロテイン 10月スキップ分を再開"),
     ],
-    "2026-12": [
-        ("M10", 1, "桑原さん ワコナル 課金月（3/6/9/12月）"),
-    ],
+    # ワコナル（3/6/9/12月）は QUARTERLY_RULES が自動で入れる／空にするので
+    # ここに書かない（二重管理をやめた・2026-09-24）
 }
 
 
@@ -88,6 +88,18 @@ CREATE_AUTO_QTY = {
 CREATE_AUTO_REMOVE = {
     "2026-11": [("若松さん", "定期便ストップ（2026-09-21指示・Ruby Fit2個）")],
 }
+
+
+# ── 課金月が決まっている商品（毎月ではない）────────────────────────────
+# 例：桑原さんのワコナルは3/6/9/12月のみ課金（QUARTERLY）。行は毎月シートに残すが、
+# 課金月以外は個数を入れない（2026-06 彩さん指示）。前月コピーだと課金月の数量が
+# 翌月に残ってしまい、Square照合で差分として出る（2026-09-24に10月シートで実際に発生）。
+# シート作成のたびに、その月が課金月なら qty、そうでなければ空にする。
+# 顧客名と商品名（ヘッダーの文字列・改行無視の部分一致）で場所を探すので、
+# 行や列が動いてもセル位置を書き直さなくてよい。
+QUARTERLY_RULES = [
+    {"name": "桑原さん", "product": "ワコナル", "months": (3, 6, 9, 12), "qty": 1},
+]
 
 
 # ── Google Sheets 認証 ────────────────────────────────────────────────────
@@ -352,6 +364,42 @@ def _remove_rows_by_name(svc, sheet_name, sheet_id, names):
     return [f"{nm}（{idx + 1}行目）" for idx, nm in targets]
 
 
+def _apply_quarterly_rules(svc, sheet_name, month_num):
+    """課金月が決まっている商品の数量を、その月に合わせて入れる／空にする。
+    戻り値は人が読める説明のリスト。"""
+    rows = _read_sheet(svc, sheet_name)
+    if len(rows) < 2:
+        return []
+    headers = rows[1]
+    notes, data = [], []
+    for rule in QUARTERLY_RULES:
+        col = next((i for i, h in enumerate(headers)
+                    if rule["product"] in str(h).replace("\n", "")), None)
+        if col is None:
+            continue
+        for idx, row in enumerate(rows):
+            if (row[COL_NAME] if len(row) > COL_NAME else "").strip() != rule["name"]:
+                continue
+            # その顧客の行が複数ある場合、この商品の列に数量が入っている行
+            # （または課金月に入れるべき行）を1つに絞れないため、
+            # 「その商品だけの行」＝他の商品欄が空の行を対象にする
+            others = [v for j, v in enumerate(row)
+                      if j >= 2 and j != col and j < len(headers) - 2 and str(v).strip()]
+            if others:
+                continue
+            cell = f"{_col_letter(col)}{idx + 1}"
+            want = rule["qty"] if month_num in rule["months"] else ""
+            data.append({"range": f"'{sheet_name}'!{cell}", "values": [[want]]})
+            notes.append(f"・{rule['name']} {rule['product']}：{cell}="
+                         f"{want if want != '' else '空'}"
+                         f"（課金月{'/'.join(str(m) for m in rule['months'])}月）")
+    if data:
+        svc.spreadsheets().values().batchUpdate(
+            spreadsheetId=SID,
+            body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
+    return notes
+
+
 def _fix_total_formulas(svc, sheet_name):
     """合計行のSUM範囲を「4行目〜合計行の1つ上」に張り直す。
     行を挿入・削除しても集計から漏れないようにするため（2026-09-18 氏井さん追加時に
@@ -448,12 +496,17 @@ def cmd_create():
         removed = [f"・{d} — {memo_by_name.get(d.split('（')[0], '')}" for d in deleted]
         print("[create] 行削除:\n" + ("\n".join(removed) if removed else "対象なし"))
 
-    # 7. 合計行の集計範囲を張り直す（行の挿入・削除で漏れないように毎回実行）
+    # 7. 課金月が決まっている商品（ワコナル等）を、その月に合わせて入れる／空にする
+    quarterly = _apply_quarterly_rules(svc, nxt_name, int(nxt_str[5:7]))
+    if quarterly:
+        print("[create] 課金月ルール:\n" + "\n".join(quarterly))
+
+    # 8. 合計行の集計範囲を張り直す（行の挿入・削除で漏れないように毎回実行）
     fixed = _fix_total_formulas(svc, nxt_name)
     if fixed:
         print(f"[create] {fixed}")
 
-    # 8. LINE通知
+    # 9. LINE通知
     msg = (f"[サブスク表] {nxt_name} シートを作成しました。\n"
            f"数量は{cur_name}の内容を引き継いでいます。\n"
            f"スキップ・追加・解約などの変更分だけ調整してください。\n"
@@ -462,6 +515,8 @@ def cmd_create():
         msg += "\n\n以下は自動で数量を入れました（1ヶ月スキップの再開・課金月商品）：\n" + "\n".join(restored)
     if removed:
         msg += "\n\n以下は定期便ストップのため行ごと削除しました：\n" + "\n".join(removed)
+    if quarterly:
+        msg += "\n\n課金月が決まっている商品を自動調整しました：\n" + "\n".join(quarterly)
     _notify(msg)
     print(msg)
 
