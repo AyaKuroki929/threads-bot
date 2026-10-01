@@ -226,6 +226,20 @@ def save_to_supabase(user_id, username, access_token, stripe_customer_id=""):
         raise Exception(f"Supabase save failed HTTP {e.code}: {e.read().decode()}")
 
 
+# Meta審査の録画用（英語）。/review → /connect?insights=1&lang=en から来たときだけ使う
+SUCCESS_HTML_EN = """<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Connected</title>
+<style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;color:#111}}
+.card{{max-width:520px;padding:40px 28px;text-align:center}}h1{{font-size:24px}}p{{color:#444;line-height:1.7}}
+.btn{{display:inline-block;background:#111;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:600}}</style></head>
+<body><div class="card">
+<h1>✅ Connected</h1>
+<p>Your Threads account <strong>@{username}</strong> is now linked to Threads Auto Post.<br>
+Open the dashboard to see your recent posts and, with <strong>threads_manage_insights</strong>, how they performed.</p>
+<a class="btn" href="/dashboard?account={username}">Open the dashboard</a>
+</div></body></html>"""
+
 SUCCESS_HTML = """<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="UTF-8"><title>接続完了</title>
@@ -316,8 +330,11 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            # state に customer_id が入っている
+            # state に customer_id が入っている（審査録画の "review-en" は顧客IDではないので空にする）
             customer_id = query.get("state", [""])[0]
+            review_en = customer_id == "review-en"
+            if review_en:
+                customer_id = ""
 
             token_data = exchange_code(code)
             short_token = token_data["access_token"]
@@ -365,7 +382,7 @@ class handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(SUCCESS_HTML.encode())
+            self.wfile.write((SUCCESS_HTML_EN.format(username=username) if review_en else SUCCESS_HTML).encode())
 
         except Exception as e:
             import logging, traceback

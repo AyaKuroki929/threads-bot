@@ -19,6 +19,10 @@ class handler(BaseHTTPRequestHandler):
         scope = SCOPE
         if qs.get("insights", [""])[0] == "1":
             scope = f"{SCOPE},{REVIEW_SCOPE}"
+            # Meta審査の録画用：英語の入口（/review）から来たときは完了画面も英語にする。
+            # state に印を乗せる（customer_id は無いので顧客の照合・保存には使わない）
+            if qs.get("lang", [""])[0] == "en":
+                customer_id = "review-en"
 
         params = {
             "client_id": APP_ID,

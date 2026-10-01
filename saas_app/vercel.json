@@ -1,6 +1,10 @@
 {
   "routes": [
     {
+      "src": "/review",
+      "dest": "/public/review.html"
+    },
+    {
       "src": "/api/payment-remind",
       "dest": "/api/payment_remind.py"
     },
