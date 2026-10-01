@@ -214,7 +214,10 @@ def main():
 
     client = anthropic.Anthropic()
     last_err = None
-    for model in ("claude-sonnet-5", "claude-sonnet-4-6"):
+    new_posts = None
+    # ⚠️ JSONの読み取りも再試行の中に入れる。外に置くと、AIが1回でもJSONでない返答をしただけで
+    # やり直さずに落ちる（2026-10-01 実際に落ちた：Expecting value: line 1 column 1）
+    for model in ("claude-sonnet-5", "claude-sonnet-5", "claude-sonnet-4-6"):
         try:
             resp = client.messages.create(
                 model=model,
@@ -226,17 +229,21 @@ def main():
                           if getattr(b, "type", "") == "text").strip()
             if not raw:
                 raise RuntimeError("応答にテキストが含まれていません")
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+            start, end = raw.find("{"), raw.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError(f"JSONが見つかりません（先頭: {raw[:60]!r}）")
+            parsed = json.loads(raw[start:end + 1])
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("posts"), list) or not parsed["posts"]:
+                raise ValueError("posts の配列がありません")
+            new_posts = [p for p in parsed["posts"] if isinstance(p, str)]
             break
         except Exception as e:
             last_err = e
-            print(f"[promo] {model} で生成失敗: {e}")
-    else:
+            print(f"[promo] {model} で生成失敗 → やり直し: {e}")
+    if new_posts is None:
         raise RuntimeError(f"宣伝文の生成に失敗しました: {last_err}")
-
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        raw = raw[raw.find("{"):]
-    new_posts = json.loads(raw[raw.find("{"):raw.rfind("}") + 1]).get("posts") or []
 
     added = []
     for p in new_posts:

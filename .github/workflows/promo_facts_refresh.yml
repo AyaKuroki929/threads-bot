@@ -17,6 +17,11 @@ concurrency:
   group: promo-facts
   cancel-in-progress: false
 
+# ⚠️ これが無いと GITHUB_TOKEN は読み取り専用で push が 403 になる。
+# 2026-08-04〜10-01 の間、毎月「成功」と出ながら一度も数字を保存できていなかった原因。
+permissions:
+  contents: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -65,7 +70,10 @@ jobs:
             echo "変更なし"; exit 0
           fi
           git commit -q -m "promo: 実測値を月次更新 $(TZ=Asia/Tokyo date '+%F %H:%M JST')"
-          for i in 1 2 3; do git push && break; git pull --rebase && sleep 3; done
+          # ⚠️ push が3回とも失敗しても 0 で抜けていた＝保存できていないのに緑（2026-10-02 発見）。必ず失敗にする
+          pushed=0
+          for i in 1 2 3; do git push && { pushed=1; break; }; git pull --rebase && sleep 3; done
+          [ "$pushed" = "1" ] || { echo "::error::push に3回失敗。数字の更新が保存されていません"; exit 1; }
 
       # 失敗＝古い数字のまま配信され続ける状態。沈黙させない
       - name: Warn on failure
