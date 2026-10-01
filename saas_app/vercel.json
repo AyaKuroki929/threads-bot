@@ -2,7 +2,7 @@
   "routes": [
     {
       "src": "/review",
-      "dest": "/public/review.html"
+      "dest": "/review.html"
     },
     {
       "src": "/api/payment-remind",
