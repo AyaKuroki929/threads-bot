@@ -107,23 +107,32 @@ We do not read insights for accounts that have not linked themselves to our app,
 we do not aggregate data across accounts, and we do not share or sell it.
 ```
 
-4. 「審査担当者の指示」欄に貼る英語
+4. 「審査担当者の指示」欄に貼る英語（2026-10-03 更新：英語の入口 /review と、動画で使った @bemolle_diet に合わせた）
 
 ```
-Test account: @aya_0929_private (added as a tester of this app).
+Test account: @bemolle_diet (admin of this app).
 
-1. Open https://saas.shikisai.work/connect?insights=1
-2. Log in with the Threads test account and grant the permissions.
-3. Open https://saas.shikisai.work/dashboard?account=aya_0929_private
+1. Open https://saas.shikisai.work/review
+2. Click "Connect your Threads account", log in with Threads and grant the permissions
+   (the consent screen lists threads_basic, threads_content_publish, threads_manage_replies
+   and threads_manage_insights).
+3. You are redirected to our "Connected" page. Click "Open the dashboard".
 4. Click "Load insights".
    - "Account totals" shows views / likes / replies / reposts / quotes / followers,
      read with threads_manage_insights.
    - Below it, each recent post shows its own views / likes / replies / reposts / quotes.
 
-All insights are read only for the account that completed the OAuth login above.
+All insights are read only for the account that completed the Threads login above.
+The screencast (2 min, English captions) shows this exact flow end to end:
+login → consent → connected → dashboard → insights, and the same numbers in the native Threads app.
 ```
 
----
+動画：`~/Desktop/threads_manage_insights_screencast_v2.mp4`（127秒・英語字幕・2026-10-03 録画）
+
+## 却下の履歴
+
+- 2026-09-20 却下（9/13提出分）：「スクリーンキャストがユースケースに整合しない」＝Metaログイン→許可の付与→エンドツーエンドが無い。連携済みの状態から始まる動画を出していた。英語UIも要求
+- 2026-10-03 再提出用：ログアウト状態から録画（Instagramログイン・二段階認証・同意画面・Connected・ダッシュボード・インサイト・本家Threadsの同じ数字）
 
 ## 却下されたときに見るところ
 
