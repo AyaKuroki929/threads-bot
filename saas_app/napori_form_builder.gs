@@ -19,6 +19,13 @@
  * ============================================================
  */
 
+// ---- 作ったファイルは Drive「とうこさん」フォルダへ入れる（マイドライブ直下に散らばらせない・2026-10-13 彩さん指示）----
+var TOUKO_FOLDER_ID = '1FD4CbqVOxy-U6ClM5eupbP6_IcXboSJp';
+function moveToToukoFolder_(fileId) {
+  var folder = DriveApp.getFolderById(TOUKO_FOLDER_ID);
+  DriveApp.getFileById(fileId).moveTo(folder);
+}
+
 function createNaporiForm() {
   var intro = [
     'ご登録ありがとうございます。',
@@ -121,6 +128,9 @@ function createNaporiForm() {
   // ---- 回答先スプレッドシート作成＆連携 ----
   var ss = SpreadsheetApp.create('ナポリ｜Threads フォーム回答');
   form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+  moveToToukoFolder_(form.getId());
+  moveToToukoFolder_(ss.getId());
+  moveToToukoFolder_(ScriptApp.getScriptId()); // このスクリプト本体も同じフォルダへ
 
   // ---- onFormSubmit トリガー設置 ----
   removeNaporiTriggers_();
