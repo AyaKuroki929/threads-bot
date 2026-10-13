@@ -25,6 +25,15 @@ function moveToToukoFolder_(fileId) {
   DriveApp.getFileById(fileId).moveTo(folder);
 }
 
+// 動作確認用：このスクリプト本体を「とうこさん」フォルダへ入れ、入っている場所をログに出す（何度実行しても安全）
+function checkToukoFolder() {
+  moveToToukoFolder_(ScriptApp.getScriptId());
+  var parents = DriveApp.getFileById(ScriptApp.getScriptId()).getParents();
+  var names = [];
+  while (parents.hasNext()) names.push(parents.next().getName());
+  Logger.log('このスクリプトの場所: ' + names.join(', '));
+}
+
 function createSchoolForm() {
   var intro = [
     'ご登録ありがとうございます。',
