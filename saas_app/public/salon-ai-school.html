@@ -4,145 +4,55 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>サロンAI塾｜AIに裏方を任せて、早く帰る。</title>
-<meta name="description" content="Googleもインスタもほとんど開かないのに、投稿は毎日出ています。発信を止めずに続ける仕組みを、ご自身のサロンで作るためのオンライン個別レッスン。全10回。株式会社紫妃彩。">
+<meta name="description" content="Googleもインスタもほとんど開かないのに、投稿は毎日出ています。発信を止めずに続ける仕組みを、ご自身のサロンで作るためのオンライン個別レッスン。全10回・1回60分。株式会社紫妃彩。">
 <meta property="og:title" content="サロンAI塾｜AIに裏方を任せて、早く帰る。">
-<meta property="og:description" content="毎日続けることがいちばん効きます。その時間がないので、自動にしました。">
+<meta property="og:description" content="発信を止めずに続ける仕組みを、ご自身のサロンで作れるようになります。オンライン個別レッスン 全10回。">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://saas.shikisai.work/salon-ai-school.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap">
 <style>
   :root {
     color-scheme: light;
-    --plum: #3d2a48;
-    --plum-deep: #2b1e34;
+    --plum: #4a2f52;
     --rose: #a8566a;
-    --rose-soft: #c99aa5;
-    --ink: #2b2230;
-    --muted: #6f6478;
-    --bg: #f7f5f6;
+    --muted: #8a7b8e;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: "Zen Kaku Gothic New", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
-    line-height: 1.9;
+    background: #faf7fa;
+    color: #3d3340;
+    font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Hiragino Sans", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px 48px;
   }
-  .wrap { width: 100%; max-width: 720px; margin: 0 auto; padding: 0 16px; }
-
-  /* hero */
-  .hero {
-    background: var(--plum-deep);
-    color: #fff;
-    padding: 56px 0 52px;
+  .wrap {
+    width: 100%;
+    max-width: 780px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
   }
   .eyebrow {
-    margin: 0 0 16px;
-    font-size: 0.74rem;
-    letter-spacing: 0.2em;
-    color: var(--rose-soft);
-  }
-  h1 {
     margin: 0;
-    font-size: clamp(2.1rem, 8vw, 3.1rem);
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    line-height: 1.25;
-  }
-  .rule { width: 56px; height: 2px; background: var(--rose-soft); margin: 22px 0; }
-  .tagline {
-    margin: 0;
-    font-size: clamp(1.1rem, 4.4vw, 1.45rem);
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }
-
-  /* lead */
-  .lead { padding: 46px 0 8px; }
-  .lead h2 {
-    margin: 0 0 18px;
-    font-size: clamp(1.25rem, 5vw, 1.7rem);
-    font-weight: 700;
-    color: var(--plum-deep);
-    line-height: 1.55;
-  }
-  .lead h2 em { font-style: normal; color: var(--rose); }
-  .lead p { margin: 0 0 12px; font-size: 1rem; }
-  .lead p:last-child { margin-bottom: 0; }
-
-  /* proof */
-  .proof { padding: 34px 0 6px; }
-  .label {
-    margin: 0 0 16px;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     letter-spacing: 0.18em;
-    color: var(--rose);
+    color: var(--muted);
   }
-  .card {
+  .sheet {
+    width: 100%;
     background: #fff;
-    border: 1px solid rgba(61, 42, 72, 0.12);
-    border-radius: 16px;
-    box-shadow: 0 16px 40px rgba(61, 42, 72, 0.08);
-    padding: 24px 22px;
-    margin-bottom: 16px;
+    border: 1px solid rgba(74, 47, 82, 0.16);
+    border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(74, 47, 82, 0.14);
+    overflow: hidden;
+    line-height: 0;
   }
-  .card h3 {
-    margin: 0 0 14px;
-    font-size: 1.08rem;
-    font-weight: 700;
-    color: var(--plum-deep);
-    letter-spacing: 0.04em;
-  }
-  .card p { margin: 0 0 10px; font-size: 0.97rem; }
-  .card p:last-child { margin-bottom: 0; }
-  .figures {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin: 0 0 14px;
-  }
-  .fig {
-    flex: 1 1 140px;
-    background: #faf7f8;
-    border: 1px solid rgba(168, 86, 106, 0.18);
-    border-radius: 12px;
-    padding: 12px 14px;
-    line-height: 1.4;
-  }
-  .fig b {
-    display: block;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--rose);
-    letter-spacing: 0.02em;
-  }
-  .fig span { font-size: 0.82rem; color: var(--muted); }
-
-  /* learn */
-  .learn { padding: 30px 0 4px; }
-  .learn .card { background: var(--plum); border: none; color: #fff; }
-  .learn h3 { color: #fff; }
-  .learn ul { margin: 0; padding: 0; list-style: none; }
-  .learn li {
-    position: relative;
-    padding-left: 20px;
-    margin-bottom: 9px;
-    font-size: 0.97rem;
-  }
-  .learn li:last-child { margin-bottom: 0; }
-  .learn li::before {
-    content: "";
-    position: absolute;
-    left: 0; top: 0.85em;
-    width: 10px; height: 1px;
-    background: var(--rose-soft);
-  }
-  .learn .note { margin: 16px 0 0; font-size: 0.9rem; color: rgba(255,255,255,0.75); }
-
-  /* cta */
-  .cta { padding: 30px 0 56px; text-align: center; }
+  .sheet img { width: 100%; max-width: 100%; height: auto; display: block; }
   .btn {
     display: inline-block;
     background: var(--rose);
@@ -151,84 +61,39 @@
     font-weight: 700;
     font-size: 1.05rem;
     letter-spacing: 0.06em;
-    padding: 17px 44px;
+    padding: 17px 46px;
     border-radius: 999px;
     box-shadow: 0 12px 26px rgba(168, 86, 106, 0.3);
     transition: background 0.2s ease, transform 0.2s ease;
   }
   .btn:hover { background: #8f4557; transform: translateY(-1px); }
-  .btn-note { margin: 12px 0 0; font-size: 0.8rem; color: var(--muted); }
-  footer { margin-top: 30px; font-size: 0.8rem; color: var(--muted); }
-  footer p { margin: 0; }
+  .btn-note { margin: 0; font-size: 0.82rem; color: var(--muted); }
+  .foot {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.9;
+    color: var(--muted);
+    text-align: center;
+  }
+  .foot strong { color: var(--plum); font-weight: 700; }
 </style>
 </head>
 <body>
-
-  <div class="hero">
-    <div class="wrap">
-      <p class="eyebrow">サロン向け AI 個別レッスン</p>
-      <h1>サロンAI塾</h1>
-      <div class="rule"></div>
-      <p class="tagline">AIに裏方を任せて、早く帰る。</p>
-    </div>
-  </div>
-
   <div class="wrap">
+    <p class="eyebrow">サロン向け AI 個別レッスン</p>
 
-    <section class="lead">
-      <h2>発信は、<em>毎日続けること</em>がいちばん効きます。<br>でも、その時間がありません。</h2>
-      <p>投稿も、返信も、配信も、大事だと分かっています。それでも施術が終わるころには手が回りません。</p>
-      <p>そこで黒木は、続ける部分をAIに任せました。いま自分のサロンで動いているのは、次の3つです。</p>
-    </section>
+    <div class="sheet">
+      <img src="/salon-ai-school.png" width="1055" height="1491"
+           alt="サロンAI塾の案内。AIに裏方を任せて、早く帰る。サロン向けオンライン個別レッスン。私のサロンでいま動いていること（2026年10月時点）は、Googleが週2回の自動投稿と地域の検索で1位、Instagramが毎日5回以上のストーリー自動投稿とリールの作成から投稿までの自動化、素材の自動選定、ナレーション音声の自動生成、10月17日時点でインスタから10名のご来店、公式LINEがお客様への自動のご案内。この仕組みをご自身のサロンで作れるようになります。オンラインの個別レッスン 全10回 1回60分。">
+    </div>
 
-    <section class="proof">
-      <p class="label">黒木のサロンで、いま動いているもの（2026年10月時点）</p>
+    <a class="btn" href="/salon-ai-school.pdf">資料を見る</a>
+    <p class="btn-note">PDF・8ページ</p>
 
-      <div class="card">
-        <h3>Google</h3>
-        <div class="figures">
-          <div class="fig"><b>週2回</b><span>投稿が自動で出ます</span></div>
-          <div class="fig"><b>地域1位</b><span>検索で上に出ています</span></div>
-        </div>
-        <p>黒木はGoogleをほとんど開きません。それでも毎週2回、お店の投稿が出ています。探しているお客様にも、AIの回答にも、今も動いているお店として見つけてもらえます。</p>
-      </div>
-
-      <div class="card">
-        <h3>Instagram</h3>
-        <div class="figures">
-          <div class="fig"><b>毎日5回以上</b><span>ストーリーが自動</span></div>
-          <div class="fig"><b>今月8名</b><span>インスタからご来店</span></div>
-        </div>
-        <p>インスタもほとんど開いていません。ストーリーは毎日5回以上出ていて、リールや投稿も、作るところから投稿まで自動です。</p>
-      </div>
-
-      <div class="card">
-        <h3>公式LINE</h3>
-        <p>友だち追加をしてくださったお客様へ、ご案内が自動で届きます。来店のあとのフォローも、手を動かさずに続いています。</p>
-      </div>
-    </section>
-
-    <section class="learn">
-      <div class="card">
-        <h3>この塾でお伝えするのは、この仕組みの作り方です</h3>
-        <ul>
-          <li>Google投稿を、AIに書かせて自動で出せる</li>
-          <li>リールを、台本から投稿まで自分で作れる</li>
-          <li>ストーリーを、決めた型で出し続けられる</li>
-          <li>公式LINEのステップ配信を、自分で組める</li>
-        </ul>
-        <p class="note">オンラインの個別レッスンで、全10回です。10回で、この4つをご自身の手で動かせるところまで進めます。お伝えするのは発信の内容ではなく、AIに任せて発信し続けるための設定の仕方です。</p>
-      </div>
-    </section>
-
-    <section class="cta">
-      <a class="btn" href="/salon-ai-school.pdf">資料を見る</a>
-      <p class="btn-note">PDF・8ページ</p>
-      <footer>
-        <p>株式会社紫妃彩</p>
-      </footer>
-    </section>
-
+    <p class="foot">
+      <strong>サロンAI塾</strong><br>
+      株式会社紫妃彩
+    </p>
   </div>
 </body>
 </html>
