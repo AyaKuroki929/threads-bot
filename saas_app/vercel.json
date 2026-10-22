@@ -9,6 +9,10 @@
       "dest": "/toukosan.html"
     },
     {
+      "src": "/salon-ai-school",
+      "dest": "/salon-ai-school.html"
+    },
+    {
       "src": "/api/payment-remind",
       "dest": "/api/payment_remind.py"
     },
