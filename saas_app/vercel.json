@@ -6,7 +6,7 @@
     },
     {
       "src": "/toukosan",
-      "dest": "/public/toukosan.html"
+      "dest": "/toukosan.html"
     },
     {
       "src": "/api/payment-remind",
