@@ -5,6 +5,10 @@
       "dest": "/review.html"
     },
     {
+      "src": "/toukosan",
+      "dest": "/public/toukosan.html"
+    },
+    {
       "src": "/api/payment-remind",
       "dest": "/api/payment_remind.py"
     },

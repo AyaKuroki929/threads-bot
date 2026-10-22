@@ -10,6 +10,8 @@ session_server/
 # ログ・スクリーンショット
 *.log
 *.png
+# 公開ページで使う画像だけは残す
+!saas_app/public/*.png
 log.txt
 caffeinate.log
 launchd.out.log
