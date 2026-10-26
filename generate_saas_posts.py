@@ -1275,17 +1275,34 @@ def _save_pool(path: str, pool: dict) -> None:
                 pass
 
 
-def _ask_model(client, system_prompt: str, user_prompt: str, label: str):
-    """モデルにJSON配列を書かせる。3回まで試し、(投稿リスト or None, 最後のエラー) を返す。"""
+# 形が崩れて全件落ちた時、作り直しで渡す念押し。
+# ⚠️ 2026-10-26 nicoの朝：15本と指示したのに28本（＝14本×2要素）が平らに返り、
+# 「ちょうど2部」を1本も満たせず補充ゼロ。形の崩れでは1回も作り直していなかった
+# （ベモーレ・個人の generate_posts.py は元から作り直す作りになっている）。
+_RETRY_FORMAT_NOTE = """
+
+⚠️ 直前の出力は形式が違ったため全て破棄しました。もう一度、次の形式を厳密に守って出力してください。
+- 各投稿は必ず「2要素の配列」：[["1部目","2部目"], ["1部目","2部目"], ...]
+- 1部目と2部目を平らに並べる形（["1部目","2部目","1部目","2部目", ...]）は不可
+- 1部目は25〜160字、各部とも400字以内
+- JSON配列だけを返す（説明文を付けない）"""
+
+
+def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn=None):
+    """モデルにJSON配列を書かせる。3回まで試し、(投稿リスト or None, 最後のエラー) を返す。
+
+    keep_fn を渡すと「JSONは読めたが保存できる形の投稿が0本」のときも作り直す。
+    ここで諦めると、その枠は1本も補充されないまま在庫が尽きる（2026-10-26）。"""
     new_posts = None
     last_error = None
     for attempt in range(3):
+        prompt = user_prompt if attempt == 0 else user_prompt + _RETRY_FORMAT_NOTE
         try:
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=8000,
                 system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
+                messages=[{"role": "user", "content": prompt}]
             )
             raw = resp.content[0].text.strip()
             start = raw.find("[")
@@ -1305,6 +1322,12 @@ def _ask_model(client, system_prompt: str, user_prompt: str, label: str):
                 last_error = "list以外が返された"
                 new_posts = None
                 continue
+            if keep_fn is not None and not keep_fn(new_posts):
+                last_error = (f"読み取れたが保存できる形の投稿が0本"
+                              f"（{len(new_posts)}本中）")
+                print(f"[saas] {label} (試行{attempt+1}): {last_error} → 作り直し")
+                new_posts = None
+                continue
             break
         except json.JSONDecodeError as e:
             last_error = str(e)
@@ -1318,28 +1341,61 @@ def _ask_model(client, system_prompt: str, user_prompt: str, label: str):
     return new_posts, last_error
 
 
+def _shape_reason(p):
+    """保存してよい形か。合格なら None、落とすなら理由を返す。
+
+    ⚠️ 新しく作る投稿は必ずツリー（ちょうど2部）。単発や3部は保存しない
+    （既存プールの単発在庫は投稿側がそのまま読めるので、そちらは触らない）。
+    理由を返すのは、全件落ちたときに何が起きたかをログだけで追えるようにするため
+    （2026-10-26 nicoの朝で28本が全件落ちた時、「28本を除外」しか残らず
+      プールとログを突き合わせないと原因が分からなかった）。"""
+    if isinstance(p, str):
+        return "ツリーでなく文字列（1部目と2部目が平らに並んだ疑い）"
+    if not isinstance(p, list):
+        return f"配列でない（{type(p).__name__}）"
+    if len(p) != 2:
+        return f"{len(p)}部（ちょうど2部でない）"
+    first = len(str(p[0]))
+    # ⚠️ 1部目はタイムラインに出る部分。ここが短いほど見られる（2026-09-13 実測。
+    # 〜100字は200字〜の6〜10倍）。長すぎても、短すぎて意味をなさなくても落とす。
+    if first > FIRST_PART_MAX:
+        return f"1部目が長い（{first}字・上限{FIRST_PART_MAX}字）"
+    if first < FIRST_PART_MIN:
+        return f"1部目が短い（{first}字・下限{FIRST_PART_MIN}字）"
+    over = [len(str(x)) for x in p if len(str(x)) > 400]
+    if over:
+        return f"400字を超える部がある（{over[0]}字）"
+    return None
+
+
+def _keep_valid_shape(new_posts: list) -> list:
+    """形だけを見て保存できる投稿を返す（作り直しの判定に使う）。"""
+    if not isinstance(new_posts, list):
+        return []
+    return [p for p in new_posts if _shape_reason(p) is None]
+
+
 def _validate_batch(new_posts: list, label: str) -> list:
     """長さと内容を検査し、保存してよい投稿だけ返す。
 
     クライアントのアカウントで公開されるため、コード側の防波堤は必須
     （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。"""
-    def _within_length(p):
-        # ⚠️ 新しく作る投稿は必ずツリー（ちょうど2部）。単発や3部は保存しない
-        # （既存プールの単発在庫は投稿側がそのまま読めるので、そちらは触らない）
-        if not isinstance(p, list) or len(p) != 2:
-            return False
-        first = len(str(p[0]))
-        # ⚠️ 1部目はタイムラインに出る部分。ここが短いほど見られる（2026-09-13 実測。
-        # 〜100字は200字〜の6〜10倍）。長すぎても、短すぎて意味をなさなくても落とす。
-        if not (FIRST_PART_MIN <= first <= FIRST_PART_MAX):
-            return False
-        return all(len(str(x)) <= 400 for x in p)
-
-    kept = [p for p in new_posts if _within_length(p)]
-    dropped = len(new_posts) - len(kept)
-    if dropped:
-        print(f"[saas] {label}: 形か長さが基準外の投稿 {dropped}本を除外"
-              f"（基準: ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字・各部400字まで）")
+    from collections import Counter
+    kept, reasons, sample = [], Counter(), None
+    for p in new_posts:
+        reason = _shape_reason(p)
+        if reason is None:
+            kept.append(p)
+        else:
+            reasons[reason] += 1
+            if sample is None:
+                sample = str(p)[:60]
+    if reasons:
+        uchiwake = "／".join(f"{r} {n}本" for r, n in reasons.most_common())
+        print(f"[saas] {label}: 形か長さが基準外の投稿 {sum(reasons.values())}本を除外"
+              f"（基準: ちょうど2部・1部目{FIRST_PART_MIN}〜{FIRST_PART_MAX}字・各部400字まで）"
+              f"｜内訳: {uchiwake}")
+        print(f"[saas] {label}: 落ちた1本目: {sample}")
 
     from botlib import validate_post_content
     checked = []
@@ -1492,7 +1548,8 @@ JSON配列以外の文字は一切出力しないでください。"""
 {existing if existing else "（まだなし）"}"""
 
         new_posts, last_error = _ask_model(client, system_prompt, user_prompt,
-                                           f"{salon_name} {slot}")
+                                           f"{salon_name} {slot}",
+                                           keep_fn=_keep_valid_shape)
 
         if new_posts is None:
             # ここではLINEを送らない。この枠が本当に埋まらなかったかは
@@ -1668,7 +1725,8 @@ JSON配列以外の文字は一切出力しないでください。"""
 {chr(10).join(str(p)[:60] for p in pool[slot][-5:]) if pool[slot] else "（まだなし）"}"""
 
         new_posts, last_error = _ask_model(client, system_prompt, user_prompt,
-                                           f"{salon_name} 判断材料/{slot}")
+                                           f"{salon_name} 判断材料/{slot}",
+                                           keep_fn=_keep_valid_shape)
         if new_posts is None:
             # 判断材料プールが空でも通常プールで投稿は続く＝止まらない。
             # ただし黙って空のままだと機能が死んだことに誰も気づかないので知らせる。
