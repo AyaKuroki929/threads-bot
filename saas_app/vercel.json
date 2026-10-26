@@ -38,7 +38,7 @@
     },
     {
       "src": "/signup",
-      "dest": "/public/signup.html"
+      "dest": "/signup.html"
     },
     {
       "src": "/",
