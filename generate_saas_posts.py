@@ -36,7 +36,9 @@ POSTS_DIR = os.environ.get("POSTS_DIR") or os.path.join(os.path.dirname(__file__
 GENERATE_COUNT = 15
 # 週1実行で消費は7本/週。閾値5だと生成失敗が1回あるだけで翌週前に枯渇する
 # （2026-07-06 うらかたeveningのJSON失敗→7-12枯渇の反省）。1週間分＋余裕を持たせる。
-THRESHOLD = 10
+# 在庫を厚くしたい時だけ POOL_THRESHOLD で上書きする（例：作り直した直後に積み増す）。
+# 指定しなければ従来どおり10本。通常投稿だけが対象で、判断材料プールは変えない。
+THRESHOLD = int(os.environ.get("POOL_THRESHOLD") or 10)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")

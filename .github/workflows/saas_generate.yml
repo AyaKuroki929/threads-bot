@@ -18,6 +18,10 @@ on:
         required: false
         type: boolean
         default: false
+      pool_threshold:
+        description: '在庫を積み増す時だけ数字を入れる（例 200。残りがこの本数以下なら補充＝空欄なら従来どおり10本）'
+        required: false
+        default: ''
 
 concurrency:
   group: post-saas   # post_saas.yml と同じ投稿ファイルを書くため同一グループで直列化（並行更新で相手の追加分が消える穴・2026-09-21 Sol指摘）
@@ -104,6 +108,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          POOL_THRESHOLD: ${{ github.event.inputs.pool_threshold }}
         run: python3 generate_saas_posts.py
 
       - name: Generate posts for specific salon
@@ -115,6 +120,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          POOL_THRESHOLD: ${{ github.event.inputs.pool_threshold }}
         run: python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
 
       # 個人アカの月曜21時「とうこさん」宣伝枠の文章在庫。週1本しか使わないが、
