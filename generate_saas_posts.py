@@ -178,12 +178,37 @@ def _sheet_with_retry(fn, label: str):
             _t.sleep(wait)
 
 
+def _keep_latest_answer(records, label):
+    """同じThreads IDの回答が複数ある時は、一番下の行（＝あとから出した新しい回答）だけを使う。
+    フォームは追記式なので、行の順番がそのまま回答の順番になる。
+    ⚠️ 2026-10-28：アイリスの中村さんが店名・予約先・トーンを変えて出し直したのに、
+    上にある5月の古い回答が使われ続けていた（あとの行は「重複定義」として捨てられていた）。
+    IDが空の行は見分けられないのでそのまま残す。"""
+    latest = {}
+    order = []
+    out = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            out.append(rec)
+            continue
+        tid = normalize_threads_id(rec.get("Threadsのアカウント名（@から始まるID）", ""))
+        if not tid:
+            out.append(rec)
+            continue
+        if tid not in latest:
+            order.append(tid)
+        else:
+            print(f"[saas] {label}: @{tid} の回答が複数あります → 新しい方（下の行）を使います")
+        latest[tid] = rec
+    return out + [latest[t] for t in order]
+
+
 def load_sheet_data():
     def _read():
         creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
         gc = gspread.authorize(creds)
         return gc.open_by_key(SPREADSHEET_ID).get_worksheet(0).get_all_records()
-    return _sheet_with_retry(_read, "サロンシート")
+    return _keep_latest_answer(_sheet_with_retry(_read, "サロンシート"), "サロンシート")
 
 
 def load_school_data():
@@ -195,7 +220,7 @@ def load_school_data():
             creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
             gc = gspread.authorize(creds)
             return gc.open_by_key(SCHOOL_SPREADSHEET_ID).get_worksheet(0).get_all_records()
-        records = _sheet_with_retry(_read, "スクールシート")
+        records = _keep_latest_answer(_sheet_with_retry(_read, "スクールシート"), "スクールシート")
     except Exception as e:
         print(f"[saas] スクールシート読み込みスキップ（共有設定/IDを確認）: {e}")
         return []
@@ -222,7 +247,7 @@ def load_napori_data():
             creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
             gc = gspread.authorize(creds)
             return gc.open_by_key(NAPORI_SPREADSHEET_ID).get_worksheet(0).get_all_records()
-        records = _sheet_with_retry(_read, "ナポリシート")
+        records = _keep_latest_answer(_sheet_with_retry(_read, "ナポリシート"), "ナポリシート")
     except Exception as e:
         print(f"[saas] ナポリシート読み込みスキップ（共有設定/IDを確認）: {e}")
         return []
