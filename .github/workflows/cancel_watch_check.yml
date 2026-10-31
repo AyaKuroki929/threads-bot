@@ -1,0 +1,41 @@
+name: SaaS - 解約待ちの満了日チェック
+
+# 解約待ち（CANCEL_WATCH）に書いた満了日・最終課金日が、Stripeの実物と合っているかを毎日見張る。
+# 2026-10-06に杉村さんの課金日を実測せず推測で書き、満了日が11日ずれていた（10/31発覚）。
+# 人の目では気づけないので機械で突き合わせる。ずれていた時だけ彩さんのLINEへ🚨が飛ぶ（正常なら無音）。
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 9:00 JST
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 解約待ちとStripeを突き合わせる
+        timeout-minutes: 5
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: python3 scripts/check_cancel_watch.py
+
+      - name: Notify LINE on failure
+        if: failure() || cancelled()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 解約待ちの満了日チェックが失敗しました\n\nStripeの鍵かLINEの設定を確認してください。\n$RUN_URL"
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
