@@ -21,6 +21,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Stripeの鍵がまだ登録されていない間は、毎朝🚨が飛んでLINEの枠を食うのを避ける。
+      # 鍵が無い回はジョブを赤くして（Actions上で見える）LINEは送らない。
+      - name: Stripeの鍵があるか見る
+        id: haskey
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+        run: |
+          if [ -n "$STRIPE_SECRET_KEY" ]; then echo "has=1" >> $GITHUB_OUTPUT; else echo "has=0" >> $GITHUB_OUTPUT; fi
+
       - name: 解約待ちとStripeを突き合わせる
         timeout-minutes: 5
         env:
@@ -29,7 +38,7 @@ jobs:
         run: python3 scripts/check_cancel_watch.py
 
       - name: Notify LINE on failure
-        if: failure() || cancelled()
+        if: (failure() || cancelled()) && steps.haskey.outputs.has == '1' 
         env:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
