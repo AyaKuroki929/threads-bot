@@ -169,6 +169,28 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"messages\":[{\"type\":\"text\",\"text\":\"⚠️ 個人Threads エラー停止\n\nスロット: ${SLOT}\n終了コード: ${EC:-不明}\n\nhttps://github.com/AyaKuroki929/threads-bot/actions\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
 
+      # 身バレに繋がる素材（主人の実話など）は public リポに置けないので、private リポから実行時だけ借りる。
+      # 取得できなくても生成は止めない（公開分のルールだけで作る）。commit 対象にも入れない（.gitignore 済み）
+      - name: 非公開の素材を private から取得
+        if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: AyaKuroki929/saas-posts
+          ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
+          path: .saas_posts_private
+
+      - name: 非公開の素材を配置
+        if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'
+        continue-on-error: true
+        run: |
+          if [ -f .saas_posts_private/GENERATE_RULES_personal_private.md ]; then
+            cp .saas_posts_private/GENERATE_RULES_personal_private.md ./GENERATE_RULES_personal_private.md
+            echo "非公開の素材 OK: $(wc -c < GENERATE_RULES_personal_private.md) bytes"
+          else
+            echo "::warning::非公開の素材が見つかりません（公開分だけで生成します）"
+          fi
+
       - name: 投稿ストック自動補充（残り3本以下で発動）
         id: generate
         if: steps.post.outcome == 'success' && steps.params.outputs.dry != 'true'
@@ -178,6 +200,10 @@ jobs:
         run: |
           pip install -q "anthropic<2"
           python3 generate_posts.py personal
+
+      - name: 非公開の素材を消す（commitに混ぜない）
+        if: always()
+        run: rm -f GENERATE_RULES_personal_private.md
 
       - name: LINE通知（補充失敗）
         if: steps.generate.outcome == 'failure'

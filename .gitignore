@@ -42,3 +42,6 @@ manual.html
 !assets/*.png
 gap_checked.json
 .saas_alerts.txt
+
+# 非公開の素材（private リポ saas-posts から実行時だけ配られる。絶対にcommitしない）
+GENERATE_RULES_*_private.md

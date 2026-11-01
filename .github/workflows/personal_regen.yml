@@ -1,0 +1,83 @@
+name: 個人Threads - 投稿ストックを作り直す
+
+# 2026-11-01にブランディングが「時間とお金の削減」へ変わったため、前のコンセプトで作った
+# 在庫を新しいルールで作り直すための手動実行。先に新しい投稿を足してから古い分を落とすので、
+# 途中で失敗しても在庫がゼロになることはない。
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: '生成を何回まわすか（1回＝1枠あたり12本・3枠で36本）'
+        required: false
+        default: '6'
+      min_new:
+        description: '1枠あたりこの本数を作れなければ古い在庫を落とさない'
+        required: false
+        default: '20'
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -q "anthropic<2"
+
+      # 身バレに繋がる素材（主人の実話など）は public リポに置けないので private から借りる
+      - name: 非公開の素材を private から取得
+        uses: actions/checkout@v4
+        with:
+          repository: AyaKuroki929/saas-posts
+          ssh-key: ${{ secrets.SAAS_POSTS_DEPLOY_KEY }}
+          path: .saas_posts_private
+
+      - name: 非公開の素材を配置（無ければ中止）
+        run: |
+          cp .saas_posts_private/GENERATE_RULES_personal_private.md ./GENERATE_RULES_personal_private.md
+          echo "非公開の素材 OK: $(wc -c < GENERATE_RULES_personal_private.md) bytes"
+
+      - name: 作り直し
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ROUNDS: ${{ github.event.inputs.rounds }}
+          MIN_NEW: ${{ github.event.inputs.min_new }}
+        run: python3 rebuild_personal_pool.py
+
+      - name: 非公開の素材を消す（commitに混ぜない）
+        if: always()
+        run: rm -f GENERATE_RULES_personal_private.md
+
+      - name: Commit
+        run: |
+          git config user.email "bot@github-actions"
+          git config user.name "threads-bot-personal"
+          git add posts_personal.json used_posts_personal.json
+          if git diff --staged --quiet; then
+            echo "変更なし"
+          else
+            git commit -m "個人: 投稿ストックを新コンセプト（削減）で作り直し $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            for i in 1 2 3 4 5; do
+              if git push; then exit 0; fi
+              git pull --rebase origin main
+              sleep 2
+            done
+            exit 1
+          fi
+
+      - name: Notify LINE on failure
+        if: failure() || cancelled()
+        env:
+          LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="🚨 個人Threads 投稿ストックの作り直しが失敗しました\n\n古い在庫は残してあるので投稿は止まりません。\n$RUN_URL"
+          code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}" ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"

@@ -17,8 +17,10 @@ import time
 import urllib.request
 import urllib.parse
 
-THRESHOLD = 5
-GENERATE_COUNT = 12
+# 在庫を厚くしたい時だけ POOL_THRESHOLD で上書きする（例：作り直した直後に積み増す）。
+# 指定しなければ従来どおり残5本以下で補充。
+THRESHOLD = int(os.environ.get("POOL_THRESHOLD") or 5)
+GENERATE_COUNT = int(os.environ.get("GENERATE_COUNT") or 12)
 GEN_MODEL = "claude-sonnet-4-6"
 GEN_MAX_TOKENS = 8000          # 12本×2部のJSONが4000で途切れた実害（2026-09-21）
 GEN_ATTEMPTS = 3               # 生成→読み取り→検証を通るまでの試行回数（初回込み）
@@ -190,10 +192,22 @@ def _load_facts(salon_name: str):
 
 
 def _load_rules(rules_file):
+    """ルールを読む。同名の `_private.md` があれば後ろに足す。
+
+    ⚠️ threads-bot は public リポジトリなので、身バレに繋がる素材（主人のこと等）は
+    ここに置けない。private リポ saas-posts に置き、ワークフローが実行時だけ
+    `<ルール名>_private.md` として横に配ってくる（.gitignore 済み）。
+    無ければ従来どおり公開分だけで生成する（落とさない）。"""
     path = os.path.join(_BASE, rules_file)
-    if os.path.exists(path):
-        return open(path, encoding="utf-8").read()
-    return ""
+    rules = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+    priv_path = os.path.join(_BASE, rules_file.replace(".md", "_private.md"))
+    if os.path.exists(priv_path):
+        priv = open(priv_path, encoding="utf-8").read()
+        print(f"[generate] 非公開の素材を読み込みました（{len(priv)}字）")
+        rules = rules + "\n\n" + priv
+    else:
+        print("[generate] 非公開の素材は見つかりませんでした（公開分だけで生成します）")
+    return rules
 
 
 def generate_for_account(account, posts_file, used_file, rules_file):
