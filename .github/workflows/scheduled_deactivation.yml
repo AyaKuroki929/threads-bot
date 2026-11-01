@@ -7,6 +7,12 @@ on:
   schedule:
     - cron: '30 13 26 8 *'  # 2026-08-26 22:30 JST（LaniBEAUTY満了日の夜・21時投稿の後）
     - cron: '0 19 26 8 *'   # 2026-08-27 04:00 JST（保険・朝7時投稿の前）
+    - cron: '30 13 27 11 *' # 2026-11-27 22:30 JST（山内たえこさん・つばめの巣）
+    - cron: '0 19 27 11 *'  # 2026-11-28 04:00 JST（保険）
+    - cron: '30 13 30 11 *' # 2026-11-30 22:30 JST（杉村真理子さん・piccolo）
+    - cron: '0 19 30 11 *'  # 2026-12-01 04:00 JST（保険）
+    - cron: '30 13 24 12 *' # 2026-12-24 22:30 JST（丸形佳之さん・月と横浜温活）
+    - cron: '0 19 24 12 *'  # 2026-12-25 04:00 JST（保険）
   workflow_dispatch:
     inputs:
       force_salon:
@@ -30,9 +36,15 @@ jobs:
           import os, json, urllib.request, urllib.parse
           from datetime import datetime, timezone, timedelta
 
-          # (満了日JST, salon_name) —— 契約満了で停止するクライアントをここに追加していく
+          # (最後に投稿する日JST, salon_name) —— 契約満了で停止するクライアントをここに追加していく
+          # ⚠️ 日付を足したら上の schedule にも cron 2本（当夜22:30と翌朝4:00）を必ず足す。
+          #    足し忘れるとジョブ自体が動かず、黙って投稿が続く。
           TARGETS = [
               ("2026-08-26", "lanibeauty.830"),
+              ("2026-11-27", "tubamenosu_princess"),       # 山内たえこさん（10/28が最終課金・11/28に契約終了）
+              ("2026-11-30", "okaosori.piccolo"),          # 杉村真理子さん。契約は11/19に終了するが、
+                                                            # 10/6の返信で「11月いっぱい」とお伝えしているため11/30まで出す
+              ("2026-12-24", "tsukito_yokohama_onkatsu"),  # 丸形佳之さん（11/25が最終課金・12/25に契約終了）
           ]
 
           U = os.environ["SUPABASE_URL"]; K = os.environ["SUPABASE_KEY"]

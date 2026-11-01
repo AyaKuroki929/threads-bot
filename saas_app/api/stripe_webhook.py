@@ -434,7 +434,9 @@ def handle_payment_failed(obj: dict):
 # 設定を忘れたまま次の請求が走った場合も、その課金でもう一度通知が飛ぶ（取りこぼさない）。
 # 解約設定が済めば以降の請求が無くなるので、通知も自然に止まる。
 CANCEL_WATCH = {
-    # customer_id: {名前, 満了日（最後に使える日）, 最終課金日, メール, 備考}
+    # customer_id: {名前, 満了日（最後に使える日）, 最終課金日, 停止するsalon_name, メール, 備考}
+    # salon は投稿を止める対象（.github/workflows/scheduled_deactivation.yml の TARGETS と対応）。
+    # 連携していない人は空にする。stop_on は、お客様にお伝えした日が満了日と違う時だけ入れる。
     # ⚠️ until と final_charge は必ず Stripe の実物（subscriptions / charges）を見て入れる。
     #    推測で書くと満了日がずれる（2026-10-06 杉村さんで11日ずれた）。
     #    scripts/check_cancel_watch.py が毎日この2つを Stripe と突き合わせて、ずれたら🚨を送る。
@@ -442,6 +444,7 @@ CANCEL_WATCH = {
         "name": "長町 孝彰",
         "until": "2026-11-04",
         "final_charge": "2026-10-05",
+        "salon": "",  # Threads連携が未完了＝投稿していないので自動停止の対象外
         "email": "youandcooooo@gmail.com",
         "note": "ナポリさん。2026-08-05契約・毎月5日課金・最低利用期間3ヶ月（8/5・9/5・10/5の3回課金。"
                 "10/5は決済が失敗して10/7に成功）。10/5が最終課金・11/4まで利用・11/5 11:20（JST）に契約終了。"
@@ -454,6 +457,8 @@ CANCEL_WATCH = {
         "name": "杉村 真理子",
         "until": "2026-11-18",
         "final_charge": "2026-10-19",
+        "salon": "okaosori.piccolo",
+        "stop_on": "2026-11-30",  # 10/6の返信で「11月いっぱい」とお伝えしているため投稿は11/30まで
         "email": "piccolo27kaosori@gmail.com",
         "note": "piccolo（@okaosori.piccolo）。2026-06-19契約・毎月19日課金（9月のみ19日に失敗し9/22に成功）。"
                 "2026-10-06にLINEで解約の申し出（「ターゲットの50代以上に反応が無い」）。"
@@ -468,6 +473,7 @@ CANCEL_WATCH = {
         "name": "丸形 佳之",
         "until": "2026-12-24",
         "final_charge": "2026-11-25",
+        "salon": "tsukito_yokohama_onkatsu",
         "email": "marugatayoshiyuki@gmail.com",
         "note": "月と横浜温活（@tsukito_yokohama_onkatsu）。2026-06-25契約・毎月25日課金・5回全て成功。"
                 "2026-10-31に解約の申し出。規約第5条「解約希望月の1ヶ月前まで」に照らし、"
@@ -479,6 +485,7 @@ CANCEL_WATCH = {
         "name": "山内 たえこ",
         "until": "2026-11-27",
         "final_charge": "2026-10-28",
+        "salon": "tubamenosu_princess",
         "email": "miniraraxxx@ezweb.ne.jp",
         "note": "つばめの巣（@tubamenosu_princess）。2026-05-30契約・毎月28日課金。"
                 "✅ Stripeで「期間終了時にキャンセル」を設定済み（cancel_at=2026-11-28）。"

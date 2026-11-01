@@ -122,6 +122,45 @@ def check_one(cid, w, key):
     return problems
 
 
+DEACTIVATION_YML = os.environ.get("DEACTIVATION_FILE") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".github", "workflows", "scheduled_deactivation.yml")
+
+
+def check_auto_stop(watch, path=DEACTIVATION_YML):
+    """投稿の自動停止（scheduled_deactivation.yml）に、解約待ちの人が登録されているかを見る。
+
+    2026-10-31に、このワークフローの中身がLaniBEAUTYさん1件だけで、解約が決まった3名が
+    入っていないことが分かった（起動日も8月26日に固定されたまま）。入れ忘れると黙って投稿が続く。
+    """
+    import re
+    problems = []
+    try:
+        src = open(path, encoding="utf-8").read()
+    except OSError as e:
+        return [f"自動停止のワークフローが読めません（{e}）"]
+    body = src[src.index("TARGETS = ["):src.index("]", src.index("TARGETS = [")) + 1]
+    targets = dict((sa, d) for d, sa in re.findall(r'\("(\d{4}-\d{2}-\d{2})",\s*"([^"]+)"\)', body))
+    crons = set()
+    for mi, h, dd, mo in re.findall(r"cron: '(\d+) (\d+) (\d+) (\d+) \*'", src):
+        utc = datetime(2026, int(mo), int(dd), int(h), int(mi), tzinfo=timezone.utc)
+        jst = utc + timedelta(hours=9)
+        crons.add(jst.strftime("%Y-%m-%d"))
+        crons.add((jst - timedelta(days=1)).strftime("%Y-%m-%d"))
+    for cid, w in watch.items():
+        salon = w.get("salon")
+        if not salon:
+            continue
+        stop = w.get("stop_on") or w["until"]
+        if salon not in targets:
+            problems.append(f"{w['name']}さん（{salon}）が投稿の自動停止に入っていません。{stop}の夜に止まりません")
+        elif targets[salon] != stop:
+            problems.append(f"{w['name']}さん（{salon}）の停止日がずれています。自動停止 {targets[salon]} ／ 予定 {stop}")
+        elif stop not in crons:
+            problems.append(f"{w['name']}さん（{salon}）は登録されていますが、{stop}に動くcronがありません")
+    return problems
+
+
 def notify(text):
     """彩さんのLINE（Claude通知Bot・友だちは彩さんだけ）へ送る。このリポの他の仕組みと同じ broadcast。"""
     token = os.environ.get("ADMIN_NOTIFY_LINE_TOKEN")
@@ -155,6 +194,11 @@ def main():
         else:
             print(f"  OK {w['name']}（満了日 {w['until']}）")
 
+    auto = check_auto_stop(watch)
+    for p in auto:
+        print(f"  NG 自動停止: {p}")
+    if auto:
+        bad.append(("-", {"name": "投稿の自動停止"}, auto))
     if not bad:
         print("全件一致。通知は送りません")
         return 0
@@ -164,7 +208,8 @@ def main():
         lines.append(f"■ {w['name']}さん")
         for p in problems:
             lines.append(f"・{p}")
-        lines.append(f"https://dashboard.stripe.com/customers/{cid}")
+        if cid != "-":
+            lines.append(f"https://dashboard.stripe.com/customers/{cid}")
         lines.append("")
     lines.append("saas_app/api/stripe_webhook.py の CANCEL_WATCH を直してください。")
     if os.environ.get("DRY_RUN"):
