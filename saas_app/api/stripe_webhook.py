@@ -474,6 +474,7 @@ CANCEL_WATCH = {
         "until": "2026-12-24",
         "final_charge": "2026-11-25",
         "salon": "tsukito_yokohama_onkatsu",
+        "stop_on": "2026-11-30",  # 2026-11-01 本人希望「投稿は12月1日から停止で」＝11/30まで出す
         "email": "marugatayoshiyuki@gmail.com",
         "note": "月と横浜温活（@tsukito_yokohama_onkatsu）。2026-06-25契約・毎月25日課金・5回全て成功。"
                 "2026-10-31に解約の申し出。規約第5条「解約希望月の1ヶ月前まで」に照らし、"
