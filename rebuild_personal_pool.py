@@ -43,20 +43,39 @@ def main():
     print(f"作り直し前: { {k: v for k, v in orig.items()} }")
 
     env = {**os.environ, "POOL_THRESHOLD": POOL_THRESHOLD}
+    ok_rounds = 0
     for i in range(1, ROUNDS + 1):
         print(f"\n===== {i}/{ROUNDS} 回目の生成 =====")
         r = subprocess.run([sys.executable, os.path.join(_BASE, "generate_posts.py"), "personal"], env=env)
+        if r.returncode == 0:
+            ok_rounds += 1
         now = {slot: len(v) for slot, v in (load(POOL) or {}).items()}
         print(f"[{i}/{ROUNDS}] 終了コード {r.returncode} / 現在 {now}")
 
     posts = load(POOL)
     new_counts = {slot: len(posts.get(slot, [])) - orig.get(slot, 0) for slot in orig}
     print(f"\n新しく作れた本数: {new_counts}")
+
+    # 中身を目で見られるように、新しく作った分を各枠3本ずつ出す
+    print("\n===== 新しく作った投稿の見本 =====")
+    for slot in orig:
+        for post in posts.get(slot, [])[orig.get(slot, 0):][:3]:
+            parts = post if isinstance(post, list) else [post]
+            print(f"\n--- {slot} ---")
+            for part in parts:
+                print(part)
+
+    if ok_rounds == 0:
+        print("\n生成が1回も成功しませんでした（APIキー切れ等）", file=sys.stderr)
+        return 1
+
     thin = [s for s, n in new_counts.items() if n < MIN_NEW]
     if thin:
-        print(f"⚠️ {thin} の新しい分が {MIN_NEW} 本に届きません。古い在庫は落とさずそのままにします。"
-              f"（回数を増やしてもう一度実行してください）", file=sys.stderr)
-        return 1
+        # 生成自体は動いているので失敗扱いにしない（🚨LINEを無駄に飛ばさない）。
+        # 足りない分は回数を増やしてもう一度まわす
+        print(f"::warning::{thin} の新しい分が {MIN_NEW} 本に届かないので、古い在庫は落とさずそのままにしました。"
+              f"回数を増やしてもう一度実行してください")
+        return 0
 
     for slot in list(posts.keys()):
         posts[slot] = posts[slot][orig.get(slot, 0):]
