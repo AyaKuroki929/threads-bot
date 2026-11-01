@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-01 15:59 JST",
+  "updated_at": "2026-11-01 19:59 JST",
   "active_accounts": 12,
   "oldest_start": "2026-05-19",
   "log_days": 29,
@@ -8,10 +8,10 @@
   "log_max": 36,
   "zero_days": 0,
   "threads_followers": 877,
-  "views_total": 13128,
-  "views_avg": 437,
+  "views_total": 12795,
+  "views_avg": 426,
   "views_max": 1623,
-  "ig_followers": 1358,
+  "ig_followers": 1359,
   "fixed_nums": [
     "2750",
     "2,750",
@@ -34,6 +34,6 @@
     "1113",
     "1,113"
   ],
-  "prev_ig_followers": 1270,
-  "prev_updated_at": "2026-10-02 02:39 JST"
+  "prev_ig_followers": 1358,
+  "prev_updated_at": "2026-11-01 15:59 JST"
 }
