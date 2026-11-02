@@ -10,7 +10,12 @@
   1. 今の本数を覚えておく
   2. generate_posts.py を ROUNDS 回まわして新しい投稿を後ろに足す（POOL_THRESHOLD で補充のしきい値を上げる）
   3. 新しい分が MIN_NEW 本以上あることを確かめてから、古い分（最初の N 本）を落とす
-  4. used_posts_personal.json を空にする（中身が全部入れ替わるので、使用済みの番号は意味が無くなる）
+  4. 手動投稿用の posts_personal.json にも同じ中身を写す（配信用と中身が食い違わないように）
+
+⚠️ 実際に配信されるのは posts_saas/posts_aya_kuroki_0929.json。2026-06-22のSaaS統合で
+個人アカウントも post_saas.py 経由になったため、posts_personal.json は緊急手動投稿
+（post_personal.yml / manual_post_personal.yml）専用になっている。ここを間違えると
+「作り直したのに古い投稿が流れ続ける」（2026-11-02に実際に起きた）。
 
 古い在庫は git の履歴に残っているので、戻したくなったら取り出せる。
 """
@@ -19,9 +24,11 @@ import os
 import subprocess
 import sys
 
+import post_concept
+
 _BASE = os.path.dirname(os.path.abspath(__file__))
-POOL = os.path.join(_BASE, "posts_personal.json")
-USED = os.path.join(_BASE, "used_posts_personal.json")
+POOL = os.path.join(_BASE, "posts_saas", "posts_aya_kuroki_0929.json")   # 実際に配信されるファイル
+MANUAL = os.path.join(_BASE, "posts_personal.json")                      # 緊急手動投稿用（同じ中身を写す）
 ROUNDS = int(os.environ.get("ROUNDS") or 6)
 MIN_NEW = int(os.environ.get("MIN_NEW") or 20)      # 1枠あたり、これ未満しか作れなければ古い分を落とさない
 POOL_THRESHOLD = os.environ.get("POOL_THRESHOLD") or "500"
@@ -37,19 +44,19 @@ def load(path, default=None):
 def main():
     posts = load(POOL)
     if not posts:
-        print("posts_personal.json を読めません", file=sys.stderr)
+        print(f"{POOL} を読めません", file=sys.stderr)
         return 1
-    orig = {slot: len(v) for slot, v in posts.items()}
+    orig = {slot: len(v) for slot, v in post_concept.slots_only(posts).items()}
     print(f"作り直し前: { {k: v for k, v in orig.items()} }")
 
     env = {**os.environ, "POOL_THRESHOLD": POOL_THRESHOLD}
     ok_rounds = 0
     for i in range(1, ROUNDS + 1):
         print(f"\n===== {i}/{ROUNDS} 回目の生成 =====")
-        r = subprocess.run([sys.executable, os.path.join(_BASE, "generate_posts.py"), "personal"], env=env)
+        r = subprocess.run([sys.executable, os.path.join(_BASE, "generate_posts.py"), "saas_personal"], env=env)
         if r.returncode == 0:
             ok_rounds += 1
-        now = {slot: len(v) for slot, v in (load(POOL) or {}).items()}
+        now = {slot: len(v) for slot, v in post_concept.slots_only(load(POOL) or {}).items()}
         print(f"[{i}/{ROUNDS}] 終了コード {r.returncode} / 現在 {now}")
 
     posts = load(POOL)
@@ -77,11 +84,13 @@ def main():
               f"回数を増やしてもう一度実行してください")
         return 0
 
-    for slot in list(posts.keys()):
-        posts[slot] = posts[slot][orig.get(slot, 0):]
+    for slot in orig:
+        posts[slot] = posts[slot][orig[slot]:]
+    post_concept.stamp(posts, "GENERATE_RULES_personal.md")
     json.dump(posts, open(POOL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    json.dump({}, open(USED, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print(f"作り直し後: { {k: len(v) for k, v in posts.items()} }（古い分は落とし、使用済みの記録も空にしました）")
+    json.dump(posts, open(MANUAL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    print(f"作り直し後: { {k: len(v) for k, v in post_concept.slots_only(posts).items()} }"
+          f"（古い分は落とし、手動投稿用の posts_personal.json にも同じ中身を写しました）")
     return 0
 
 

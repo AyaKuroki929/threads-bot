@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.request
 import urllib.parse
+import post_concept
 
 # 在庫を厚くしたい時だけ POOL_THRESHOLD で上書きする（例：作り直した直後に積み増す）。
 # 指定しなければ従来どおり残5本以下で補充。
@@ -364,6 +365,8 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 
     _disarm_deadline()
     if generated_any:
+        # どの発信コンセプトで作った在庫かを押しておく（古い在庫で配信しないための印）
+        post_concept.stamp(posts, rules_file)
         _save_json_atomic(posts_path, posts)
         print(f"[generate] {posts_file} を更新しました")
 
@@ -603,6 +606,7 @@ JSON配列以外の文字は一切出力しないでください。説明文も�
 
     _disarm_deadline()
     if generated_any:
+        post_concept.stamp(posts, rules_file)
         _save_json_atomic(posts_path, posts)
         print(f"[generate/saas] {posts_file} を更新しました")
 

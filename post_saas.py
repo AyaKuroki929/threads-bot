@@ -25,6 +25,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 # 投稿本文プールの場所。既定は同ディレクトリの posts_saas/。
 # private リポ運用時は環境変数 POSTS_DIR でチェックアウト先を指す（公開リポに顧客ファイルを置かないため）。
+import post_concept
+
 POSTS_DIR = os.environ.get("POSTS_DIR") or os.path.join(os.path.dirname(__file__), "posts_saas")
 
 SLOT = sys.argv[1] if len(sys.argv) > 1 else "morning"  # morning / noon / evening
@@ -367,6 +369,13 @@ def pick_post(salon_name, slot, used_texts, allow_judge=True):
 
     with open(posts_file) as f:
         data = json.load(f)
+
+    # 発信コンセプトを変えたのに在庫が古いままなら、ここで止める。
+    # 古い名乗りの投稿を出し続けるより、投稿を止めて知らせる方が実害が小さい
+    # （2026-11-02 コンセプト変更後も旧在庫が配信され続けた）
+    stale = post_concept.mismatch(salon_name, data)
+    if stale:
+        raise ValueError(stale)
 
     candidates = data.get(slot, [])
     if not candidates:

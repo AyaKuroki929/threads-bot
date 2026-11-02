@@ -1,7 +1,8 @@
-name: 投稿の二重投稿・欠落テスト
+name: 投稿の二重投稿・欠落・配線テスト
 
-# 投稿の根幹（公開判定・照合・記録）を触ったら、pushのたびに機械で確かめる。
-# ここが落ちたら「二重投稿」か「投稿欠落」の経路が復活している。人の目に頼らない。
+# 投稿の根幹（公開判定・照合・記録・在庫の配線）を触ったら、pushのたびに機械で確かめる。
+# ここが落ちたら「二重投稿」「投稿欠落」のどれかの経路が復活している、または
+# 「作り直した在庫と配信が読む在庫が別ファイル」になっている（2026-11-02の事故）。人の目に頼らない。
 on:
   push:
     paths:
@@ -13,6 +14,14 @@ on:
       - "tests/**"
       - "sql/**"
       - ".github/workflows/post_resilience_test.yml"
+      # 在庫の配線（作り直す先・補充する先・配信が読む先が同じか）
+      - "post_concept.py"
+      - "generate_posts.py"
+      - "rebuild_personal_pool.py"
+      - "scripts/check_post_pipeline.py"
+      - "GENERATE_RULES_personal.md"
+      - "posts_saas/posts_aya_kuroki_0929.json"
+      - ".github/workflows/personal_regen.yml"
   workflow_dispatch:
 
 jobs:
@@ -28,6 +37,12 @@ jobs:
 
       - name: 安全装置をわざと壊して、テストが検知するか確かめる
         run: python3 tests/test_safety_mutations.py
+
+      - name: 作り直す先・補充する先・配信が読む先が同じかを確かめる
+        run: python3 scripts/check_post_pipeline.py
+
+      - name: 配線の見張りをわざと壊して、検知するか確かめる
+        run: python3 tests/test_pipeline_mutations.py
 
   notify-on-failure:
     needs: test

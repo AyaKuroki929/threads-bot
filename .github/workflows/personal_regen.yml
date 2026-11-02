@@ -60,7 +60,7 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
-          git add posts_personal.json used_posts_personal.json
+          git add posts_saas/posts_aya_kuroki_0929.json posts_personal.json
           if git diff --staged --quiet; then
             echo "変更なし"
           else
