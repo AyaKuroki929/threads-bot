@@ -2119,6 +2119,14 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
                  else pick_post(salon_name, slot, used, allow_judge=used_complete))
         # 使用済み判定はプール原文と突合するため、CTA付与・分割前の原文を控えておく
         original_first = texts[0] if isinstance(texts, list) else texts
+        # 名乗りは在庫の本文には書かず、投稿するここで毎回付ける（宣伝枠にも付ける）。
+        # 在庫に焼き込まないので、名乗りを変えても在庫を作り直さなくて済む
+        # （2026-11-02 彩さん決定「サロンオーナーを早く帰らせたい黒木です。」）
+        texts = post_concept.add_signature(salon_name, texts)
+        if not post_concept.has_signature(salon_name, texts):
+            # 名乗りの付与が壊れたまま投稿し続けないよう、ここで止めて知らせる
+            raise ValueError(f"{salon_name}: 1部目に名乗りが入りませんでした"
+                             f"（post_concept.add_signature を確認してください）")
         # 宣伝文はCTA（LINE誘導）を本文に含んだ完成品。IG CTAもトピックも付けない
         image_url = promo["image_url"] if promo else ""
         if not promo:

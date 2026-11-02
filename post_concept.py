@@ -74,3 +74,41 @@ SLOTS = ("morning", "noon", "evening")
 def slots_only(posts):
     """枠（morning/noon/evening）だけを取り出す。_concept などの印を数に混ぜないため。"""
     return {k: v for k, v in posts.items() if k in SLOTS}
+
+
+# ── 名乗り（シグネチャ）────────────────────────────────────────────────
+# 投稿の1部目の冒頭に毎回付ける名乗り。在庫の本文には書かず、配信するときに付ける。
+# そうしておけば、名乗りを変えたくなったときに在庫を全部作り直さなくて済む
+# （2026-11-02 コンセプトを変えたら211本を作り直すことになった反省）。
+SIGNATURE_FOR_SALON = {
+    # 2026-11-02 彩さん決定。旧「推しと結婚した美容サロンオーナー、黒木です。」からの変更
+    "aya_kuroki_0929": "サロンオーナーを早く帰らせたい黒木です。",
+}
+
+
+def signature_for(salon_name):
+    return SIGNATURE_FOR_SALON.get(salon_name)
+
+
+def add_signature(salon_name, texts):
+    """1部目の冒頭に名乗りを付ける。対象外・既に名乗っている本文はそのまま返す。"""
+    sig = signature_for(salon_name)
+    if not sig or not texts:
+        return texts
+    first = str(texts[0] or "")
+    # すでに名乗りがある本文に二度付けない。表記が少し違っても拾えるよう
+    # 「黒木です」を目印にする（1部目の頭の方に出ていれば名乗りと見なす）
+    if sig in first or "黒木です" in first[:60]:
+        return texts
+    result = list(texts)
+    result[0] = f"{sig}\n{first}"
+    return result
+
+
+def has_signature(salon_name, texts):
+    """投稿直前の確認。名乗りが要るアカウントで、1部目に名乗りがあるか。"""
+    sig = signature_for(salon_name)
+    if not sig:
+        return True
+    first = str((texts or [""])[0] or "")
+    return sig in first[:80] or "黒木です" in first[:80]

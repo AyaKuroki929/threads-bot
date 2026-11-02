@@ -80,6 +80,39 @@ else:
         if n == 0:
             problems.append(f"配信ファイルの {slot} が0本")
 
+# ⑥ 名乗りが設定され、配信時にちゃんと付くか（在庫には焼き込まない方式のため）
+sig = post_concept.signature_for(SALON)
+print(f"⑥ 名乗り          : {sig!r}")
+if not sig:
+    problems.append(f"{SALON} の名乗りが post_concept.SIGNATURE_FOR_SALON に無い")
+else:
+    sample = ["本文のはじまり", "2部目"]
+    got = post_concept.add_signature(SALON, sample)
+    if not got[0].startswith(sig):
+        problems.append("post_concept.add_signature が1部目の冒頭に名乗りを付けていない")
+    if post_concept.add_signature(SALON, got)[0] != got[0]:
+        problems.append("post_concept.add_signature が名乗りを二重に付けている")
+    if not post_concept.has_signature(SALON, got):
+        problems.append("post_concept.has_signature が付いた名乗りを認識しない")
+    if post_concept.has_signature(SALON, sample):
+        problems.append("post_concept.has_signature が名乗りの無い本文を通してしまう")
+    # 投稿側がその付与と確認を実際に通しているか（消えたら名乗り無しで流れ続ける）
+    ps = read("post_saas.py")
+    for call in ("post_concept.add_signature(salon_name, texts)",
+                 "post_concept.has_signature(salon_name, texts)"):
+        if call not in ps:
+            problems.append(f"post_saas.py の投稿経路に {call} が無い")
+    # 在庫の本文に名乗りを焼き込んでいないか（焼き込むと二重になり、変更時に作り直しになる）
+    try:
+        pool = json.load(open(os.path.join(_BASE, delivered), encoding="utf-8"))
+    except (OSError, ValueError):
+        pool = {}
+    baked = [p for v in post_concept.slots_only(pool).values() for p in v
+             if sig in str(p[0] if isinstance(p, list) else p)]
+    if baked:
+        problems.append(f"在庫の本文に名乗りが書き込まれている（{len(baked)}本）。"
+                        f"配信時に付くので本文には書かない")
+
 if problems:
     print("\n".join(f"::error::{p}" for p in problems))
     print(f"\n配線に問題が {len(problems)} 件あります", file=sys.stderr)

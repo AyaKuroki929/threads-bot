@@ -97,6 +97,35 @@ def empty_slot(root):
     json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)
 
 
+def signature_removed(root):
+    """名乗りの設定を消す＝名乗り無しで投稿され続ける"""
+    edit(root, "post_concept.py",
+         '"aya_kuroki_0929": "サロンオーナーを早く帰らせたい黒木です。",',
+         "")
+
+
+def signature_not_applied(root):
+    """投稿経路から名乗りの付与が抜ける"""
+    edit(root, "post_saas.py",
+         "texts = post_concept.add_signature(salon_name, texts)",
+         "pass  # 名乗りを付けない")
+
+
+def signature_check_removed(root):
+    """付与できたかの確認が抜ける（壊れても気づけない）"""
+    edit(root, "post_saas.py",
+         "if not post_concept.has_signature(salon_name, texts):",
+         "if False:")
+
+
+def signature_baked_in(root):
+    """在庫の本文に名乗りを書き込む＝配信時の付与と二重になる"""
+    p = os.path.join(root, "posts_saas", "posts_aya_kuroki_0929.json")
+    d = json.load(open(p, encoding="utf-8"))
+    d["morning"][0][0] = "サロンオーナーを早く帰らせたい黒木です。\n" + d["morning"][0][0]
+    json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)
+
+
 MUTATIONS = [
     ("在庫が古いコンセプトのまま", stale_concept),
     ("在庫にコンセプトの印が無い", no_concept),
@@ -104,6 +133,10 @@ MUTATIONS = [
     ("補充の書き先が配信されないファイル", refill_elsewhere),
     ("workflowが配信ファイルをcommitしない", workflow_forgets_commit),
     ("配信ファイルの朝が0本", empty_slot),
+    ("名乗りの設定が消えた", signature_removed),
+    ("投稿経路で名乗りを付けていない", signature_not_applied),
+    ("名乗りが付いたかの確認が消えた", signature_check_removed),
+    ("在庫の本文に名乗りが焼き込まれた", signature_baked_in),
 ]
 
 
