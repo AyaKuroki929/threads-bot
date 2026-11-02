@@ -1454,11 +1454,38 @@ def _keep_valid_shape(new_posts: list) -> list:
     return [p for p in new_posts if _shape_reason(p) is None]
 
 
-def _validate_batch(new_posts: list, label: str) -> list:
+# ⚠️ 漢数字は入れない。「Excelで十分」の「十分（じゅうぶん）」を時間と読んでしまう（2026-11-02）
+_TIME_CLAIM_RE = re.compile(r"[0-9０-９]+\s*(?:分|秒)(?!数|間に合|遅)")
+
+
+def _invented_time_claim(post, salon: dict) -> str:
+    """ヒアリングに無い所要時間（「毎朝30秒」「3分で入力」等）を作っていたら理由を返す。
+
+    うらかたさんの見本で「毎朝30秒」という実測していない数字が出た（2026-11-02）。
+    クライアントのアカウントに、確かめていない速さが載ると実物と違う約束になる。
+    許されるのはヒアリングの実績欄・メニュー欄に実際に書かれている数字だけ。"""
+    if not salon:
+        return ""
+    allowed_src = " ".join(str(salon.get(k, "")) for k in (
+        "お客様の具体的な変化・実績（数字があれば）",
+        "提供メニューと価格帯（箇条書きでOK）",
+        "一番の売りメニュー・最も結果が出やすい施術",
+        "経費削減の実績・喜ばれている点",
+        "結果が出るまでの一般的な目安",
+    ))
+    allowed = {m.group(0).replace(" ", "") for m in _TIME_CLAIM_RE.finditer(allowed_src)}
+    for part in (post if isinstance(post, list) else [post]):
+        for m in _TIME_CLAIM_RE.finditer(str(part)):
+            if m.group(0).replace(" ", "") not in allowed:
+                return f"ヒアリングに無い所要時間「{m.group(0)}」"
+    return ""
+
+
+def _validate_batch(new_posts: list, label: str, salon: dict = None) -> list:
     """長さと内容を検査し、保存してよい投稿だけ返す。
 
     クライアントのアカウントで公開されるため、コード側の防波堤は必須
-    （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル）。"""
+    （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル/ダッシュ/作った所要時間）。"""
     from collections import Counter
     kept, reasons, sample = [], Counter(), None
     for p in new_posts:
@@ -1479,7 +1506,7 @@ def _validate_batch(new_posts: list, label: str) -> list:
     from botlib import validate_post_content
     checked = []
     for p in kept:
-        reason = validate_post_content(p)
+        reason = validate_post_content(p) or _invented_time_claim(p, salon)
         if reason:
             print(f"[saas] {label}: 検証NGで除外 → {reason}: {str(p)[:60]}")
         else:
@@ -1637,7 +1664,7 @@ JSON配列以外の文字は一切出力しないでください。"""
             print(f"[saas] {salon_name} {slot}: 3回試みて失敗 → {last_error}")
             continue
 
-        new_posts = _validate_batch(new_posts, f"{salon_name} {slot}")
+        new_posts = _validate_batch(new_posts, f"{salon_name} {slot}", salon)
         # ⚠️ 判断材料投稿だけでなく、通常の投稿にも事実照合を当てる。
         # 共感やストーリーの投稿でも「初回7,777円」「新宿駅から3分」のような
         # ヒアリングに無い事実がまぎれこむ（2026-09-13 Sol指摘）。
@@ -1823,7 +1850,7 @@ JSON配列以外の文字は一切出力しないでください。"""
             return []
 
         new_posts = [p for p in new_posts if _parts(p)]
-        new_posts = _validate_batch(new_posts, f"{salon_name} 判断材料/{slot}")
+        new_posts = _validate_batch(new_posts, f"{salon_name} 判断材料/{slot}", salon)
 
         # ヒアリングに無い金額・距離・営業時間を書いていないか、機械で突き合わせる。
         # ⚠️ 各部だけでなく、つなげた全文にも当てる（1部目「受け付けるのは」＋
