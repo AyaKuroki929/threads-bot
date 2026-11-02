@@ -19,7 +19,7 @@ CHECK = os.path.join("scripts", "check_post_pipeline.py")
 # 配線チェックが読むものだけを写す（リポジトリ全部をコピーしない）
 NEEDED = [
     "post_concept.py", "post_saas.py", "post_state.py", "botlib.py",
-    "generate_posts.py", "rebuild_personal_pool.py",
+    "generate_posts.py", "generate_saas_posts.py", "rebuild_personal_pool.py",
     "GENERATE_RULES_personal.md",
     "posts_saas/posts_aya_kuroki_0929.json",
     ".github/workflows/personal_regen.yml",
@@ -126,6 +126,20 @@ def signature_baked_in(root):
     json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)
 
 
+def second_refill_path(root):
+    """個人アカウントの補充経路が2本に戻る＝古いルールの在庫が混ざる"""
+    edit(root, "generate_saas_posts.py",
+         '_REFILLED_ELSEWHERE = {"aya_kuroki_0929"}',
+         "_REFILLED_ELSEWHERE = set()")
+
+
+def custom_rules_revived(root):
+    """rules_custom に個人アカウント用の別ルールが復活する"""
+    os.makedirs(os.path.join(root, "rules_custom"), exist_ok=True)
+    with open(os.path.join(root, "rules_custom", "aya_kuroki_0929.md"), "w", encoding="utf-8") as f:
+        f.write("# 旧ルール\n「推しと結婚した美容サロンオーナー、黒木です。」\n")
+
+
 MUTATIONS = [
     ("在庫が古いコンセプトのまま", stale_concept),
     ("在庫にコンセプトの印が無い", no_concept),
@@ -137,6 +151,8 @@ MUTATIONS = [
     ("投稿経路で名乗りを付けていない", signature_not_applied),
     ("名乗りが付いたかの確認が消えた", signature_check_removed),
     ("在庫の本文に名乗りが焼き込まれた", signature_baked_in),
+    ("補充経路が2本に戻った", second_refill_path),
+    ("rules_custom に別ルールが復活した", custom_rules_revived),
 ]
 
 

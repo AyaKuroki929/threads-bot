@@ -113,6 +113,16 @@ else:
         problems.append(f"在庫の本文に名乗りが書き込まれている（{len(baked)}本）。"
                         f"配信時に付くので本文には書かない")
 
+# ⑦ 個人アカウントの補充経路が1本か（2本あると片方が古いルールで在庫を上書きする）
+gs = read("generate_saas_posts.py")
+if f'"{SALON}"' not in gs.split("_REFILLED_ELSEWHERE = ")[-1][:120]:
+    problems.append("generate_saas_posts.py の _REFILLED_ELSEWHERE に "
+                    f"{SALON} が入っていない（補充経路が2本になり、古いルールの在庫が戻る）")
+if os.path.exists(os.path.join(_BASE, "rules_custom", f"{SALON}.md")):
+    problems.append(f"rules_custom/{SALON}.md が復活している（GENERATE_RULES_personal.md と"
+                    "ルールが二重管理になる。古い名乗りが戻った原因）")
+print(f"⑦ 補充経路        : generate_posts.py saas_personal の1本のみ")
+
 if problems:
     print("\n".join(f"::error::{p}" for p in problems))
     print(f"\n配線に問題が {len(problems)} 件あります", file=sys.stderr)
