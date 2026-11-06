@@ -607,6 +607,7 @@ Instagramへの案内は投稿時に自動で付ける（登録済みURLから�
 - 「絶対」「100%」などの誇大表現は避ける（「ほとんど」「多くの場合」等に言い換える）
 - 政治・宗教・占いの断定は避ける
 - ハッシュタグ禁止
+- ダッシュ「——」「—」は使わない（文を区切るなら「。」か「、」にする）
 """
     return rules
 
@@ -1014,6 +1015,7 @@ def school_to_rules(school: dict) -> str:
 - 「必ず儲かる」「誰でも成功する」などの断定的な収益保証はしない。
 - 政治・宗教・占いの断定は避ける。
 - ハッシュタグ禁止。
+- ダッシュ「——」「—」は使わない（文を区切るなら「。」か「、」にする）
 """
     return rules
 
@@ -1194,6 +1196,7 @@ def napori_to_rules(napori: dict) -> str:
 {f"- 本人指定のNG：{ng_words}" if ng_words else ""}
 - 政治・宗教・占いの断定は避ける。
 - ハッシュタグ禁止。
+- ダッシュ「——」「—」は使わない（文を区切るなら「。」か「、」にする）
 
 ### AI臭の排除
 - 形式ワード禁止：「〜することが大切です」「〜していきましょう」「ぜひ〜してみてください」「いかがでしょうか」「ポイントは3つ」「まずは〜から」「日々の積み重ね」
@@ -1455,6 +1458,26 @@ def _keep_valid_shape(new_posts: list) -> list:
 
 
 # ⚠️ 漢数字は入れない。「Excelで十分」の「十分（じゅうぶん）」を時間と読んでしまう（2026-11-02）
+_DASH_RE = re.compile(r"[—–―]{1,3}")
+
+
+def _strip_dashes(post):
+    """ダッシュ（——・—）を取り除く。**捨てずに直して通す**。
+
+    生成AIはダッシュを自然に使うため、NG語として落とすだけだと1回分（15本）が
+    全滅して在庫が補充できない（2026-11-06 ファミリエの morning が全件落ちた）。
+    彩さんの「ダッシュは絶対に使わない」は守りつつ、投稿そのものは活かす。
+    文末・行末にあるものは削除し、文中にあるものは「、」に置き換える。"""
+    def fix(text):
+        def rep(m):
+            after = text[m.end():m.end() + 1]
+            return "" if after in ("", "\n", "。", "、", "！", "？") else "、"
+        return _DASH_RE.sub(rep, text)
+    if isinstance(post, list):
+        return [fix(x) if isinstance(x, str) else x for x in post]
+    return fix(post) if isinstance(post, str) else post
+
+
 _TIME_CLAIM_RE = re.compile(r"[0-9０-９]+\s*(?:分|秒)(?!数|間に合|遅)")
 
 
@@ -1487,6 +1510,8 @@ def _validate_batch(new_posts: list, label: str, salon: dict = None) -> list:
     クライアントのアカウントで公開されるため、コード側の防波堤は必須
     （空/短すぎ/薬機法NG語/プロンプト漏れ/ハングル/ダッシュ/作った所要時間）。"""
     from collections import Counter
+    # ダッシュは落とす前に取り除く（捨てると1回分が全滅する・2026-11-06）
+    new_posts = [_strip_dashes(p) for p in new_posts]
     kept, reasons, sample = [], Counter(), None
     for p in new_posts:
         reason = _shape_reason(p)
