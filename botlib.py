@@ -177,6 +177,28 @@ NG_CONTENT_PATTERNS = (
 )
 
 
+import re as _re_dash
+
+DASH_RE = _re_dash.compile(r"[—–―]{1,3}")
+
+
+def strip_dashes(post):
+    """ダッシュ（——・—）を取り除く。**捨てずに直して通す**。
+
+    生成AIはダッシュを自然に使うため、NG語として落とすだけだと1回分（15本）が
+    全滅して在庫が補充できない（2026-11-06 ファミリエの morning が全件落ちた）。
+    彩さんの「ダッシュは絶対に使わない」は守りつつ、投稿そのものは活かす。
+    文末・行末にあるものは削除し、文中にあるものは「、」に置き換える。"""
+    def fix(text):
+        def rep(m):
+            after = text[m.end():m.end() + 1]
+            return "" if after in ("", "\n", "。", "、", "！", "？") else "、"
+        return DASH_RE.sub(rep, text)
+    if isinstance(post, list):
+        return [fix(x) if isinstance(x, str) else x for x in post]
+    return fix(post) if isinstance(post, str) else post
+
+
 def validate_post_content(post, *, min_len: int = 20, max_len: int = 500,
                           tree_parts: tuple = (2, 3)) -> str:
     """投稿1本（str または ツリー=list[str]）を検証し、問題なければ "" を、

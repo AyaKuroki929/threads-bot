@@ -21,6 +21,7 @@ from pathlib import Path
 import anthropic
 import gspread
 from google.oauth2.service_account import Credentials
+from botlib import strip_dashes as _strip_dashes
 
 SPREADSHEET_ID = "1Af6ZnH7Ghzn1APpVrFy5nFlftNaIX5YOeSvfFjSdU-U"
 # スクール版（晶子サロンアカデミー等）の回答シート。createSchoolForm 実行後の SPREADSHEET_ID をここに入れる。
@@ -1458,26 +1459,6 @@ def _keep_valid_shape(new_posts: list) -> list:
 
 
 # ⚠️ 漢数字は入れない。「Excelで十分」の「十分（じゅうぶん）」を時間と読んでしまう（2026-11-02）
-_DASH_RE = re.compile(r"[—–―]{1,3}")
-
-
-def _strip_dashes(post):
-    """ダッシュ（——・—）を取り除く。**捨てずに直して通す**。
-
-    生成AIはダッシュを自然に使うため、NG語として落とすだけだと1回分（15本）が
-    全滅して在庫が補充できない（2026-11-06 ファミリエの morning が全件落ちた）。
-    彩さんの「ダッシュは絶対に使わない」は守りつつ、投稿そのものは活かす。
-    文末・行末にあるものは削除し、文中にあるものは「、」に置き換える。"""
-    def fix(text):
-        def rep(m):
-            after = text[m.end():m.end() + 1]
-            return "" if after in ("", "\n", "。", "、", "！", "？") else "、"
-        return _DASH_RE.sub(rep, text)
-    if isinstance(post, list):
-        return [fix(x) if isinstance(x, str) else x for x in post]
-    return fix(post) if isinstance(post, str) else post
-
-
 _TIME_CLAIM_RE = re.compile(r"[0-9０-９]+\s*(?:分|秒)(?!数|間に合|遅)")
 
 

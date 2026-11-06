@@ -41,6 +41,9 @@ jobs:
       - name: 作り直す先・補充する先・配信が読む先が同じかを確かめる
         run: python3 scripts/check_post_pipeline.py
 
+      - name: NG語が効きすぎて投稿が捨てられないか確かめる
+        run: python3 tests/test_ng_patterns_impact.py
+
       - name: 配線の見張りをわざと壊して、検知するか確かめる
         run: python3 tests/test_pipeline_mutations.py
 
