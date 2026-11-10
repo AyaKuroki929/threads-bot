@@ -71,8 +71,8 @@ def no_concept(root):
 def rebuild_elsewhere(root):
     """作り直しの書き先を、配信されないファイルに戻す＝2026-11-02の事故そのもの"""
     edit(root, "rebuild_personal_pool.py",
-         'POOL = os.path.join(_BASE, "posts_saas", "posts_aya_kuroki_0929.json")',
-         'POOL = os.path.join(_BASE, "posts_personal.json")')
+         '"pool": os.path.join("posts_saas", "posts_aya_kuroki_0929.json"),',
+         '"pool": "posts_personal.json",')
 
 
 def refill_elsewhere(root):
@@ -85,7 +85,7 @@ def refill_elsewhere(root):
 def workflow_forgets_commit(root):
     """作り直してもGitHubに残らない（commit対象から配信ファイルが抜ける）"""
     edit(root, ".github/workflows/personal_regen.yml",
-         "git add posts_saas/posts_aya_kuroki_0929.json posts_personal.json",
+         "git add posts_saas/posts_aya_kuroki_0929.json posts_saas/posts_bemolle_diet.json posts_personal.json",
          "git add posts_personal.json")
 
 

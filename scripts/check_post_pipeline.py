@@ -48,10 +48,19 @@ if refill != delivered:
     problems.append(f"補充（generate_posts.py saas_personal）の書き先 {refill} が配信 {delivered} と違う")
 
 # ③ 作り直しが書くパス
-reb = read("rebuild_personal_pool.py")
-m = re.search(r'POOL\s*=\s*os\.path\.join\(_BASE,\s*(.+?)\)\s*(?:#|$)', reb, re.M)
-parts = re.findall(r'"([^"]+)"', m.group(1)) if m else []
-rebuild = "/".join(parts) if parts else None
+# ⚠️ 書き方（文字列の組み立て）に依存せず、実際に読み込んで POOL を見る。
+# 正規表現で読むと、パスの書き方を変えただけで見張りが黙る（2026-11-11 実際に踏んだ）
+rebuild = None
+try:
+    import importlib.util
+    os.environ["ACCOUNT"] = "saas_personal"   # 個人アカウントの設定で読む
+    spec = importlib.util.spec_from_file_location(
+        "_rpp", os.path.join(_BASE, "rebuild_personal_pool.py"))
+    _rpp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(_rpp)
+    rebuild = os.path.relpath(_rpp.POOL, _BASE)
+except Exception as e:
+    problems.append(f"rebuild_personal_pool.py の POOL を読めません（{str(e)[:80]}）")
 print(f"③ 作り直しが書く : {rebuild}")
 if rebuild != delivered:
     problems.append(f"作り直し（rebuild_personal_pool.py の POOL）{rebuild} が配信 {delivered} と違う")
