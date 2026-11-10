@@ -518,6 +518,22 @@ def _keyword_topic_b2b(text):
     return "サロン経営"
 
 
+def pool_topic(salon_name):
+    """在庫ファイルに保存された「地域＋業種」のトピック（無ければ空文字）。
+
+    実店舗のクライアントは、地域で探している人に見つけてもらうために
+    毎回同じ「〇〇市 エステ」を付ける（2026-11-10 彩さん共有の資料）。
+    生成側（generate_saas_posts.decide_area_topic）がサロンごとに1回決めて
+    posts_*.json の "_topic" に入れている。
+    """
+    posts_file = os.path.join(POSTS_DIR, f"posts_{_safe_name(salon_name)}.json")
+    try:
+        with open(posts_file, encoding="utf-8") as f:
+            return (json.load(f).get("_topic") or "").strip()
+    except (OSError, ValueError):
+        return ""
+
+
 def _select_topic(texts, salon_name=""):
     """投稿内容に最適なトピックをClaude APIで選択して返す（SaaS版：全サロン対応）。"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -2132,7 +2148,8 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         if not promo:
             texts = _maybe_add_instagram_cta_saas(texts, salon.get("instagram_url") or "")
         texts = _enforce_threads_limit(texts)  # 安全網：500字超は自動でツリー分割
-        topic_tag = None if promo else _select_topic(texts, salon_name)
+        topic_tag = None if promo else (pool_topic(salon_name)
+                                        or _select_topic(texts, salon_name))
         # ⚠️ 投稿の前に本文を台帳へ残す。残さないと、途中で止まったとき
         # 次の実行が別の本文を選んでしまい、公開済みのパートと対応が取れなくなる
         # ⚠️ 公開の痕跡（コンテナID・投稿ID・応答喪失の印）が残っていたら捨てない。

@@ -413,6 +413,18 @@ def salon_to_rules(salon: dict) -> str:
 ターゲット層（{target}）に響く投稿でフォロワーを増やし、予約・来店につなげる。
 エンゲージメント（いいね・保存・返信）が増える投稿を最優先する。
 
+## ネタの型（2026-11-10 追加・バッチの中で散らす）
+「今日は何を書こう」で詰まらないように、投稿のネタを型で持つ。
+同じ型が3本以上続かないように、1回の生成の中で散らすこと。
+
+1. **よくある質問に答える**：お客様から実際に聞かれそうな質問を1つ立てて答える（「予約なしでも行けますか」「初めてでも大丈夫ですか」）
+2. **オーナーの本音**：言いにくいこと・開業前に一番こわかったこと・今でも迷うこと
+3. **問いかけ**：読者が一言で答えられる質問で終わる（「朝起きて最初にすること、何ですか」）
+4. **ビフォーアフターの中身**：変化そのものより、その人が何をやめて何を続けたか
+5. **思い込みを外す**：よく信じられているケア・通い方の思い込みを1つ取り上げる
+{f"6. **地域の話**：{location} に通っている方に向けて書く。⚠️ 地名はここに書かれているものだけ。工事・イベント・近所のお店など、ここに無い出来事は作らない" if location else ""}
+{f"7. **スタッフの話**：{staff_info} の範囲でだけ書く。⚠️ ここに無い人・名前・エピソードは作らない" if staff_info else ""}
+
 ## ターゲット
 {target}
 
@@ -1566,6 +1578,50 @@ SPEAKING_STYLE = {
 }
 
 
+# ── 地域トピック（実店舗クライアントだけ）────────────────────────────
+# 2026-11-10 彩さんが共有した資料より。Threadsのトピックに「〇〇市 整骨院」のような
+# 地域＋業種を入れておくと、地域で探している人に見つけてもらう入口が増える。
+# 全投稿で同じものを使うので、サロンごとに1回だけ決めて在庫ファイルに持たせる。
+# ⚠️ Threadsのトピックは1投稿に1つ・50字まで・「.」と「&」は使えない。
+TOPIC_KEY = "_topic"
+
+
+def decide_area_topic(salon: dict, client) -> str:
+    """そのサロンの「地域＋業種」トピックを決める。決められなければ空文字。"""
+    location = salon.get("所在地（最寄り駅・徒歩時間）", "")
+    menu = salon.get("提供メニューと価格帯（箇条書きでOK）", "")
+    best = salon.get("一番の売りメニュー・最も結果が出やすい施術", "")
+    name = salon.get("サロン名", "")
+    if not location:
+        return ""
+    prompt = f"""次のサロンのThreads投稿に毎回付ける「トピック」を1つ作ってください。
+
+サロン名：{name}
+所在地：{location}
+メニュー：{str(menu)[:200]}
+売りメニュー：{str(best)[:100]}
+
+作り方：
+・「地域名 業種」の形にする（例：吹田市 エステ／横浜 お顔そり／上本町 まつげ）
+・地域名は、所在地から読み取れる市区町村か、よく知られた地名・駅名を1つだけ使う
+・業種は、お客様がThreadsで検索しそうな一般的な言葉にする（エステ、お顔そり、リンパ、バストアップ など）
+・全体で20文字以内。記号は使わない。「.」と「&」は絶対に使わない
+・所在地から地域が読み取れない場合は、空の文字列だけを返す
+
+トピックだけ出力してください。説明・記号・鉤括弧は不要です。"""
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001", max_tokens=30,
+            messages=[{"role": "user", "content": prompt}])
+        topic = re.sub(r"[「」『』・\n\r.&]", "", resp.content[0].text).strip()
+    except Exception as e:
+        print(f"[topic] 地域トピックを決められませんでした: {str(e)[:80]}")
+        return ""
+    if not topic or len(topic) > 50:
+        return ""
+    return topic
+
+
 def build_prompts(rules: str, slot: str, count: int, existing: str = ""):
     """生成に渡す system / user プロンプトを組み立てる。
 
@@ -1712,6 +1768,17 @@ def generate_for_salon(salon: dict):
         raise RuntimeError(f"Anthropic APIキーが取得できません（全サロン生成不能）: {e}")
     generated_any = False
 
+    # 実店舗のクライアントだけ、地域＋業種のトピックを1回だけ決めて在庫に持たせる。
+    # 個人・B2B・スクール（全国が相手）は投稿内容に合わせたトピックのままにする。
+    topic_added = False
+    stype = salon.get("_type")
+    if stype in (None, "", "salon") and not posts.get(TOPIC_KEY):
+        area_topic = decide_area_topic(salon, client)
+        if area_topic:
+            posts[TOPIC_KEY] = area_topic
+            topic_added = True
+            print(f"[topic] {file_key}: 地域トピック '{area_topic}' を在庫に保存します")
+
     blind_slots = []
     needed_slots, filled_slots = [], []
     for slot in ["morning", "noon", "evening"]:
@@ -1789,7 +1856,7 @@ def generate_for_salon(salon: dict):
 
     # ⚠️ 通常プールは判断材料より先に保存し切る。あとで判断材料が失敗しても、
     # せっかく作った通常分が保存されないまま消えることが無いようにする（Sol指摘#4）。
-    if generated_any:
+    if generated_any or topic_added:
         _save_pool(posts_path, posts)
         print(f"[saas] {posts_path} を更新しました")
 
