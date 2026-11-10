@@ -7,6 +7,12 @@ name: 個人Threads - 投稿ストックを作り直す
 on:
   workflow_dispatch:
     inputs:
+      account:
+        description: 'どのアカウントを作り直すか（saas_personal＝黒木彩個人 / saas_bemolle＝ベモーレ）'
+        required: false
+        type: choice
+        options: ['saas_personal', 'saas_bemolle']
+        default: 'saas_personal'
       rounds:
         description: '生成を何回まわすか（1回＝1枠あたり12本・3枠で36本）'
         required: false
@@ -50,6 +56,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ROUNDS: ${{ github.event.inputs.rounds }}
           MIN_NEW: ${{ github.event.inputs.min_new }}
+          ACCOUNT: ${{ github.event.inputs.account }}
         run: python3 rebuild_personal_pool.py
 
       - name: 非公開の素材を消す（commitに混ぜない）
@@ -60,11 +67,11 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
-          git add posts_saas/posts_aya_kuroki_0929.json posts_personal.json
+          git add posts_saas/posts_aya_kuroki_0929.json posts_saas/posts_bemolle_diet.json posts_personal.json
           if git diff --staged --quiet; then
             echo "変更なし"
           else
-            git commit -m "個人: 投稿ストックを今のルールで作り直し $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            git commit -m "${{ github.event.inputs.account }}: 投稿ストックを今のルールで作り直し $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             for i in 1 2 3 4 5; do
               if git push; then exit 0; fi
               git pull --rebase origin main

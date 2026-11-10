@@ -27,8 +27,28 @@ import sys
 import post_concept
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
-POOL = os.path.join(_BASE, "posts_saas", "posts_aya_kuroki_0929.json")   # 実際に配信されるファイル
-MANUAL = os.path.join(_BASE, "posts_personal.json")                      # 緊急手動投稿用（同じ中身を写す）
+
+# generate_posts.py が補充するアカウント（クライアントの rebuild_saas_pools.py とは別経路）。
+# ACCOUNT で切り替える。既定は個人アカウント。
+ACCOUNT = os.environ.get("ACCOUNT") or "saas_personal"
+_PRESETS = {
+    "saas_personal": {
+        "pool": os.path.join("posts_saas", "posts_aya_kuroki_0929.json"),
+        "manual": "posts_personal.json",          # 緊急手動投稿用（同じ中身を写す）
+        "rules": "GENERATE_RULES_personal.md",
+    },
+    "saas_bemolle": {
+        "pool": os.path.join("posts_saas", "posts_bemolle_diet.json"),
+        "manual": "",                             # 手動用の控えは無い
+        "rules": "GENERATE_RULES.md",
+    },
+}
+if ACCOUNT not in _PRESETS:
+    raise SystemExit(f"ACCOUNT が不正です: {ACCOUNT}（使えるのは {list(_PRESETS)}）")
+_P = _PRESETS[ACCOUNT]
+POOL = os.path.join(_BASE, _P["pool"])                                   # 実際に配信されるファイル
+MANUAL = os.path.join(_BASE, _P["manual"]) if _P["manual"] else ""
+RULES_FILE = _P["rules"]
 ROUNDS = int(os.environ.get("ROUNDS") or 6)
 MIN_NEW = int(os.environ.get("MIN_NEW") or 20)      # 1枠あたり、これ未満しか作れなければ古い分を落とさない
 POOL_THRESHOLD = os.environ.get("POOL_THRESHOLD") or "500"
@@ -47,13 +67,14 @@ def main():
         print(f"{POOL} を読めません", file=sys.stderr)
         return 1
     orig = {slot: len(v) for slot, v in post_concept.slots_only(posts).items()}
+    print(f"対象: {ACCOUNT} / {POOL}")
     print(f"作り直し前: { {k: v for k, v in orig.items()} }")
 
     env = {**os.environ, "POOL_THRESHOLD": POOL_THRESHOLD}
     ok_rounds = 0
     for i in range(1, ROUNDS + 1):
         print(f"\n===== {i}/{ROUNDS} 回目の生成 =====")
-        r = subprocess.run([sys.executable, os.path.join(_BASE, "generate_posts.py"), "saas_personal"], env=env)
+        r = subprocess.run([sys.executable, os.path.join(_BASE, "generate_posts.py"), ACCOUNT], env=env)
         if r.returncode == 0:
             ok_rounds += 1
         now = {slot: len(v) for slot, v in post_concept.slots_only(load(POOL) or {}).items()}
@@ -86,9 +107,10 @@ def main():
 
     for slot in orig:
         posts[slot] = posts[slot][orig[slot]:]
-    post_concept.stamp(posts, "GENERATE_RULES_personal.md")
+    post_concept.stamp(posts, RULES_FILE)
     json.dump(posts, open(POOL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    json.dump(posts, open(MANUAL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    if MANUAL:
+        json.dump(posts, open(MANUAL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     print(f"作り直し後: { {k: len(v) for k, v in post_concept.slots_only(posts).items()} }"
           f"（古い分は落とし、手動投稿用の posts_personal.json にも同じ中身を写しました）")
     return 0
