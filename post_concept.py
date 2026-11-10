@@ -109,8 +109,31 @@ def add_signature(salon_name, texts):
     if sig in first or "黒木です" in first[:120]:
         return texts
     greeting, _, rest = first.partition("\n")
+    rest = rest.lstrip("\n")
     result = list(texts)
-    result[0] = f"{greeting}\n{sig}\n{rest}" if rest else f"{greeting}\n{sig}"
+    # 呼びかけ・名乗り・本題のあいだは1行空ける（2026-11-10 彩さん「1行空けた方が良くない？」）
+    result[0] = f"{greeting}\n\n{sig}\n\n{rest}" if rest else f"{greeting}\n\n{sig}"
+    return result
+
+
+def ensure_opening_gap(texts):
+    """1部目の呼びかけ（1行目）と本題のあいだを1行空ける。全アカウント共通。
+
+    2026-11-10 彩さん「その後、1行空けた方が良くない？私のアカウントだけじゃなくて、全部」。
+    生成時点で空いていることが多いが、詰まって出てくる回があるので投稿の直前に揃える。
+    1行しかない本文・すでに空いている本文はそのまま返す。
+    """
+    if not texts:
+        return texts
+    first = str(texts[0] or "")
+    head, sep, rest = first.partition("\n")
+    if not sep:
+        return texts
+    rest = rest.lstrip("\n")
+    if not rest:
+        return texts
+    result = list(texts)
+    result[0] = f"{head}\n\n{rest}"
     return result
 
 

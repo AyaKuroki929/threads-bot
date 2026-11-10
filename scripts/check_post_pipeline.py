@@ -89,11 +89,19 @@ else:
     # 2026-11-10 彩さん指示で位置が変わった：呼びかけ（1行目）→ 名乗り → 本題
     sample = ["ひとりでサロンを回してる方、聞いてほしくて。\n本文のはじまり", "2部目"]
     got = post_concept.add_signature(SALON, sample)
-    lines = got[0].split("\n")
+    greeting = sample[0].split("\n")[0]
+    lines = [l for l in got[0].split("\n") if l.strip()]
     if len(lines) < 3 or lines[1] != sig:
-        problems.append("post_concept.add_signature が呼びかけの次の行に名乗りを入れていない")
-    elif lines[0] != sample[0].split("\n")[0] or lines[2] != "本文のはじまり":
+        problems.append("post_concept.add_signature が呼びかけの次に名乗りを入れていない")
+    elif lines[0] != greeting or lines[2] != "本文のはじまり":
         problems.append("post_concept.add_signature が呼びかけか本題を壊している")
+    # 呼びかけ・名乗り・本題のあいだは1行空ける（2026-11-10 彩さん）
+    if got[0] != f"{greeting}\n\n{sig}\n\n本文のはじまり":
+        problems.append("呼びかけ・名乗り・本題のあいだが1行空いていない")
+    # 名乗りが無いアカウントでも、呼びかけの次は1行空ける
+    gap = post_concept.ensure_opening_gap(["よびかけ。\n本題のはじまり", "2部目"])
+    if gap[0] != "よびかけ。\n\n本題のはじまり":
+        problems.append("post_concept.ensure_opening_gap が呼びかけの後を1行空けていない")
     if post_concept.add_signature(SALON, got)[0] != got[0]:
         problems.append("post_concept.add_signature が名乗りを二重に付けている")
     if not post_concept.has_signature(SALON, got):

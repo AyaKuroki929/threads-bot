@@ -2138,6 +2138,9 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
         # 名乗りは在庫の本文には書かず、投稿するここで毎回付ける（宣伝枠にも付ける）。
         # 在庫に焼き込まないので、名乗りを変えても在庫を作り直さなくて済む
         # （2026-11-02 彩さん決定「サロンオーナーを早く帰らせたい黒木です。」）
+        # 呼びかけ（1行目）と本題のあいだを1行空ける。名乗りが入るアカウントは
+        # add_signature が呼びかけ・名乗り・本題のあいだを空ける（2026-11-10 彩さん）
+        texts = post_concept.ensure_opening_gap(texts)
         texts = post_concept.add_signature(salon_name, texts)
         if not post_concept.has_signature(salon_name, texts):
             # 名乗りの付与が壊れたまま投稿し続けないよう、ここで止めて知らせる

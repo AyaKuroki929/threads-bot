@@ -24,6 +24,7 @@ import subprocess
 from datetime import datetime
 
 from botlib import load_json, save_json, line_broadcast
+import post_concept
 
 _BASE = os.path.dirname(__file__)
 
@@ -561,6 +562,8 @@ def main():
     else:
         idx, text = select_post(time_slot)
         texts = [text] if isinstance(text, str) else list(text)
+        # 呼びかけ（1行目）と本題のあいだを1行空ける（2026-11-10 彩さん・全アカウント）
+        texts = post_concept.ensure_opening_gap(texts)
         texts = _maybe_add_instagram_cta(texts)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
