@@ -22,6 +22,23 @@ on:
         description: '在庫を積み増す時だけ数字を入れる（例 200。残りがこの本数以下なら補充＝空欄なら従来どおり10本）'
         required: false
         default: ''
+      rebuild:
+        description: '在庫を今のルールで作り直す（新しい分を足してから古い分を落とす）'
+        required: false
+        type: boolean
+        default: false
+      rebuild_rounds:
+        description: '作り直し：1アカウントあたり生成を何回まわすか（既定3・1回で1枠15本）'
+        required: false
+        default: '3'
+      rebuild_min_new:
+        description: '作り直し：1枠あたりこの本数を作れなければ古い在庫を落とさない（既定20）'
+        required: false
+        default: '20'
+      rebuild_only:
+        description: '作り直し：対象を絞る（Threads IDをカンマ区切り。空欄で全件）'
+        required: false
+        default: ''
 
 concurrency:
   group: post-saas   # post_saas.yml と同じ投稿ファイルを書くため同一グループで直列化（並行更新で相手の追加分が消える穴・2026-09-21 Sol指摘）
@@ -32,7 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     # ⚠️ 各工程の timeout-minutes の合計（78分）より大きくする。ジョブ上限で止まると
     # job.status=cancelled になり最終通知の失敗がジョブ失敗にならない（Sol 4巡目 指摘②）
-    timeout-minutes: 90
+    # 作り直し（rebuild）は全アカウントを何回もまわすので別枠で長くとる
+    timeout-minutes: ${{ inputs.rebuild && 340 || 90 }}
     env:
       # 生成スクリプトはLINEを自分で送らず、要対応をこのファイルに書く。
       # 送るのは最後の「LINE通知（1実行1通）」ステップだけ（2026-09-14 本人指示・Sol 2巡目）
@@ -102,7 +120,7 @@ jobs:
       - name: Generate posts for all salons
         id: gen_all
         timeout-minutes: 22
-        if: ${{ github.event.inputs.salon_name == '' }}
+        if: ${{ github.event.inputs.salon_name == '' && !inputs.rebuild }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -114,7 +132,7 @@ jobs:
       - name: Generate posts for specific salon
         id: gen_one
         timeout-minutes: 22
-        if: ${{ github.event.inputs.salon_name != '' }}
+        if: ${{ github.event.inputs.salon_name != '' && !inputs.rebuild }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -122,6 +140,23 @@ jobs:
           ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
           POOL_THRESHOLD: ${{ github.event.inputs.pool_threshold }}
         run: python3 generate_saas_posts.py "${{ github.event.inputs.salon_name }}"
+
+      # 在庫を今のルールで作り直す（手動実行で rebuild=true のときだけ）。
+      # ⚠️ 新しい分を足してから古い分を落とすので、途中で止まっても在庫はゼロにならない。
+      # 1枠あたり新しい分が足りないアカウントは、古い在庫をそのまま残す（投稿を止めない）。
+      - name: Rebuild pools with current rules
+        id: rebuild
+        timeout-minutes: 320
+        if: ${{ inputs.rebuild }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ADMIN_NOTIFY_LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+          ROUNDS: ${{ github.event.inputs.rebuild_rounds }}
+          MIN_NEW: ${{ github.event.inputs.rebuild_min_new }}
+          ONLY: ${{ github.event.inputs.rebuild_only }}
+        run: python3 rebuild_saas_pools.py
 
       # 個人アカの月曜21時「とうこさん」宣伝枠の文章在庫。週1本しか使わないが、
       # 在庫が2本を切ったら3本足す（足りていれば何もしない冪等設計）。
