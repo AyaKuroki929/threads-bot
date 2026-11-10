@@ -111,8 +111,11 @@ def main():
     json.dump(posts, open(POOL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     if MANUAL:
         json.dump(posts, open(MANUAL, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print(f"作り直し後: { {k: len(v) for k, v in post_concept.slots_only(posts).items()} }"
-          f"（古い分は落とし、手動投稿用の posts_personal.json にも同じ中身を写しました）")
+    tail = "（古い分は落としました"
+    if MANUAL:
+        tail += f"。手動投稿用の {os.path.basename(MANUAL)} にも同じ中身を写しました"
+    tail += "）"
+    print(f"作り直し後: { {k: len(v) for k, v in post_concept.slots_only(posts).items()} }{tail}")
     return 0
 
 
