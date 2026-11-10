@@ -163,6 +163,11 @@ def _valid_tree(p) -> bool:
         return False
     if not all(isinstance(x, str) and x.strip() for x in p):
         return False
+    # 1行目が「〜話です」「〜書きます」の予告だと、呼びかけでなく宣言になる
+    # （2026-11-10 彩さん「一言目が話しかけてる感じしない。堅い」）
+    from botlib import stiff_opening_reason
+    if stiff_opening_reason(p):
+        return False
     return FIRST_PART_MIN <= len(p[0]) <= FIRST_PART_MAX and all(len(x) <= 400 for x in p)
 _BASE = os.path.dirname(os.path.abspath(__file__))
 

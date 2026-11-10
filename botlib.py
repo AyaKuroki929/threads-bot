@@ -711,3 +711,25 @@ def load_conversation_rules() -> str:
             f"会話型ルール {CONVERSATION_RULES_FILE} の中身が短すぎます（{len(text)}字）。"
             f"壊れている可能性があるので生成を中止します")
     return text
+
+
+# ── 1行目が「宣言」になっていないか ───────────────────────────────
+# 2026-11-10 彩さん「一言目が話しかけてる感じしない。堅い」。
+# 実際に出た例：「予約が埋まってるのに、疲れてる方に聞いてほしい話です。」
+# 声に出しては言わない言い方（〜話です／〜書きます）は呼びかけでなく予告。
+_STIFF_OPENING = re.compile(
+    r"(話です|内容です|向けて書きます|お話しします|紹介します|お伝えします|"
+    r"書いていきます|書いてみます|読んでいただきたい内容)")
+
+
+def stiff_opening_reason(post):
+    """1部目の1行目が宣言になっていれば理由を返す。問題なければ None。"""
+    if isinstance(post, (list, tuple)):
+        head = str(post[0] if post else "")
+    else:
+        head = str(post or "")
+    first = head.split("\n", 1)[0]
+    m = _STIFF_OPENING.search(first)
+    if m:
+        return f"1行目が話しかけでなく宣言になっている（「{m.group(1)}」）"
+    return None

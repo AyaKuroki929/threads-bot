@@ -1467,6 +1467,12 @@ def _shape_reason(p):
     over = [len(str(x)) for x in p if len(str(x)) > 400]
     if over:
         return f"400字を超える部がある（{over[0]}字）"
+    # 1行目が「〜話です」「〜書きます」の予告だと、呼びかけでなく宣言になる
+    # （2026-11-10 彩さん「一言目が話しかけてる感じしない。堅い」）
+    from botlib import stiff_opening_reason
+    stiff = stiff_opening_reason(p)
+    if stiff:
+        return stiff
     return None
 
 
