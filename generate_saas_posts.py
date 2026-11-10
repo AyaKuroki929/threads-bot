@@ -1561,27 +1561,83 @@ SPEAKING_STYLE = {
 }
 
 
-def generate_for_salon(salon: dict):
-    salon_name = salon.get("サロン名", "unknown")
-    threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
-    file_key = threads_id if threads_id else salon_name
-    safe_name = re.sub(r'[^\w\-]', '_', file_key)
+def build_prompts(rules: str, slot: str, count: int, existing: str = ""):
+    """生成に渡す system / user プロンプトを組み立てる。
 
-    if _is_deactivated(file_key):
-        print(f"[saas] {file_key}: 停止中(is_active=false) → 生成スキップ")
-        return False
+    ⚠️ 本番（generate_for_salon）とプレビュー（preview_gen.py）で同じものを使う。
+    別々に持つと「見せた例と違うものが本番に出る」。
+    """
+    slot_hint = _SLOT_HINTS[slot]
 
-    Path(POSTS_DIR).mkdir(exist_ok=True)
-    posts_path = os.path.join(POSTS_DIR, f"posts_{safe_name}.json")
+    # ⚠️ 朝・昼・夜すべてツリー（短い1部目＋2部目）にする。
+    # 彩さんの3アカウント879投稿を実測した結果、**本文が短いほど見られる**が
+    # 朝・昼・夜のどこでも一致した（2026-09-13）。
+    #   bemolle_diet 朝：〜100字=表示228 / 200字〜=表示12
+    #   aya_kuroki_0929 夜：〜100字=表示310 / 200字〜=表示30
+    # 「昼が強い」と見えていたのは、昼だけツリーで1部目が短かったから
+    # （本文の長さの中央値は 昼72字 / 朝263字）。時間帯の差ではなかった。
+    # 中身の量を減らさずに入口だけ短くするため、全スロットをツリーに揃える。
+    output_format = """全投稿をツリー（2部構成）にする。各要素は2要素の配列。改行は\\nで表現。
 
-    file_existed = os.path.exists(posts_path)
-    if file_existed:
-        posts = json.load(open(posts_path, encoding="utf-8"))
-        for slot in ["morning", "noon", "evening"]:
-            posts.setdefault(slot, [])
-    else:
-        posts = {"morning": [], "noon": [], "evening": []}
+出力例:
+[
+  ["1部目フック\\n\\n途中で止める", "2部目は答えから\\n\\nCTA"],
+  ["別の1部目", "別の2部目"]
+]"""
+    tree_rule = """- 全投稿をツリー（2部構成・配列形式）にする
+- 1部目末尾は答えを出さずに途中で止めるクリフハンガー形式
+- 1部目末尾を「予告文」で終えること絶対禁止：「〜を書きます」「〜を話します」「〜をお伝えします」「〜を紹介します」「正直に書きます」など、内容を宣言するメタ発言は全てNG。話を始めてしまい、一番気になるところで止めること
+  例：❌「その時、考えたことを書きます。」→ ✅「頭に最初に浮かんだのは、売上でも採用でもありませんでした。」
+- 2部目は接続詞・前置きなしで答えから書き始める
+"""
+    length_rule = ("- **1部目は60〜100字**。これがタイムラインに出る部分で、ここが短いほど読まれる（実測）。"
+                   "100字を超えないこと\n"
+                   "- 2部目は120〜250字。長くても300字を超えないこと")
 
+    system_prompt = f"""あなたはSNS投稿の専門家です。
+以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
+
+=== サロン情報・投稿ルール ===
+{rules}
+
+=== 時間帯の特性 ===
+{slot_hint}
+
+=== 医療・成分・学術名称の取り扱い（最優先ルール）===
+成分名・学術名称・数値データは、上記のサロン情報に明記されているもののみ使用すること。
+サロン情報に記載のない成分名・効能・数値・学術名称を創作・推測して書くことは絶対禁止。
+週次インサイトに「成分名を列挙せよ」「学術名称を強調せよ」等のルールがあっても、サロン情報に根拠がない場合は無視すること。
+
+=== 出力形式（厳守）===
+JSON配列だけを返してください。
+{output_format}
+
+JSON配列以外の文字は一切出力しないでください。"""
+
+    user_prompt = f"""{count}本の{slot}投稿を生成してください。
+
+必ず守ること：
+- 1行目は「誰に向けた話か」が分かる呼びかけにする（上の会話型ルールの通り）。本題のフックは2行目以降に置き、そこでスクロールを止める
+- ギャップ投稿（「〇〇なのに△△」「実は〇〇だった」）を半数以上に使う
+- オーナーの実体験を素材にした投稿を複数本入れる（失敗談は、サロン情報に具体的な失敗・コンプレックスが書かれている場合のみ。無ければ創作しない）
+- 全{count}本が違う切り口・違う素材
+- このサロン固有の口癖・言葉・コンセプトワードを文体に自然に反映させ、他のどのサロンとも被らない個性を出す
+- ハッシュタグ禁止
+{length_rule}
+{tree_rule}- {count}本すべてJSON配列に含める
+
+既存投稿（この角度は避ける）：
+{existing if existing else "（まだなし）"}"""
+
+    return system_prompt, user_prompt
+
+
+def build_rules(salon: dict, safe_name: str, file_key: str = ""):
+    """そのアカウントに当てるルール全文を組み立てる。(rules, is_custom) を返す。
+
+    ⚠️ 本番の生成（generate_for_salon）とプレビュー（preview_gen.py）で
+    必ず同じものを使う。別々に組み立てると「見せた例と違うものが本番に出る」。
+    """
     stype = salon.get("_type")
     # rules_custom/<safe_name>.md があれば、フォーム由来のルールより優先する
     # （手動キュレーションしたペルソナ・実話リスト縛りのアカウント用。週次インサイトも混ぜない）
@@ -1618,6 +1674,31 @@ def generate_for_salon(salon: dict):
             with open(saas_rules_path, encoding="utf-8") as f:
                 weekly_insights = f.read()
             rules += f"\n\n{weekly_insights}"
+    return rules, is_custom
+
+
+def generate_for_salon(salon: dict):
+    salon_name = salon.get("サロン名", "unknown")
+    threads_id = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
+    file_key = threads_id if threads_id else salon_name
+    safe_name = re.sub(r'[^\w\-]', '_', file_key)
+
+    if _is_deactivated(file_key):
+        print(f"[saas] {file_key}: 停止中(is_active=false) → 生成スキップ")
+        return False
+
+    Path(POSTS_DIR).mkdir(exist_ok=True)
+    posts_path = os.path.join(POSTS_DIR, f"posts_{safe_name}.json")
+
+    file_existed = os.path.exists(posts_path)
+    if file_existed:
+        posts = json.load(open(posts_path, encoding="utf-8"))
+        for slot in ["morning", "noon", "evening"]:
+            posts.setdefault(slot, [])
+    else:
+        posts = {"morning": [], "noon": [], "evening": []}
+
+    rules, is_custom = build_rules(salon, safe_name, file_key)
 
     try:
         client = anthropic.Anthropic()
@@ -1647,69 +1728,9 @@ def generate_for_salon(salon: dict):
         needed_slots.append(slot)
         print(f"[saas] {file_key} {slot}: 残{remaining}本 → {GENERATE_COUNT}本生成開始")
 
-        slot_hint = _SLOT_HINTS[slot]
-
         existing = "\n".join([str(posts[slot][i])[:80] for i in range(min(3, len(posts[slot])))])
 
-        # ⚠️ 朝・昼・夜すべてツリー（短い1部目＋2部目）にする。
-        # 彩さんの3アカウント879投稿を実測した結果、**本文が短いほど見られる**が
-        # 朝・昼・夜のどこでも一致した（2026-09-13）。
-        #   bemolle_diet 朝：〜100字=表示228 / 200字〜=表示12
-        #   aya_kuroki_0929 夜：〜100字=表示310 / 200字〜=表示30
-        # 「昼が強い」と見えていたのは、昼だけツリーで1部目が短かったから
-        # （本文の長さの中央値は 昼72字 / 朝263字）。時間帯の差ではなかった。
-        # 中身の量を減らさずに入口だけ短くするため、全スロットをツリーに揃える。
-        output_format = """全投稿をツリー（2部構成）にする。各要素は2要素の配列。改行は\\nで表現。
-
-出力例:
-[
-  ["1部目フック\\n\\n途中で止める", "2部目は答えから\\n\\nCTA"],
-  ["別の1部目", "別の2部目"]
-]"""
-        tree_rule = """- 全投稿をツリー（2部構成・配列形式）にする
-- 1部目末尾は答えを出さずに途中で止めるクリフハンガー形式
-- 1部目末尾を「予告文」で終えること絶対禁止：「〜を書きます」「〜を話します」「〜をお伝えします」「〜を紹介します」「正直に書きます」など、内容を宣言するメタ発言は全てNG。話を始めてしまい、一番気になるところで止めること
-  例：❌「その時、考えたことを書きます。」→ ✅「頭に最初に浮かんだのは、売上でも採用でもありませんでした。」
-- 2部目は接続詞・前置きなしで答えから書き始める
-"""
-        length_rule = ("- **1部目は60〜100字**。これがタイムラインに出る部分で、ここが短いほど読まれる（実測）。"
-                       "100字を超えないこと\n"
-                       "- 2部目は120〜250字。長くても300字を超えないこと")
-
-        system_prompt = f"""あなたはSNS投稿の専門家です。
-以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
-
-=== サロン情報・投稿ルール ===
-{rules}
-
-=== 時間帯の特性 ===
-{slot_hint}
-
-=== 医療・成分・学術名称の取り扱い（最優先ルール）===
-成分名・学術名称・数値データは、上記のサロン情報に明記されているもののみ使用すること。
-サロン情報に記載のない成分名・効能・数値・学術名称を創作・推測して書くことは絶対禁止。
-週次インサイトに「成分名を列挙せよ」「学術名称を強調せよ」等のルールがあっても、サロン情報に根拠がない場合は無視すること。
-
-=== 出力形式（厳守）===
-JSON配列だけを返してください。
-{output_format}
-
-JSON配列以外の文字は一切出力しないでください。"""
-
-        user_prompt = f"""{GENERATE_COUNT}本の{slot}投稿を生成してください。
-
-必ず守ること：
-- 1行目は必ず「スクロールが止まる」強いフックから始める
-- ギャップ投稿（「〇〇なのに△△」「実は〇〇だった」）を半数以上に使う
-- オーナーの実体験を素材にした投稿を複数本入れる（失敗談は、サロン情報に具体的な失敗・コンプレックスが書かれている場合のみ。無ければ創作しない）
-- 全{GENERATE_COUNT}本が違う切り口・違う素材
-- このサロン固有の口癖・言葉・コンセプトワードを文体に自然に反映させ、他のどのサロンとも被らない個性を出す
-- ハッシュタグ禁止
-{length_rule}
-{tree_rule}- {GENERATE_COUNT}本すべてJSON配列に含める
-
-既存投稿（この角度は避ける）：
-{existing if existing else "（まだなし）"}"""
+        system_prompt, user_prompt = build_prompts(rules, slot, GENERATE_COUNT, existing)
 
         new_posts, last_error = _ask_model(client, system_prompt, user_prompt,
                                            f"{salon_name} {slot}",

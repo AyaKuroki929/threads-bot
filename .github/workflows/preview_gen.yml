@@ -4,21 +4,43 @@ on:
   workflow_dispatch:
     inputs:
       salon_name:
-        description: 'プレビューするサロン名（B2B/ローカル定義）'
+        description: 'プレビューするアカウント（Threads ID か サロン名。all で全アカウント）'
         required: false
         default: 'urakata_san_official'
+      count:
+        description: '1枠あたり何本作るか'
+        required: false
+        default: '2'
+      slots:
+        description: '作る時間帯（morning,noon,evening のうち要るものだけ）'
+        required: false
+        default: 'morning,noon,evening'
 
 jobs:
   preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install "anthropic<2" gspread google-auth
+      - run: pip install -q "anthropic<2" "gspread<7" google-auth
+
+      # シート由来のクライアント（サロン・スクール）を見るのに要る。
+      # 無くてもローカル定義（うらかたさん等）だけは動く。
+      - name: サービスアカウントを配置
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: printf '%s' "$GOOGLE_SA_JSON" > google_service_account.json
+
       - name: Generate preview (no commit, log only)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PREVIEW_COUNT: ${{ github.event.inputs.count }}
+          PREVIEW_SLOTS: ${{ github.event.inputs.slots }}
         run: python3 preview_gen.py "${{ github.event.inputs.salon_name }}"
+
+      - name: 後片付け
+        if: always()
+        run: rm -f google_service_account.json

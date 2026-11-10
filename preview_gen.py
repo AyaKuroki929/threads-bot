@@ -1,72 +1,107 @@
-"""失敗強化版ルールの試し生成（プレビュー専用）。
-ファイルへ書き込まず・コミットせず・ログに出力するだけ。本番プールは汚さない。
-Usage: python3 preview_gen.py [salon_name]   # 既定 urakata_san_official
-B2B（うらかた）はシート不要・Supabase不要。ANTHROPIC_API_KEY だけで動く。"""
-import sys, json
+"""本番と同じルールで投稿を試し作りして、ログに出すだけのプレビュー。
+
+ファイルへ書き込まず・コミットせず・投稿もしない。本番プールは汚さない。
+
+  python3 preview_gen.py                         # 既定 urakata_san_official
+  python3 preview_gen.py syoko_happy_salon       # Threads ID か サロン名
+  python3 preview_gen.py all                     # 運用中の全アカウントを1本ずつ
+
+⚠️ ルール（build_rules）とプロンプト（build_prompts）は本番の generate_saas_posts.py と
+同じ関数を呼ぶ。ここで見た形が、そのまま本番で作られる形になる。
+B2B（うらかたさん）はシート不要。シート由来（サロン・スクール）は
+GOOGLE_SERVICE_ACCOUNT_JSON が要る。
+"""
+import os
+import re
+import sys
+
 import anthropic
-from generate_saas_posts import b2b_to_rules, load_local_salons, normalize_threads_id
 
-target = sys.argv[1] if len(sys.argv) > 1 else "urakata_san_official"
-salon = next(
-    (s for s in load_local_salons()
-     if normalize_threads_id(s.get("Threadsのアカウント名（@から始まるID）", "")) == target
-     or s.get("サロン名") == target),
-    None,
+from generate_saas_posts import (
+    build_prompts,
+    build_rules,
+    load_local_salons,
+    load_napori_data,
+    load_school_data,
+    load_sheet_data,
+    normalize_threads_id,
+    _ask_model,
+    _keep_valid_shape,
 )
-if not salon:
-    print(f"[preview] サロンが見つかりません: {target}")
-    sys.exit(1)
+import post_concept
 
-rules = b2b_to_rules(salon)
-client = anthropic.Anthropic()
+COUNT = int(os.environ.get("PREVIEW_COUNT") or 2)
+SLOTS = (os.environ.get("PREVIEW_SLOTS") or "morning,noon,evening").split(",")
 
 
-def gen(slot, n, tree=False):
-    if tree:
-        fmt = '各要素は2要素の配列（ツリー2部構成）。改行は\\nで表現。例: [["1部フック\\n途中で止める", "2部は答えから"]]'
-        lenrule = "各部150〜300字"
-    else:
-        fmt = '各要素は単発投稿の文字列。改行は\\nで表現。例: ["投稿1の本文", "投稿2の本文"]'
-        lenrule = "各投稿200〜300字・最長350字"
-    hint = {"morning": "朝。前向きな気づき・軽い問いかけ",
-            "noon": "昼。共感・保存したくなる知識",
-            "evening": "夜。内省・本音"}[slot]
-    system = f"""あなたはSNS投稿の専門家です。以下のルールに従ってThreads投稿を生成してください。
-=== サロン情報・投稿ルール ===
-{rules}
-=== 時間帯の特性 ===
-{hint}
-=== 出力形式（厳守）===
-JSON配列だけを返す。{fmt}
-JSON配列以外は一切出力しない。"""
-    user = f"""{n}本の{slot}投稿を生成してください。
-- 1行目は必ずスクロールが止まる強いフック
-- 失敗エピソード起点を6〜7割、必ずW型（失敗→気づき→今）で着地
-- 失敗の種類を散らす（お金/時間/人/思い込み/道具）
-- このアカウント固有の口癖・コンセプトを自然に反映
-- ハッシュタグ禁止
-- {lenrule}
-JSON配列で{n}本すべて返す。"""
-    resp = client.messages.create(model="claude-sonnet-4-6", max_tokens=4000,
-                                  system=system, messages=[{"role": "user", "content": user}])
-    raw = resp.content[0].text.strip()
-    s, e = raw.find("["), raw.rfind("]") + 1
+def collect_salons():
+    salons = []
     try:
-        return json.loads(raw[s:e])
-    except Exception as ex:
-        print(f"[preview] パース失敗({slot}): {ex}\n{raw[:400]}")
-        return []
+        salons += load_sheet_data() + load_school_data() + load_napori_data()
+    except Exception as e:
+        print(f"[preview] シートが読めません（ローカル定義だけで続けます）: {e}")
+    salons += load_local_salons()
+    return salons
 
 
-print("################ PREVIEW: うらかた 失敗強化版（本番未投入）################")
-for slot, n, tree in [("morning", 4, False), ("noon", 2, True), ("evening", 4, False)]:
-    print(f"\n================= {slot} =================")
-    for i, p in enumerate(gen(slot, n, tree), 1):
-        if isinstance(p, list):
-            print(f"[{i}] （ツリー）")
-            for j, part in enumerate(p, 1):
-                print(f"  {j}部: {part}")
-        else:
-            print(f"[{i}] {p}")
-        print()
-print("################ END PREVIEW ################")
+def key_of(salon):
+    tid = normalize_threads_id(salon.get("Threadsのアカウント名（@から始まるID）", ""))
+    return tid or salon.get("サロン名", "")
+
+
+def preview(salon, client):
+    file_key = key_of(salon)
+    safe_name = re.sub(r"[^\w\-]", "_", file_key)
+    rules, _ = build_rules(salon, safe_name, file_key)
+    print("\n" + "#" * 70)
+    print(f"# {salon.get('サロン名', '')}（@{file_key}） 種別={salon.get('_type') or 'salon'}")
+    print("#" * 70)
+    for slot in SLOTS:
+        slot = slot.strip()
+        if not slot:
+            continue
+        system_prompt, user_prompt = build_prompts(rules, slot, COUNT)
+        posts, err = _ask_model(client, system_prompt, user_prompt,
+                                f"preview {file_key} {slot}", keep_fn=_keep_valid_shape)
+        print(f"\n========== {slot} ==========")
+        if not posts:
+            print(f"（生成できませんでした: {err}）")
+            continue
+        for i, p in enumerate(posts, 1):
+            parts = p if isinstance(p, list) else [p]
+            # 配信されるときの形（名乗りが入るアカウントは入れて見せる）
+            parts = post_concept.add_signature(file_key, parts)
+            print(f"\n--- {i}本目 ---")
+            for j, part in enumerate(parts, 1):
+                print(f"【{j}部目】{len(part)}字")
+                print(part)
+
+
+def main():
+    target = sys.argv[1] if len(sys.argv) > 1 else "urakata_san_official"
+    salons = collect_salons()
+    if not salons:
+        print("[preview] アカウントが1件も読めませんでした")
+        sys.exit(1)
+    if target == "all":
+        chosen = [s for s in salons if s.get("サロン名")]
+    else:
+        chosen = [s for s in salons
+                  if key_of(s) == target or s.get("サロン名") == target]
+    if not chosen:
+        print(f"[preview] 見つかりません: {target}")
+        print("[preview] 候補: " + ", ".join(sorted({key_of(s) for s in salons if key_of(s)})))
+        sys.exit(1)
+    client = anthropic.Anthropic()
+    seen = set()
+    for salon in chosen:
+        k = key_of(salon)
+        if k in seen:
+            continue
+        seen.add(k)
+        preview(salon, client)
+    print("\n################ END PREVIEW ################")
+
+
+if __name__ == "__main__":
+    main()
