@@ -86,10 +86,14 @@ print(f"⑥ 名乗り          : {sig!r}")
 if not sig:
     problems.append(f"{SALON} の名乗りが post_concept.SIGNATURE_FOR_SALON に無い")
 else:
-    sample = ["本文のはじまり", "2部目"]
+    # 2026-11-10 彩さん指示で位置が変わった：呼びかけ（1行目）→ 名乗り → 本題
+    sample = ["ひとりでサロンを回してる方、聞いてほしくて。\n本文のはじまり", "2部目"]
     got = post_concept.add_signature(SALON, sample)
-    if not got[0].startswith(sig):
-        problems.append("post_concept.add_signature が1部目の冒頭に名乗りを付けていない")
+    lines = got[0].split("\n")
+    if len(lines) < 3 or lines[1] != sig:
+        problems.append("post_concept.add_signature が呼びかけの次の行に名乗りを入れていない")
+    elif lines[0] != sample[0].split("\n")[0] or lines[2] != "本文のはじまり":
+        problems.append("post_concept.add_signature が呼びかけか本題を壊している")
     if post_concept.add_signature(SALON, got)[0] != got[0]:
         problems.append("post_concept.add_signature が名乗りを二重に付けている")
     if not post_concept.has_signature(SALON, got):

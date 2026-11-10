@@ -681,3 +681,33 @@ def judge_fact_violations(post, salon):
     if len(parts) > 1:
         return judge_fact_violation("\n\n".join(parts), salon)
     return None
+
+
+# ── 会話型ルール（全アカウント共通）────────────────────────────────────
+# 2026-11-10 鷺さんの指摘（打ち合わせ＋晶子先生へのLINE）で追加。
+# 「情報を出す人」ではなく「相談したいと思われる人」になるための書き方を、
+# 個人・ベモーレ・うらかたさん公式・クライアント全アカウントの生成に効かせる。
+CONVERSATION_RULES_FILE = "GENERATE_RULES_conversation.md"
+
+
+def load_conversation_rules() -> str:
+    """全アカウント共通の会話型ルールを読む。
+
+    ⚠️ 読めなかったら落とす。黙って続けると全アカウントの文体が
+    静かに説明型へ戻り、誰も気づけない（沈黙の失敗を作らない）。
+    ワークフローの失敗通知に乗せて人に知らせる。
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        CONVERSATION_RULES_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read().strip()
+    except OSError as e:
+        raise RuntimeError(
+            f"会話型ルール {CONVERSATION_RULES_FILE} が読めません（全アカウントの文体が"
+            f"元に戻るため生成を中止します）: {e}")
+    if len(text) < 500:
+        raise RuntimeError(
+            f"会話型ルール {CONVERSATION_RULES_FILE} の中身が短すぎます（{len(text)}字）。"
+            f"壊れている可能性があるので生成を中止します")
+    return text

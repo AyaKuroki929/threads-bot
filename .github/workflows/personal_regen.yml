@@ -64,7 +64,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "変更なし"
           else
-            git commit -m "個人: 投稿ストックを新コンセプト（削減）で作り直し $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+            git commit -m "個人: 投稿ストックを今のルールで作り直し $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             for i in 1 2 3 4 5; do
               if git push; then exit 0; fi
               git pull --rebase origin main

@@ -91,17 +91,26 @@ def signature_for(salon_name):
 
 
 def add_signature(salon_name, texts):
-    """1部目の冒頭に名乗りを付ける。対象外・既に名乗っている本文はそのまま返す。"""
+    """1部目の「呼びかけ」の次の行に名乗りを入れる。
+
+    2026-11-10 彩さん指示で位置を変更（旧：1部目のいちばん先頭）。
+    名乗りだけが入り口だと毎回同じ出だしになってAIっぽい。
+    「今日も遅くまでサロンに残ってる方、聞いてほしくて。」のような呼びかけを
+    先に置き、その次に名乗る（鷺さんの指摘）。
+    在庫の1部目は1行目が呼びかけになるよう生成している（GENERATE_RULES_conversation.md）。
+    対象外・既に名乗っている本文はそのまま返す。
+    """
     sig = signature_for(salon_name)
     if not sig or not texts:
         return texts
     first = str(texts[0] or "")
     # すでに名乗りがある本文に二度付けない。表記が少し違っても拾えるよう
     # 「黒木です」を目印にする（1部目の頭の方に出ていれば名乗りと見なす）
-    if sig in first or "黒木です" in first[:60]:
+    if sig in first or "黒木です" in first[:120]:
         return texts
+    greeting, _, rest = first.partition("\n")
     result = list(texts)
-    result[0] = f"{sig}\n{first}"
+    result[0] = f"{greeting}\n{sig}\n{rest}" if rest else f"{greeting}\n{sig}"
     return result
 
 
@@ -110,5 +119,6 @@ def has_signature(salon_name, texts):
     sig = signature_for(salon_name)
     if not sig:
         return True
+    # 呼びかけ1行のあとに名乗りが入るので、頭から80字では届かないことがある
     first = str((texts or [""])[0] or "")
-    return sig in first[:80] or "黒木です" in first[:80]
+    return sig in first[:200] or "黒木です" in first[:200]

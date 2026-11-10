@@ -201,6 +201,9 @@ def _load_rules(rules_file):
     無ければ従来どおり公開分だけで生成する（落とさない）。"""
     path = os.path.join(_BASE, rules_file)
     rules = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+    # 全アカウント共通の会話型ルールを先頭に置く（2026-11-10 鷺さんの指摘）
+    from botlib import load_conversation_rules
+    rules = load_conversation_rules() + "\n\n---\n\n" + rules
     priv_path = os.path.join(_BASE, rules_file.replace(".md", "_private.md"))
     if os.path.exists(priv_path):
         priv = open(priv_path, encoding="utf-8").read()
