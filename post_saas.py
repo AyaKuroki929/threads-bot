@@ -1437,6 +1437,27 @@ def _sync_last_run(salon_name, slot, jst_date=None):
     return _sync_last_run_now(salon_name, slot)
 
 
+def _record_last_posted(salon_name, slot, texts, post_id):
+    """投稿した本文（全パート）を last_posted_<salon>.json に残す（last_run.json と同じ場所・一緒にコミット）。
+    失敗しても投稿は成功しているので止めない（表示だけ）。"""
+    if salon_name not in _LAST_RUN_FILES:
+        return
+    path = os.path.join(os.path.dirname(__file__), f"last_posted_{salon_name}.json")
+    try:
+        data = {}
+        if os.path.exists(path):
+            with open(path) as f:
+                data = json.load(f)
+        data[slot] = {"date": datetime.now(JST).strftime("%Y-%m-%d"),
+                      "posted_at": datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S"),
+                      "post_id": post_id, "parts": [t for t in texts if t]}
+        with open(path, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"[last_posted] {os.path.basename(path)} の {slot} を更新（{len(data[slot]['parts'])}部）")
+    except Exception as e:
+        print(f"[last_posted] 保存失敗（投稿は成功・続行）: {e}")
+
+
 def _sync_last_run_now(salon_name, slot):
     fn = _LAST_RUN_FILES.get(salon_name)
     if not fn:
@@ -2176,6 +2197,11 @@ def _run_slot(row, action, salon, user_id, token, slot, account_label, quiet=Fal
                        original_first=original_first)
     row = res["row"]
     post_id = res["first_post_id"]
+    if res["root_published"]:
+        # ベモーレ／個人は、出した全部（1部目＋続き）を公開ファイルに残す。
+        # Instagramのストーリー化（instagram-stories-bemolle）が2部目をつなげるのに使う：
+        # Threads APIは返信の読み取り権限を出さず（403）、在庫は投稿後に消えるため、ここが唯一の出所（2026-11-11）
+        _record_last_posted(salon_name, slot, texts, post_id)
 
     # 投稿はここで成功済み。以降の保存が失敗しても投稿は取り消せないので、
     # 「次回の二重投稿を防ぐ記録(post_logs)」を最優先で確実に残す。
