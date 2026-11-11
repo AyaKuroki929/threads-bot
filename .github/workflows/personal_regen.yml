@@ -1,4 +1,4 @@
-name: 個人Threads - 投稿ストックを作り直す
+name: 投稿ストックを作り直す（個人／ベモーレ）
 
 # 2026-11-01にブランディングが「時間とお金の削減」へ変わったため、前のコンセプトで作った
 # 在庫を新しいルールで作り直すための手動実行。先に新しい投稿を足してから古い分を落とすので、
@@ -86,7 +86,7 @@ jobs:
           LINE_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          TEXT="🚨 個人Threads 投稿ストックの作り直しが失敗しました\n\n古い在庫は残してあるので投稿は止まりません。\n$RUN_URL"
+          TEXT="🚨 ${{ github.event.inputs.account }} の投稿ストックの作り直しが止まりました\n\n古い在庫は残してあるので投稿は止まりません。\n（手で止めたときもこの通知が出ます。その場合は無視してください）\n$RUN_URL"
           code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer $LINE_TOKEN" \
             -H "Content-Type: application/json" \
