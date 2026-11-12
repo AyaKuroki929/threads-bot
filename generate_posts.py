@@ -124,12 +124,12 @@ def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_f
             resp = client.with_options(
                 timeout=min(CALL_TIMEOUT_SEC, left), max_retries=0,   # 再試行は外側ループが担う（期限管理を一元化）
             ).messages.create(
-                # ルール全文（1〜2万字）は毎回そのまま送るので、3枠・作り直しの各回で
-                # 同じ内容を繰り返し課金していた。キャッシュに乗せると2回目以降の
-                # 入力が約1/10になる（中身は変わらない・2026-11-12）
+                # ⚠️ system_prompt は呼び出し側がすでにキャッシュ付きのブロック（リスト）で
+                # 組み立てている。ここでもう一度包むと二重になり、APIが
+                # 「system.0.text: Input should be a valid string」で全件弾く
+                # （2026-11-13 実際に踏んだ。ベモーレの作り直しが全滅）
                 model=GEN_MODEL, max_tokens=GEN_MAX_TOKENS,
-                system=[{"type": "text", "text": system_prompt,
-                         "cache_control": {"type": "ephemeral"}}],
+                system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
         except _RefillTimeout as e:
