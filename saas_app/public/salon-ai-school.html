@@ -11,7 +11,7 @@
 <meta property="og:image" content="https://saas.shikisai.work/salon-ai-school.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <style>
   :root {
     color-scheme: light;
@@ -27,7 +27,7 @@
     margin: 0;
     background: #faf7fa;
     color: var(--ink);
-    font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Hiragino Sans", sans-serif;
+    font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif;
     display: flex;
     justify-content: center;
     padding: 32px 16px 56px;
@@ -161,6 +161,33 @@
   }
   .price .amount small { font-size: 1.1rem; }
 
+  details.more { width: 100%; }
+  details.more > summary {
+    list-style: none;
+    display: block;
+    text-align: center;
+    background: var(--plum);
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: 0.06em;
+    padding: 17px 24px;
+    border-radius: 999px;
+    box-shadow: 0 12px 26px rgba(74, 47, 82, 0.26);
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary:hover { background: var(--plum-deep); }
+  details.more .inner {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 20px;
+  }
+  .t-open { display: none; }
+  details.more[open] .t-closed { display: none; }
+  details.more[open] .t-open { display: inline; }
   .btn {
     display: inline-block;
     background: var(--rose);
@@ -197,6 +224,9 @@
            alt="サロンAI塾の案内。AIに集客を任せて、早く帰る。サロン向けオンライン個別レッスン。私のサロンでいま動いていること（2026年10月時点）は、Googleが週2回の自動投稿と地域の検索で1位、AIにお店をおすすめしてもらえること。Instagramはストーリーがインスタを開かなくても毎日5回以上自動で上がり続け、リールは作成から投稿までAIが自動、素材は指定しなくてもAIがパソコンの中から選び、ナレーションは自分の声でAIが自動生成、インスタから月10名のご来店。公式LINEはご来店につながるステップ配信が自動で配信されること。この仕組みをご自身のサロンで作れるようになります。オンラインの個別レッスン 全10回 1回60分。">
     </div>
 
+    <details class="more">
+      <summary><span class="t-closed">講座の詳しい内容を見る</span><span class="t-open">閉じる</span></summary>
+      <div class="inner">
     <section class="dark">
       <p class="label">はじめに</p>
       <h2>幸せになるために、<br>サロンを開業したはずでした。</h2>
@@ -389,6 +419,8 @@
       </div>
       <p class="note" style="margin-top:18px">個別相談のお申込み・日程調整は、下のLINEからご連絡ください。</p>
     </section>
+      </div>
+    </details>
 
     <a class="btn line" href="https://lin.ee/NT624Z0k" target="_blank" rel="noopener">LINEで問い合わせる</a>
     <p class="btn-note">友だち追加の画面が開きます</p>
