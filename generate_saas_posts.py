@@ -56,9 +56,14 @@ _ALERTS: list = []
 
 
 def _alert(text: str):
-    """要対応の警告を溜める。実行の最後に1通のLINEへまとめて送る。"""
+    """要対応の警告を溜める。実行の最後に1通のLINEへまとめて送る。
+
+    同じ文面は1回しか入れない（APIの使用上限のように、全サロンで同じ理由が
+    並ぶと同じ行が何度も出る。2026-11-12 実際に2回並んだ）。
+    """
     print(f"[saas][要対応] {text}")
-    _ALERTS.append(text)
+    if text not in _ALERTS:
+        _ALERTS.append(text)
 
 
 # GitHub Actions では自分で送らず、要対応の本文をこのファイルに書き出す。
@@ -1424,6 +1429,45 @@ class _UsageLimitReached(RuntimeError):
     """月の使用上限に達した。これ以上試しても同じなので全体を止める。"""
 
 
+# 使用上限に当たったら、解除予定日までは生成を走らせない。
+# 走らせても必ず同じ結果になり、そのたびに⚠️LINEが飛ぶ（1日2回×3週間で40通超）。
+USAGE_LIMIT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                ".usage_limit_until")
+
+
+def _remember_usage_limit(error_text: str) -> str:
+    """エラー文から解除日（UTC）を読み取って覚える。読めなければ空文字。"""
+    m = re.search(r"regain access on (\d{4}-\d{2}-\d{2})", error_text)
+    until = m.group(1) if m else ""
+    if until:
+        try:
+            with open(USAGE_LIMIT_FILE, "w", encoding="utf-8") as f:
+                f.write(until)
+        except OSError:
+            pass
+    return until
+
+
+def usage_limit_active() -> str:
+    """まだ上限中なら解除日を返す。解除済み・記録なしなら空文字。"""
+    try:
+        with open(USAGE_LIMIT_FILE, encoding="utf-8") as f:
+            until = f.read().strip()
+    except OSError:
+        return ""
+    if not until:
+        return ""
+    from datetime import datetime, timezone
+    try:
+        if datetime.now(timezone.utc).strftime("%Y-%m-%d") >= until:
+            os.remove(USAGE_LIMIT_FILE)   # 解除された。次からは普通に動く
+            print(f"[saas] 使用上限の解除日（{until}）を過ぎたので、通常どおり生成します")
+            return ""
+    except OSError:
+        pass
+    return until
+
+
 _USAGE_TOTAL = {"in": 0, "cache_write": 0, "cache_read": 0, "out": 0}
 
 
@@ -1514,9 +1558,12 @@ def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn
             # （2026-11-12 実際に踏んだ。「新しい分が足りない」としか出ず原因が分からなかった）
             low = last_error.lower()
             if "usage limit" in low or "credit balance" in low:
-                _alert("ClaudeのAPIが使用上限に達したため、投稿の作成を止めました。"
-                       "console.anthropic.com の Billing → Usage limits を見てください。"
-                       "在庫は残っているので投稿は続きます")
+                until = _remember_usage_limit(last_error)
+                when = f"{until} に自動で戻ります。" if until else ""
+                _alert(f"ClaudeのAPIが使用上限に達したため、投稿の作成を止めました。{when}"
+                       "すぐ使いたいときは console.anthropic.com の Billing → Usage limits で"
+                       "上限を上げてください。在庫は残っているので投稿は続きます"
+                       "（この通知は解除日まで出しません）")
                 raise _UsageLimitReached(last_error)
             break
     return new_posts, last_error
@@ -2150,6 +2197,16 @@ JSON配列以外の文字は一切出力しないでください。"""
 
 def main():
     target_salon = sys.argv[1] if len(sys.argv) > 1 else None
+
+    # 使用上限中は走らせない。走らせても必ず同じ結果になり、そのたびに⚠️が飛ぶ
+    # （1日2回×3週間で40通超。2026-11-12）。解除日を過ぎたら自動で再開する。
+    until = usage_limit_active()
+    if until:
+        print(f"[saas] ClaudeのAPIが使用上限中です（{until} に解除予定）。"
+              f"今回は生成しません。在庫から投稿は続きます")
+        print(f"[saas] すぐ再開したいときは console.anthropic.com で上限を上げてから、"
+              f"{os.path.basename(USAGE_LIMIT_FILE)} を消してください")
+        return
 
     print("[saas] スプレッドシートを読み込み中...")
     sheet_failed = False
