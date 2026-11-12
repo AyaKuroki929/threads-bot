@@ -9,10 +9,6 @@
 <meta property="og:description" content="発信を止めずに続ける仕組みを、ご自身のサロンで作れるようになります。オンライン個別レッスン 全10回。">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://saas.shikisai.work/salon-ai-school.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap"></noscript>
 <style>
   :root {
     color-scheme: light;
@@ -28,7 +24,7 @@
     margin: 0;
     background: #faf7fa;
     color: var(--ink);
-    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Zen Kaku Gothic New", sans-serif;
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
     display: flex;
     justify-content: center;
     padding: 32px 16px 56px;
@@ -264,8 +260,11 @@
     <p class="eyebrow">サロン向け AI 個別レッスン</p>
 
     <div class="sheet">
-      <img src="/salon-ai-school.webp" width="1054" height="1492" loading="eager" decoding="async"
+      <picture>
+        <source srcset="/salon-ai-school.webp" type="image/webp">
+      <img src="/salon-ai-school.png" width="1054" height="1492" loading="eager" decoding="async"
            alt="サロンAI塾の案内。AIに集客を任せて、早く帰る。サロン向けオンライン個別レッスン。私のサロンでいま動いていること（2026年10月時点）は、Googleが週2回の自動投稿と「上本町 痩身エステ」で地図の1番目、AIにお店をおすすめしてもらえること。Instagramはストーリーがインスタを開かなくても毎日5回以上自動で上がり続け、リールは作成から投稿までAIが自動、素材は指定しなくてもAIがパソコンの中から選び、ナレーションは自分の声でAIが自動生成、インスタから月10名以上のご来店。公式LINEはご来店につながるステップ配信が自動で配信されること。この仕組みをご自身のサロンで作れるようになります。オンラインの個別レッスン 全10回 1回60分。">
+      </picture>
     </div>
 
     <section>
@@ -497,7 +496,7 @@
       </div>
       <p class="note" style="margin-top:18px">個別相談のお申込み・日程調整は、下のLINEからご連絡ください。</p>
     </section>
-        <p class="close-row"><button type="button" class="close-link" onclick="var d=this.closest('details');d.open=false;d.querySelector('summary').scrollIntoView({block:'center'});d.querySelector('summary').focus();">▲ 閉じる</button></p>
+        <p class="close-row" id="closeRow" hidden><button type="button" class="close-link" id="closeBtn">▲ 閉じる</button></p>
       </div>
     </details>
 
@@ -509,5 +508,20 @@
       株式会社紫妃彩
     </p>
   </div>
+  <script>
+  (function () {
+    var row = document.getElementById('closeRow');
+    var btn = document.getElementById('closeBtn');
+    if (!row || !btn) return;
+    row.hidden = false;
+    btn.addEventListener('click', function () {
+      var d = btn.closest('details');
+      if (!d) return;
+      d.open = false;
+      var sm = d.querySelector('summary');
+      if (sm) { sm.scrollIntoView({ block: 'center' }); sm.focus(); }
+    });
+  })();
+  </script>
 </body>
 </html>
