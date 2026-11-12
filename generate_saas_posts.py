@@ -1420,6 +1420,41 @@ _RETRY_FORMAT_NOTE = """
 - JSON配列だけを返す（説明文を付けない）"""
 
 
+class _UsageLimitReached(RuntimeError):
+    """月の使用上限に達した。これ以上試しても同じなので全体を止める。"""
+
+
+_USAGE_TOTAL = {"in": 0, "cache_write": 0, "cache_read": 0, "out": 0}
+
+
+def _log_usage(resp, label: str) -> None:
+    """1回ごとのトークン数を出し、実行の最後に合計も出せるようにためる。
+
+    どこにいくらかかっているかが分からないと、削る場所を当てずっぽうで選ぶことになる。
+    """
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return
+    cw = getattr(u, "cache_creation_input_tokens", 0) or 0
+    cr = getattr(u, "cache_read_input_tokens", 0) or 0
+    _USAGE_TOTAL["in"] += u.input_tokens
+    _USAGE_TOTAL["cache_write"] += cw
+    _USAGE_TOTAL["cache_read"] += cr
+    _USAGE_TOTAL["out"] += u.output_tokens
+    print(f"[usage] {label}: 入力{u.input_tokens} / キャッシュ書込{cw} / "
+          f"キャッシュ読込{cr} / 出力{u.output_tokens}")
+
+
+def print_usage_total() -> None:
+    """この実行で使ったトークンの合計と、ざっくりの金額。"""
+    t = _USAGE_TOTAL
+    # Sonnet 4.6: 入力 $3 / 出力 $15 / キャッシュ書込 $3.75 / キャッシュ読込 $0.30（per 1M）
+    usd = (t["in"] * 3 + t["cache_write"] * 3.75 + t["cache_read"] * 0.30
+           + t["out"] * 15) / 1_000_000
+    print(f"[usage] この実行の合計: 入力{t['in']:,} / キャッシュ書込{t['cache_write']:,} / "
+          f"キャッシュ読込{t['cache_read']:,} / 出力{t['out']:,} / 約${usd:.2f}")
+
+
 def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn=None):
     """モデルにJSON配列を書かせる。3回まで試し、(投稿リスト or None, 最後のエラー) を返す。
 
@@ -1430,12 +1465,17 @@ def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn
     for attempt in range(3):
         prompt = user_prompt if attempt == 0 else user_prompt + _RETRY_FORMAT_NOTE
         try:
+            # ルール全文（1〜2万字）は毎回そのまま送るので、同じサロンの3枠・
+            # 作り直しの各回で繰り返し同じ内容を課金していた。キャッシュに乗せると
+            # 2回目以降の入力が約1/10になる（中身は変わらない・2026-11-12）
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=8000,
-                system=system_prompt,
+                system=[{"type": "text", "text": system_prompt,
+                         "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": prompt}]
             )
+            _log_usage(resp, label)
             raw = resp.content[0].text.strip()
             start = raw.find("[")
             end = raw.rfind("]") + 1
@@ -1469,6 +1509,15 @@ def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn
             last_error = str(e)
             print(f"[saas] {label} (試行{attempt+1}): エラー → {e}")
             new_posts = None
+            # 月の使用上限に当たったら、他のアカウントを試しても必ず同じ結果になる。
+            # 空回りを続けず、何が起きたかを1通で知らせて全体を止める
+            # （2026-11-12 実際に踏んだ。「新しい分が足りない」としか出ず原因が分からなかった）
+            low = last_error.lower()
+            if "usage limit" in low or "credit balance" in low:
+                _alert("ClaudeのAPIが使用上限に達したため、投稿の作成を止めました。"
+                       "console.anthropic.com の Billing → Usage limits を見てください。"
+                       "在庫は残っているので投稿は続きます")
+                raise _UsageLimitReached(last_error)
             break
     return new_posts, last_error
 

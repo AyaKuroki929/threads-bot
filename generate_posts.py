@@ -124,8 +124,12 @@ def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_f
             resp = client.with_options(
                 timeout=min(CALL_TIMEOUT_SEC, left), max_retries=0,   # 再試行は外側ループが担う（期限管理を一元化）
             ).messages.create(
+                # ルール全文（1〜2万字）は毎回そのまま送るので、3枠・作り直しの各回で
+                # 同じ内容を繰り返し課金していた。キャッシュに乗せると2回目以降の
+                # 入力が約1/10になる（中身は変わらない・2026-11-12）
                 model=GEN_MODEL, max_tokens=GEN_MAX_TOKENS,
-                system=system_prompt,
+                system=[{"type": "text", "text": system_prompt,
+                         "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": user_prompt}],
             )
         except _RefillTimeout as e:
@@ -134,6 +138,7 @@ def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_f
             reason = f"API失敗: {e}"
             print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}")
             continue
+        _log_usage(resp, label)
         if getattr(resp, "stop_reason", None) == "max_tokens":
             reason = "出力が上限で途切れた"
             print(f"[generate] {label}: {reason} → 再試行 {attempt}/{GEN_ATTEMPTS}")
@@ -155,6 +160,33 @@ def _generate_valid_posts(client, system_prompt, user_prompt, label: str, keep_f
 # ツリー1部目の長さ。ここがタイムラインに出る部分で、短いほど見られる（2026-09-13 実測）
 FIRST_PART_MIN = 25
 FIRST_PART_MAX = 160
+
+
+_USAGE_TOTAL = {"in": 0, "cache_write": 0, "cache_read": 0, "out": 0}
+
+
+def _log_usage(resp, label: str) -> None:
+    """1回ごとのトークン数を出し、最後に合計も出せるようにためる（2026-11-12）。"""
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return
+    cw = getattr(u, "cache_creation_input_tokens", 0) or 0
+    cr = getattr(u, "cache_read_input_tokens", 0) or 0
+    _USAGE_TOTAL["in"] += u.input_tokens
+    _USAGE_TOTAL["cache_write"] += cw
+    _USAGE_TOTAL["cache_read"] += cr
+    _USAGE_TOTAL["out"] += u.output_tokens
+    print(f"[usage] {label}: 入力{u.input_tokens} / キャッシュ書込{cw} / "
+          f"キャッシュ読込{cr} / 出力{u.output_tokens}")
+
+
+def print_usage_total() -> None:
+    """この実行で使ったトークンの合計と、ざっくりの金額。"""
+    t = _USAGE_TOTAL
+    usd = (t["in"] * 3 + t["cache_write"] * 3.75 + t["cache_read"] * 0.30
+           + t["out"] * 15) / 1_000_000
+    print(f"[usage] この実行の合計: 入力{t['in']:,} / キャッシュ書込{t['cache_write']:,} / "
+          f"キャッシュ読込{t['cache_read']:,} / 出力{t['out']:,} / 約${usd:.2f}")
 
 
 def _valid_tree(p) -> bool:

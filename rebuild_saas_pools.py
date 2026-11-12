@@ -106,6 +106,11 @@ def rebuild_one(salon):
             g.generate_for_salon(salon)
             ok_rounds += 1
         except Exception as e:
+            # APIの使用上限に当たったら、残りを回しても必ず同じ結果になる。
+            # 空回りで時間とお金を使わないよう、ここで全体を止める（2026-11-12）
+            if type(e).__name__ == "_UsageLimitReached":
+                print(f"[rebuild] {file_key}: APIの使用上限に達しました。ここで中止します")
+                raise
             # 1アカウントの失敗で全体を止めない。古い在庫は残るので投稿は続く
             print(f"[rebuild] {file_key} {i}/{ROUNDS}回目で失敗: {str(e)[:150]}")
         _, now = counts(path)
@@ -142,6 +147,10 @@ def main():
         try:
             msg, ok = rebuild_one(salon)
         except Exception as e:
+            if type(e).__name__ == "_UsageLimitReached":
+                results.append(f"{salon.get('サロン名','?')} 以降：APIの使用上限のため中止")
+                print("[rebuild] APIの使用上限に達したので、残りのアカウントは回しません")
+                break
             msg, ok = f"{salon.get('サロン名','?')}: 想定外の失敗 {str(e)[:150]}", False
         print(f"[rebuild] {msg}")
         results.append(msg)
@@ -151,6 +160,10 @@ def main():
     for r in results:
         print(" ・" + r)
     print(f"\n作り直せたアカウント: {done}/{len(salons)}")
+    try:
+        g.print_usage_total()
+    except Exception:
+        pass
     # 1件でも作り直せていれば成功扱い。落とせなかった分は古い在庫が残っているだけで、
     # 投稿は止まらない（ここで失敗にすると無用な🚨が飛ぶ）
     return 0
