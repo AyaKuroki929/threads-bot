@@ -1499,7 +1499,7 @@ def print_usage_total() -> None:
           f"キャッシュ読込{t['cache_read']:,} / 出力{t['out']:,} / 約${usd:.2f}")
 
 
-def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn=None):
+def _ask_model(client, system_prompt, user_prompt: str, label: str, keep_fn=None):
     """モデルにJSON配列を書かせる。3回まで試し、(投稿リスト or None, 最後のエラー) を返す。
 
     keep_fn を渡すと「JSONは読めたが保存できる形の投稿が0本」のときも作り直す。
@@ -1515,8 +1515,11 @@ def _ask_model(client, system_prompt: str, user_prompt: str, label: str, keep_fn
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=8000,
-                system=[{"type": "text", "text": system_prompt,
-                         "cache_control": {"type": "ephemeral"}}],
+                # 文字列ならここでキャッシュ付きに包む。すでにブロックのリストなら
+                # そのまま渡す（二重に包むとAPIが全件弾く・2026-11-13 個人側で踏んだ）
+                system=(system_prompt if isinstance(system_prompt, list) else
+                        [{"type": "text", "text": system_prompt,
+                          "cache_control": {"type": "ephemeral"}}]),
                 messages=[{"role": "user", "content": prompt}]
             )
             _log_usage(resp, label)
@@ -1776,7 +1779,7 @@ def decide_area_topic(salon: dict, client) -> str:
     return topic
 
 
-def build_prompts(rules: str, slot: str, count: int, existing: str = ""):
+def build_prompts(rules: str, slot: str, count: int, existing: str = "", area: str = ""):
     """生成に渡す system / user プロンプトを組み立てる。
 
     ⚠️ 本番（generate_for_salon）とプレビュー（preview_gen.py）で同じものを使う。
@@ -1809,14 +1812,26 @@ def build_prompts(rules: str, slot: str, count: int, existing: str = ""):
                    "100字を超えないこと\n"
                    "- 2部目は120〜250字。長くても300字を超えないこと")
 
-    system_prompt = f"""あなたはSNS投稿の専門家です。
+    # ⚠️ キャッシュは「先頭から同じ内容が続くところまで」しか効かない。
+    # 朝・昼・夜で変わる「時間帯の特性」がルールの直後にあったため、枠が変わるたびに
+    # キャッシュを作り直していた（2026-11-13 実測：読込20万に対して書込22万）。
+    # どの枠でも同じ部分を先にまとめてキャッシュし、枠で変わる部分は後ろの別ブロックにする。
+    # 【地域名】で始める本数を、地名つきで指定する（実店舗だけ）。
+    # ルール本文に「10本に2〜3本」と目安で書いただけでは、75本中0〜4本しか入らなかった
+    # （2026-11-13 実測。指示が1.4万字の途中に埋もれ、地名もAI任せだった）。
+    # 地名はコード側で確定させ、いちばん効く最後の指示で本数まで言う。
+    area_rule = ""
+    if area:
+        n_area = max(2, round(count * 0.2))
+        area_rule = (f"- **全{count}本のうち{n_area}本は、1行目を必ず「【{area}】」で始める**"
+                     f"（例：「【{area}】〇〇が気になり始めた方！」。【{area}】のあとに呼びかけを続けて1行にする。"
+                     f"地名は「{area}」をこのまま使い、ほかの地名に変えない）。残りの本には【】を付けない\n")
+
+    system_common = f"""あなたはSNS投稿の専門家です。
 以下のサロン情報・ルールに従って、Threads用の投稿文を生成してください。
 
 === サロン情報・投稿ルール ===
 {rules}
-
-=== 時間帯の特性 ===
-{slot_hint}
 
 === 医療・成分・学術名称の取り扱い（最優先ルール）===
 成分名・学術名称・数値データは、上記のサロン情報に明記されているもののみ使用すること。
@@ -1828,12 +1843,18 @@ JSON配列だけを返してください。
 {output_format}
 
 JSON配列以外の文字は一切出力しないでください。"""
+    system_slot = f"""=== 時間帯の特性 ===
+{slot_hint}"""
+    system_prompt = [
+        {"type": "text", "text": system_common, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": system_slot},
+    ]
 
     user_prompt = f"""{count}本の{slot}投稿を生成してください。
 
 必ず守ること：
 - 1行目は「誰に向けた話か」が分かる呼びかけにする（上の会話型ルールの通り）。本題のフックは2行目以降に置き、そこでスクロールを止める
-- ギャップ投稿（「〇〇なのに△△」「実は〇〇だった」）を半数以上に使う
+{area_rule}- ギャップ投稿（「〇〇なのに△△」「実は〇〇だった」）を半数以上に使う
 - オーナーの実体験を素材にした投稿を複数本入れる（失敗談は、サロン情報に具体的な失敗・コンプレックスが書かれている場合のみ。無ければ創作しない）
 - 全{count}本が違う切り口・違う素材
 - このサロン固有の口癖・言葉・コンセプトワードを文体に自然に反映させ、他のどのサロンとも被らない個性を出す
@@ -1956,7 +1977,9 @@ def generate_for_salon(salon: dict):
 
         existing = "\n".join([str(posts[slot][i])[:80] for i in range(min(3, len(posts[slot])))])
 
-        system_prompt, user_prompt = build_prompts(rules, slot, GENERATE_COUNT, existing)
+        # 地名は、在庫に持たせてある「地域＋業種」トピックの地域部分を使う（例：豊中市 お顔そり → 豊中市）
+        area = (str(posts.get(TOPIC_KEY) or "").split() or [""])[0]
+        system_prompt, user_prompt = build_prompts(rules, slot, GENERATE_COUNT, existing, area=area)
 
         new_posts, last_error = _ask_model(client, system_prompt, user_prompt,
                                            f"{salon_name} {slot}",

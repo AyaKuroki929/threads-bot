@@ -15,6 +15,10 @@ on:
         description: '作る時間帯（morning,noon,evening のうち要るものだけ）'
         required: false
         default: 'morning,noon,evening'
+      area:
+        description: '【地域名】で始める投稿を試すときの地名（例 豊中市。空欄なら付けない）'
+        required: false
+        default: ''
 
 jobs:
   preview:
@@ -39,6 +43,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PREVIEW_COUNT: ${{ github.event.inputs.count }}
           PREVIEW_SLOTS: ${{ github.event.inputs.slots }}
+          PREVIEW_AREA: ${{ github.event.inputs.area }}
         run: python3 preview_gen.py "${{ github.event.inputs.salon_name }}"
 
       - name: 後片付け

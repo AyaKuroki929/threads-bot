@@ -32,6 +32,7 @@ import post_concept
 
 COUNT = int(os.environ.get("PREVIEW_COUNT") or 2)
 SLOTS = (os.environ.get("PREVIEW_SLOTS") or "morning,noon,evening").split(",")
+AREA = (os.environ.get("PREVIEW_AREA") or "").strip()
 
 
 def collect_salons():
@@ -105,7 +106,8 @@ def preview(salon, client):
         slot = slot.strip()
         if not slot:
             continue
-        system_prompt, user_prompt = build_prompts(rules, slot, COUNT)
+        # 本番は在庫の _topic から地名を取る。プレビューは在庫を読まないので PREVIEW_AREA で渡す
+        system_prompt, user_prompt = build_prompts(rules, slot, COUNT, area=AREA)
         posts, err = _ask_model(client, system_prompt, user_prompt,
                                 f"preview {file_key} {slot}", keep_fn=_keep_valid_shape)
         print(f"\n========== {slot} ==========")
