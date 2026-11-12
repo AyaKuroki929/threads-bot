@@ -15,7 +15,7 @@
   4. 足りない枠があるアカウントは、古い在庫をそのまま残す（投稿を止めないため）
 
 環境変数：
-  ROUNDS       1アカウントあたり生成を何回まわすか（既定3。1回＝1枠15本）
+  ROUNDS       1アカウントあたり生成を何回まわすか（既定2。1回＝1枠15本＝30本で10日分）
   MIN_NEW      1枠あたりこの本数を作れなければ古い在庫を落とさない（既定20）
   ONLY         カンマ区切りで対象を絞る（Threads ID かサロン名。既定は全件）
   SKIP         カンマ区切りで対象から外す
@@ -32,7 +32,7 @@ import generate_saas_posts as g  # noqa: E402
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 SLOTS = ("morning", "noon", "evening")
-ROUNDS = int(os.environ.get("ROUNDS") or 3)
+ROUNDS = int(os.environ.get("ROUNDS") or 2)   # 1回で1枠15本＝2回で30本（10日分）
 MIN_NEW = int(os.environ.get("MIN_NEW") or 20)
 ONLY = [s.strip() for s in (os.environ.get("ONLY") or "").split(",") if s.strip()]
 SKIP = [s.strip() for s in (os.environ.get("SKIP") or "").split(",") if s.strip()]

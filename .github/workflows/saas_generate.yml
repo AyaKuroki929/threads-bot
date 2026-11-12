@@ -28,9 +28,9 @@ on:
         type: boolean
         default: false
       rebuild_rounds:
-        description: '作り直し：1アカウントあたり生成を何回まわすか（既定3・1回で1枠15本）'
+        description: '作り直し：1アカウントあたり生成を何回まわすか（既定2・1回で1枠15本＝30本で10日分）'
         required: false
-        default: '3'
+        default: '2'
       rebuild_min_new:
         description: '作り直し：1枠あたりこの本数を作れなければ古い在庫を落とさない（既定20）'
         required: false

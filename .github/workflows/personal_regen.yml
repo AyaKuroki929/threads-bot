@@ -16,7 +16,7 @@ on:
       rounds:
         description: '生成を何回まわすか（1回＝1枠あたり12本・3枠で36本）'
         required: false
-        default: '6'
+        default: '4'
       min_new:
         description: '1枠あたりこの本数を作れなければ古い在庫を落とさない'
         required: false
