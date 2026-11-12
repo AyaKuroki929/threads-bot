@@ -165,6 +165,9 @@
   details.more > summary {
     list-style: none;
     display: block;
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
     text-align: center;
     background: var(--plum);
     color: #fff;
@@ -189,7 +192,10 @@
   details.more[open] .t-closed { display: none; }
   details.more[open] .t-open { display: inline; }
   .btn {
-    display: inline-block;
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    text-align: center;
     background: var(--rose);
     color: #fff;
     text-decoration: none;
@@ -213,9 +219,38 @@
     text-align: center;
   }
   .foot strong { color: var(--plum); font-weight: 700; }
+
+  .close-row { text-align: center; margin: 4px 0 0; }
+  .close-link {
+    display: inline-block;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.92rem;
+    padding: 12px 20px;
+  }
+
+  @media (max-width: 480px) {
+    body { padding: 20px 12px 40px; font-size: 18px; }
+    .wrap { gap: 16px; }
+    section { padding: 22px 18px; border-radius: 14px; }
+    h2 { font-size: 1.2rem; line-height: 1.7; }
+    .item h3 { font-size: 1.05rem; }
+    .tags { gap: 7px; }
+    .tags span { font-size: 0.9rem; padding: 6px 12px; }
+    .btn, details.more > summary {
+      max-width: none;
+      padding: 18px 16px;
+      font-size: 1.02rem;
+      letter-spacing: 0.04em;
+    }
+    .facts th, .facts td { display: block; width: auto; }
+    .facts th { padding: 10px 0 0; border-bottom: none; }
+    .facts td { padding: 0 0 10px; }
+    .price .amount { font-size: 2.1rem; }
+  }
 </style>
 </head>
-<body>
+<body id="top">
   <div class="wrap">
     <p class="eyebrow">サロン向け AI 個別レッスン</p>
 
@@ -419,6 +454,7 @@
       </div>
       <p class="note" style="margin-top:18px">個別相談のお申込み・日程調整は、下のLINEからご連絡ください。</p>
     </section>
+        <p class="close-row"><a href="#top" class="close-link">▲ 閉じる</a></p>
       </div>
     </details>
 
