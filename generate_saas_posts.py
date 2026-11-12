@@ -1779,6 +1779,33 @@ def decide_area_topic(salon: dict, client) -> str:
     return topic
 
 
+_RAIL_PREFIX = re.compile(
+    r"^(JR|ＪＲ|阪急|阪神|近鉄|南海|京阪|東急|京急|小田急|西武|東武|京王|相鉄|京成|名鉄|西鉄|"
+    r"大阪メトロ|Osaka ?Metro|東京メトロ|都営|市営地下鉄|地下鉄)\s*")
+
+
+def area_for_opening(salon: dict, topic) -> str:
+    """1行目の【】に入れる地名。ヒアリングの所在地欄に**実際に書かれている名前だけ**を返す。
+
+    ⚠️ トピックの地名（AIが所在地から推定したもの。例「豊中市」）をそのまま使うと、
+    所在地欄に無い名前のとき、保存前の事実照合が「ヒアリングに無い場所」として
+    全部捨てる（2026-11-13 アイリスで【豊中市】の投稿が全滅した。所在地欄は
+    「阪急服部天神駅徒歩5分」）。検査のほうが正しいので、地名を検査に合わせる。
+    """
+    location = str(salon.get("所在地（最寄り駅・徒歩時間）", "") or "")
+    if not location:
+        return ""
+    cand = (str(topic or "").split() or [""])[0]
+    if cand and cand in location:
+        return cand
+    m = re.search(r"([^\s　、。（）()]+?)駅", location)
+    if m:
+        name = _RAIL_PREFIX.sub("", m.group(1)).strip()
+        if 1 < len(name) <= 8:
+            return name
+    return ""
+
+
 def build_prompts(rules: str, slot: str, count: int, existing: str = "", area: str = ""):
     """生成に渡す system / user プロンプトを組み立てる。
 
@@ -1977,8 +2004,7 @@ def generate_for_salon(salon: dict):
 
         existing = "\n".join([str(posts[slot][i])[:80] for i in range(min(3, len(posts[slot])))])
 
-        # 地名は、在庫に持たせてある「地域＋業種」トピックの地域部分を使う（例：豊中市 お顔そり → 豊中市）
-        area = (str(posts.get(TOPIC_KEY) or "").split() or [""])[0]
+        area = area_for_opening(salon, posts.get(TOPIC_KEY))
         system_prompt, user_prompt = build_prompts(rules, slot, GENERATE_COUNT, existing, area=area)
 
         new_posts, last_error = _ask_model(client, system_prompt, user_prompt,

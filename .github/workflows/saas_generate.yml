@@ -249,7 +249,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # 保存に失敗したときの書きかけ（.tmp）が残っていたら消してからstageする
           rm -f posts_saas/*.tmp
-          git add -A posts_saas/ promo_posts_personal.json .usage_limit_until
+          git add -A posts_saas/ promo_posts_personal.json
+          # 上限中の記録は「ある時だけ」ある。無いファイルを add すると pathspec エラーで
+          # ステップごと落ちる（2026-11-13 上限解除でファイルを消した直後から毎回落ちていた）
+          git add -A -- .usage_limit_until 2>/dev/null || true
           # ⚠️ 隔離ステップの cp が失敗するとクライアントのファイルが公開リポに残る。
           # 隔離の成功だけに頼らず、コミット直前に独立して確認する（2026-09-13 Sol指摘#8）。
           # 自社アカ（判断材料プール posts_<name>.judge.json を含む）以外が居たら止める。
