@@ -11,7 +11,8 @@
 <meta property="og:image" content="https://saas.shikisai.work/salon-ai-school.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap"></noscript>
 <style>
   :root {
     color-scheme: light;
@@ -27,7 +28,7 @@
     margin: 0;
     background: #faf7fa;
     color: var(--ink);
-    font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif;
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Zen Kaku Gothic New", sans-serif;
     display: flex;
     justify-content: center;
     padding: 32px 16px 56px;
@@ -208,8 +209,8 @@
     transition: background 0.2s ease, transform 0.2s ease;
   }
   .btn:hover { background: #8f4557; transform: translateY(-1px); }
-  .btn.line { background: #06c755; box-shadow: 0 12px 26px rgba(6, 199, 85, 0.28); }
-  .btn.line:hover { background: #05a847; }
+  .btn.line { background: #067a37; box-shadow: 0 12px 26px rgba(6, 122, 55, 0.3); }
+  .btn.line:hover { background: #046b30; }
   .btn-note { margin: 0; font-size: 0.82rem; color: var(--muted); }
   .foot {
     margin: 0;
@@ -223,6 +224,10 @@
   .close-row { text-align: center; margin: 4px 0 0; }
   .close-link {
     display: inline-block;
+    background: none;
+    border: none;
+    font-family: inherit;
+    cursor: pointer;
     color: var(--muted);
     text-decoration: none;
     font-size: 0.92rem;
@@ -248,6 +253,10 @@
     .facts td { padding: 0 0 10px; }
     .price .amount { font-size: 2.1rem; }
   }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 3px solid var(--rose);
+    outline-offset: 3px;
+  }
 </style>
 </head>
 <body id="top">
@@ -255,7 +264,7 @@
     <p class="eyebrow">サロン向け AI 個別レッスン</p>
 
     <div class="sheet">
-      <img src="/salon-ai-school.png" width="1054" height="1492"
+      <img src="/salon-ai-school.webp" width="1054" height="1492" loading="eager" decoding="async"
            alt="サロンAI塾の案内。AIに集客を任せて、早く帰る。サロン向けオンライン個別レッスン。私のサロンでいま動いていること（2026年10月時点）は、Googleが週2回の自動投稿と地域の検索で1位、AIにお店をおすすめしてもらえること。Instagramはストーリーがインスタを開かなくても毎日5回以上自動で上がり続け、リールは作成から投稿までAIが自動、素材は指定しなくてもAIがパソコンの中から選び、ナレーションは自分の声でAIが自動生成、インスタから月10名のご来店。公式LINEはご来店につながるステップ配信が自動で配信されること。この仕組みをご自身のサロンで作れるようになります。オンラインの個別レッスン 全10回 1回60分。">
     </div>
 
@@ -429,6 +438,8 @@
       <p class="note">対象：サロンを運営中の事業者の方（個人事業主・法人）</p>
     </section>
 
+    <p style="text-align:center;margin:0"><a class="btn line" href="https://lin.ee/NT624Z0k" target="_blank" rel="noopener">LINEで相談する</a></p>
+
     <section>
       <p class="label">お申込みの流れ</p>
       <h2>まずは、無料の個別相談から</h2>
@@ -454,7 +465,7 @@
       </div>
       <p class="note" style="margin-top:18px">個別相談のお申込み・日程調整は、下のLINEからご連絡ください。</p>
     </section>
-        <p class="close-row"><a href="#top" class="close-link">▲ 閉じる</a></p>
+        <p class="close-row"><button type="button" class="close-link" onclick="var d=this.closest('details');d.open=false;d.querySelector('summary').scrollIntoView({block:'center'});d.querySelector('summary').focus();">▲ 閉じる</button></p>
       </div>
     </details>
 
