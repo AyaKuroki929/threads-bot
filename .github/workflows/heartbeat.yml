@@ -19,6 +19,10 @@ jobs:
     env:
       TZ: Asia/Tokyo
       LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
+      # last_run.json は git に置いてあるため、GitHubのpushが失敗すると古いままになる。
+      # そのときは投稿の正本（Supabaseの post_logs）を見て確かめる（2026-11-13）
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +73,11 @@ jobs:
           LAST=$(python3 -c "import json; print(json.load(open('last_run.json')).get('$SLOT', ''))")
           echo "[heartbeat] $SLOT today=$TODAY last_recorded=$LAST"
           if [[ "$LAST" == "$TODAY"* ]]; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          elif python3 scripts/posted_today.py "$SLOT"; then
+            # 記録は古いが、実際には投稿できている（GitHubのpush失敗など）。
+            # ここで二重投稿を止める（2026-11-13 GitHubの500で実際に起きた）
+            echo "[heartbeat] last_run は古いが、投稿記録では全アカウント投稿済み → 回復しない"
             echo "ok=true" >> $GITHUB_OUTPUT
           else
             echo "ok=false" >> $GITHUB_OUTPUT
@@ -164,6 +173,10 @@ jobs:
           LAST=$(python3 -c "import json; print(json.load(open('last_run_personal.json')).get('$SLOT', ''))")
           echo "[heartbeat-personal] $SLOT today=$TODAY last_recorded=$LAST"
           if [[ "$LAST" == "$TODAY"* ]]; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          elif python3 scripts/posted_today.py "$SLOT"; then
+            # 記録は古いが、実際には投稿できている（GitHubのpush失敗など・2026-11-13）
+            echo "[heartbeat-personal] last_run は古いが、投稿記録では投稿済み → 回復しない"
             echo "ok=true" >> $GITHUB_OUTPUT
           else
             echo "ok=false" >> $GITHUB_OUTPUT
