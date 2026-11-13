@@ -34,6 +34,8 @@ _BASE = os.path.dirname(os.path.abspath(__file__))
 SLOTS = ("morning", "noon", "evening")
 ROUNDS = int(os.environ.get("ROUNDS") or 2)   # 1回で1枠15本＝2回で30本（10日分）
 MIN_NEW = int(os.environ.get("MIN_NEW") or 20)
+# 1回目で「頼んだ本数のこの割合」も保存できなければ、そのアカウントは中止する
+MIN_YIELD = float(os.environ.get("MIN_YIELD") or 0.4)
 ONLY = [s.strip() for s in (os.environ.get("ONLY") or "").split(",") if s.strip()]
 SKIP = [s.strip() for s in (os.environ.get("SKIP") or "").split(",") if s.strip()]
 
@@ -115,6 +117,17 @@ def rebuild_one(salon):
             print(f"[rebuild] {file_key} {i}/{ROUNDS}回目で失敗: {str(e)[:150]}")
         _, now = counts(path)
         print(f"[rebuild] {file_key} {i}/{ROUNDS} 終了 → 今 {now}")
+        # ⚠️ 1回目で保存できた本数が少なすぎるなら、ここで止める。
+        # ルールと検査が食い違っているしるしで、続けてもお金だけかかる
+        # （2026-11-13 【豊中市】の投稿が安全装置に全部捨てられていたのに、
+        #   2回目も回してから気づいた）。古い在庫は落とさない。
+        if i == 1 and ok_rounds:
+            made = sum(max(0, now.get(sl, 0) - before.get(sl, 0)) for sl in SLOTS)
+            asked = g.GENERATE_COUNT * sum(1 for sl in SLOTS if before.get(sl, 0))
+            if asked and made < asked * MIN_YIELD:
+                return (f"{file_key}: 1回目で保存できたのが {made}/{asked}本だけなので中止しました"
+                        f"（検査で落ちすぎています。ログの「除外」を見てルールを直してください。"
+                        f"古い在庫はそのままです）"), False
 
     data, after = counts(path)
     if data is None:
@@ -132,7 +145,21 @@ def rebuild_one(salon):
             data[s] = data[s][before[s]:]
     g._save_pool(path, data)
     _, final = counts(path)
-    return f"{file_key}: 作り直し完了（前 {before} → 後 {final}）", True
+    note = ""
+    try:
+        sys.path.insert(0, os.path.join(_BASE, "scripts"))
+        import audit_pool
+        safe = os.path.basename(path)[len("posts_"):-len(".json")]
+        m = audit_pool.audit(data, safe)
+        print("[audit] " + audit_pool.line(safe, m))
+        bad = audit_pool.problems(m)
+        for b in bad:
+            print(f"[audit]    ⚠️ {b}")
+        note = "／在庫の検査：" + ("問題なし" if not bad else "⚠️ " + "・".join(bad))
+        note += f"（【地域】{m['area']}本）"
+    except Exception as e:              # noqa: BLE001 検査の故障で作り直しを失敗にしない
+        print(f"[audit] 検査を実行できませんでした: {str(e)[:100]}")
+    return f"{file_key}: 作り直し完了（前 {before} → 後 {final}）{note}", True
 
 
 def main():

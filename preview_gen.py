@@ -102,6 +102,7 @@ def preview(salon, client):
     print("\n" + "#" * 70)
     print(f"# {salon.get('サロン名', '')}（@{file_key}） 種別={salon.get('_type') or 'salon'}")
     print("#" * 70)
+    sample = {"morning": [], "noon": [], "evening": []}
     for slot in SLOTS:
         slot = slot.strip()
         if not slot:
@@ -114,6 +115,7 @@ def preview(salon, client):
         if not posts:
             print(f"（生成できませんでした: {err}）")
             continue
+        sample.setdefault(slot, []).extend(posts)
         for i, p in enumerate(posts, 1):
             parts = p if isinstance(p, list) else [p]
             # 配信されるときの形（名乗りが入るアカウントは入れて見せる）
@@ -123,6 +125,26 @@ def preview(salon, client):
             for j, part in enumerate(parts, 1):
                 print(f"【{j}部目】{len(part)}字")
                 print(part)
+    audit_sample(sample, safe_name)
+
+
+def audit_sample(sample: dict, safe_name: str) -> None:
+    """試しに作った分を数で確かめる。2〜3本を目で見て「良さそう」で決めないため。"""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+        import audit_pool
+        m = audit_pool.audit(sample, safe_name)
+        print("\n[audit] " + audit_pool.line(safe_name, m))
+        bad = audit_pool.problems(m)
+        for b in bad:
+            print(f"[audit]    ⚠️ {b}")
+        if m["total"] < 8:
+            print(f"[audit]    ⚠️ 試した本数が{m['total']}本しかありません。"
+                  f"作り直しを決める前に、8本以上で測ってください")
+        elif not bad:
+            print("[audit]    問題なし（この数字を見てから作り直しを決める）")
+    except Exception as e:              # noqa: BLE001
+        print(f"[audit] 検査を実行できませんでした: {str(e)[:100]}")
 
 
 def main():
