@@ -185,8 +185,15 @@ def print_usage_total() -> None:
     t = _USAGE_TOTAL
     usd = (t["in"] * 3 + t["cache_write"] * 3.75 + t["cache_read"] * 0.30
            + t["out"] * 15) / 1_000_000
+    if not any(t.values()):
+        return
     print(f"[usage] この実行の合計: 入力{t['in']:,} / キャッシュ書込{t['cache_write']:,} / "
           f"キャッシュ読込{t['cache_read']:,} / 出力{t['out']:,} / 約${usd:.2f}")
+
+
+# どの終わり方でも、最後に必ず合計を出す（個人・ベモーレ側だけ金額が見えていなかった）
+import atexit  # noqa: E402
+atexit.register(print_usage_total)
 
 
 def _valid_tree(p) -> bool:

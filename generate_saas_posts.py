@@ -1700,10 +1700,15 @@ SPEAKING_STYLE = {
 「でもな、予約表がいっぱいでも、自分がしんどいままやったら続かへんやん。」
 
 守ること：
+- ⚠️ **どの投稿にも必ず関西弁を入れる。1部目にも2部目にも、それぞれ1か所以上。**
+  1本まるごと標準語の投稿は作らない（2026-11-13 在庫134本のうち103本が標準語だけに
+  なっていた。「毎文は変えない」を「入れなくてよい」と読まないこと）
+- 入れ方：1部目の心の声か問いかけを関西弁にする（「これ、集客の問題やと思ってへん？」）。
+  2部目は「私もそうやってん」「〜やん」「〜ちゃうねん」のどれかを要所に置く
 - **関西弁の語尾は3文に1回くらい**。毎文に「〜ねん」「〜やった」「〜してん」を付けない
 - 「〜ねん」は1投稿に**1回まで**
 - 体言止め・短い言い切りを多く使う（「自分の給料ほぼない。」「後回し。」）
-- 「です・ます」が混ざってよい。全部を関西弁に塗りつぶさない
+- 地の文に「です・ます」が混ざるのはよいが、**です・ますだけで終わる投稿にしない**
 - 話し言葉の関西弁にする。書き言葉の関西弁（〜であった、〜しておった風）は使わない
 
 - 関西弁の地の文で書く。きれいな書き言葉にしない
@@ -1782,6 +1787,25 @@ def decide_area_topic(salon: dict, client) -> str:
 _RAIL_PREFIX = re.compile(
     r"^(JR|ＪＲ|阪急|阪神|近鉄|南海|京阪|東急|京急|小田急|西武|東武|京王|相鉄|京成|名鉄|西鉄|"
     r"大阪メトロ|Osaka ?Metro|東京メトロ|都営|市営地下鉄|地下鉄)\s*")
+
+
+# 関西弁で書くと決めたアカウント。関西弁が1つも入っていない投稿は保存しない。
+# （ルールに書くだけでは134本中103本が標準語になった・2026-11-13）
+KANSAI_ACCOUNTS = {"syoko_happy_salon"}
+_KANSAI = re.compile(
+    r"やねん|ねん[。、\n！？]|へん[。、\n？！]|へんかっ|やん[。、\n？！]|あってん|やってん|ちゃう|"
+    r"やろ[。、\n？！]|やった[。、\n]|やのに|してん[。、\n]|やで[。、\n！]|せえへん|ほんま|めっちゃ|"
+    r"やから|やけど|なあかん|してへん|思てへん|思ってへん|なってへん|知らんかっ|やと思")
+
+
+def style_reason(post, safe_name: str):
+    """アカウントごとの話し方に合っていなければ理由を返す。問題なければ None。"""
+    if safe_name not in KANSAI_ACCOUNTS:
+        return None
+    parts = post if isinstance(post, list) else [post]
+    if not any(_KANSAI.search(str(x)) for x in parts):
+        return "関西弁が1つも入っていない（このアカウントは関西弁で書く）"
+    return None
 
 
 def area_for_opening(salon: dict, topic) -> str:
@@ -2019,6 +2043,12 @@ def generate_for_salon(salon: dict):
             continue
 
         new_posts = _validate_batch(new_posts, f"{salon_name} {slot}", salon)
+        # アカウントごとの話し方（関西弁の指定など）に合わない投稿は保存しない
+        _before = len(new_posts)
+        new_posts = [p for p in new_posts if not style_reason(p, safe_name)]
+        if len(new_posts) < _before:
+            print(f"[saas] {salon_name} {slot}: 話し方が合わない {_before - len(new_posts)}本を除外"
+                  f"（関西弁が入っていない）")
         # ⚠️ 判断材料投稿だけでなく、通常の投稿にも事実照合を当てる。
         # 共感やストーリーの投稿でも「初回7,777円」「新宿駅から3分」のような
         # ヒアリングに無い事実がまぎれこむ（2026-09-13 Sol指摘）。
