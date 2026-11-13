@@ -30,7 +30,7 @@ concurrency:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 50  # 全工程に個別上限あり（合計最大≈34分: checkout3+取得2+重ね1+Python3+slot1+pip3+投稿9+LINE1+HC1+先行保存2+補充5+通知2+保存3）→ 必ず通知・保存まで到達する（2026-09-21 Sol指摘）
+    timeout-minutes: 50  # 全工程に個別上限あり（合計最大≈37分: checkout3+取得2+重ね1+Python3+slot1+pip3+投稿9+LINE1+HC1+先行保存5+補充5+通知2+保存3）→ 必ず通知・保存まで到達する（2026-09-21 Sol指摘）
     permissions:
       contents: write
 
@@ -142,7 +142,7 @@ jobs:
       # 成功済み投稿の last_run が消えず、heartbeatの誤リカバリ(二重投稿)を防ぐ（2026-09-21 Sol指摘）
       - name: 投稿状態を先に保存（last_run）
         if: ${{ !cancelled() }}
-        timeout-minutes: 2
+        timeout-minutes: 5   # GitHub側の500が20秒続いて3回とも失敗した（2026-11-13）→ 間隔を空けて6回
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.ADMIN_NOTIFY_LINE_TOKEN }}
         run: |
@@ -155,16 +155,16 @@ jobs:
           else
             git commit -m "state: last_run ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             ok=""
-            for i in 1 2 3; do
+            for w in 5 10 20 30 40 0; do
               git pull --rebase --autostash -X theirs origin main 2>&1 || true
               if git push; then ok=1; break; fi
-              sleep 5
+              sleep "$w"
             done
             if [ -z "$ok" ]; then
               code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
                 -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: last_runのpush 3回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
+                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: last_runのpush 6回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
               touch .line_notified
               exit 1
             fi
@@ -237,23 +237,29 @@ jobs:
           git config user.name "threads-bot"
           git pull --rebase --autostash origin main 2>&1 || true
           git add posts_saas/posts_bemolle_diet.json posts_saas/posts_aya_kuroki_0929.json last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json promo_used_personal.json 2>/dev/null || true
-          if git diff --staged --quiet; then
+          if ! git diff --staged --quiet; then
+            git commit -m "state: posts補充 ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
+          fi
+          # 前の保存ステップで push に失敗したコミットが手元に残っていれば、ここで送り直す。
+          # 以前は「追加の変更なし」で素通りし、last_run と last_posted が丸ごと失われた（2026-11-13）
+          git fetch origin main 2>&1 || true
+          ahead=$(git rev-list --count FETCH_HEAD..HEAD 2>/dev/null || echo 1)
+          if [ "$ahead" = "0" ]; then
             echo "no generate changes"
           else
-            git commit -m "state: posts補充 ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             # rebase中は ours/theirs が反転する: ローカルのstateを守るのは -X theirs
             ok=""
-            for i in 1 2 3; do
+            for w in 5 10 20 30 0; do
               git pull --rebase --autostash -X theirs origin main 2>&1 || true
               if git push; then ok=1; break; fi
-              sleep 5
+              sleep "$w"
             done
             if [ -z "$ok" ]; then
               # push失敗=last_runが古いまま→heartbeatが「未投稿」と誤判定し再投稿する重大事象
               code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" -X POST https://api.line.me/v2/bot/message/broadcast \
                 -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 状態push 3回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
+                -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 状態push 5回失敗。heartbeatの誤リカバリ(二重投稿)の恐れ。Actionsを確認してください。"}]}' ) || code=000; [ "$code" = "200" ] || echo "::error::LINE通知の送信に失敗（HTTP $code）"
               touch .line_notified  # failure() 汎用通知と二重送信しないための印
               exit 1
             fi
