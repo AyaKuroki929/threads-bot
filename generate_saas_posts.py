@@ -2068,6 +2068,8 @@ def generate_for_salon(salon: dict):
             print(f"[saas] {salon_name} {slot}: 全件検証NG → 追加なし")
             continue
 
+        from botlib import drop_reused_openings
+        new_posts = drop_reused_openings(new_posts, posts[slot], f"{salon_name} {slot}")
         posts[slot].extend(new_posts)
         print(f"[saas] {salon_name} {slot}: {len(new_posts)}本追加（合計{len(posts[slot])}本）")
         generated_any = True

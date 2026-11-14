@@ -737,3 +737,46 @@ def stiff_opening_reason(post):
     if m:
         return f"1行目が話しかけでなく宣言になっている（「{m.group(1)}」）"
     return None
+
+
+# ── 1行目の使い回しを止める ─────────────────────────────────────
+# 2026-11-14 在庫を測ると、うらかたさん133本中53本・個人214本中33本が、ほかの投稿と
+# 同じ1行目だった。上位はすべて会話型ルールに書いた「呼びかけの例文」の丸写し
+# （「ひとりでサロンを回してる方！」8回など）。例文はそのまま使わせず、在庫や
+# 同じ回の中で同じ1行目が重なったら保存しない。
+def _rule_examples() -> set:
+    """会話型ルールに例として書いた「」の中身（呼びかけ・1行目の例）。"""
+    try:
+        text = load_conversation_rules()
+    except Exception:            # noqa: BLE001 読めなければ例文の照合だけ省く
+        return set()
+    out = set()
+    for m in re.finditer(r"「([^「」\n]{6,60}[！？。])」", text):
+        out.add(re.sub(r"^【[^】]+】", "", m.group(1)).strip())
+    return out
+
+
+def _first_line(post) -> str:
+    head = post[0] if isinstance(post, (list, tuple)) and post else post
+    return str(head or "").split("\n", 1)[0].strip()
+
+
+def drop_reused_openings(new_posts, existing_posts, label: str = "") -> list:
+    """例文の丸写し・在庫と同じ1行目・同じ回で重なった1行目の投稿を外して返す。"""
+    examples = _rule_examples()
+    seen = {_first_line(p) for p in (existing_posts or [])}
+    kept, n_example, n_dup = [], 0, 0
+    for p in new_posts or []:
+        first = _first_line(p)
+        bare = re.sub(r"^【[^】]+】", "", first).strip()
+        if bare in examples:
+            n_example += 1
+            continue
+        if first in seen:
+            n_dup += 1
+            continue
+        seen.add(first)
+        kept.append(p)
+    if n_example or n_dup:
+        print(f"[openings] {label}: 例文の丸写し{n_example}本・1行目の重複{n_dup}本を除外")
+    return kept
