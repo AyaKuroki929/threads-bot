@@ -13,6 +13,10 @@
       "dest": "/salon-ai-school.html"
     },
     {
+      "src": "/aya",
+      "dest": "/aya.html"
+    },
+    {
       "src": "/api/payment-remind",
       "dest": "/api/payment_remind.py"
     },
