@@ -9,21 +9,28 @@
 <meta property="og:description" content="サロンの健康診断・うらかたさん・サロンAI塾・とうこさん・Bemolleのご案内です。">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://saas.shikisai.work/aya.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
-    --plum: #4a2f52;
-    --rose: #a8566a;
-    --rose-pale: #f6eaee;
-    --muted: #6f6276;
-    --ink: #2a2130;
+    --pink: #E8609A;
+    --pink-d: #B83875;
+    --pink-l: #FDE8F2;
+    --grad: linear-gradient(135deg, #F487BA 0%, #D94F8A 50%, #B83875 100%);
+    --text: #2A2A2A;
+    --sub: #666;
+    --line: #E6DED8;
+    --bg: #FFFBF8;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: #faf7fa;
-    color: var(--ink);
-    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif;
+    -webkit-font-smoothing: antialiased;
     display: flex;
     justify-content: center;
     padding: 40px 18px 56px;
@@ -33,28 +40,28 @@
   .photo {
     width: 128px; height: 128px; border-radius: 50%;
     object-fit: cover; border: 3px solid #fff;
-    box-shadow: 0 8px 24px rgba(74, 47, 82, 0.18);
+    box-shadow: 0 8px 22px rgba(217, 79, 138, 0.22);
   }
-  h1 { margin: 16px 0 2px; font-size: 1.35rem; color: var(--plum); letter-spacing: 0.06em; }
-  .catch { margin: 0; font-size: 0.98rem; font-weight: 700; color: var(--rose); }
-  .role { margin: 4px 0 28px; font-size: 0.82rem; color: var(--muted); text-align: center; }
+  h1 { margin: 16px 0 2px; font-size: 1.35rem; font-weight: 900; color: var(--text); letter-spacing: 0.06em; }
+  .catch { margin: 0; font-size: 0.98rem; font-weight: 700; color: var(--pink); }
+  .role { margin: 4px 0 28px; font-size: 0.82rem; color: var(--sub); text-align: center; }
   .links { width: 100%; display: flex; flex-direction: column; gap: 14px; }
   a.card {
     display: block; text-decoration: none; color: inherit;
-    background: #fff; border: 1px solid rgba(74, 47, 82, 0.16);
-    border-radius: 14px; padding: 16px 44px 16px 18px; position: relative;
+    background: #fff; border: 1px solid var(--line);
+    border-radius: 16px; padding: 16px 44px 16px 18px; position: relative;
   }
-  a.card:active { background: var(--rose-pale); }
+  a.card:active { background: var(--pink-l); }
   a.card::after {
     content: "›"; position: absolute; right: 18px; top: 50%;
-    transform: translateY(-52%); font-size: 1.6rem; color: var(--rose);
+    transform: translateY(-52%); font-size: 1.6rem; color: var(--pink);
   }
-  a.card.main { background: var(--plum); border-color: var(--plum); color: #fff; }
+  a.card.main { background: var(--grad); border: none; color: #fff; box-shadow: 0 8px 22px rgba(217, 79, 138, 0.28); }
   a.card.main::after { color: #fff; }
   .name { display: block; font-weight: 700; font-size: 1.05rem; }
-  .desc { display: block; font-size: 0.84rem; color: var(--muted); margin-top: 2px; }
-  a.card.main .desc { color: rgba(255, 255, 255, 0.82); }
-  footer { margin-top: 36px; font-size: 0.75rem; color: var(--muted); }
+  .desc { display: block; font-size: 0.84rem; color: var(--sub); margin-top: 2px; }
+  a.card.main .desc { color: rgba(255, 255, 255, 0.9); }
+  footer { margin-top: 36px; font-size: 0.75rem; color: var(--sub); }
 </style>
 </head>
 <body>
