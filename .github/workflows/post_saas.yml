@@ -148,15 +148,30 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
-          git pull --rebase --autostash origin main 2>&1 || true
+          # ⚠️ pull の前に「突き合わせ → 検査 → commit」を済ませる。
+          # 先に `pull --rebase --autostash` すると、投稿ステップが書いた未コミットの
+          # last_run.json が退避→適用時に競合し、競合マーカーごと `git add` に拾われて
+          # そのまま push された（2026-11-17 21:17 JST・以後すべての実行で読めず🚨が鳴り続けた）。
+          python3 scripts/merge_state_files.py last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json || true
           git add last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json promo_used_personal.json 2>/dev/null || true
+          if ! python3 scripts/verify_state_files.py last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json promo_used_personal.json; then
+            curl -sS --max-time 20 -o /dev/null -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" -H "Content-Type: application/json" \
+              -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 状態ファイルが壊れていたため push を止めました。投稿自体は済んでいます。Actionsのログを確認してください。"}]}' || true
+            touch .line_notified
+            exit 1
+          fi
           if git diff --staged --quiet; then
             echo "no last_run changes"
           else
             git commit -m "state: last_run ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
             ok=""
             for w in 5 10 20 30 40 0; do
-              git pull --rebase --autostash -X theirs origin main 2>&1 || true
+              git pull --rebase -X theirs origin main 2>&1 || { git rebase --abort 2>/dev/null || true; }
+              if ! python3 scripts/verify_state_files.py --head last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json; then
+                echo "::error::pull 後の中身が壊れたため push を中止"
+                break
+              fi
               if git push; then ok=1; break; fi
               sleep "$w"
             done
@@ -235,8 +250,16 @@ jobs:
         run: |
           git config user.email "bot@github-actions"
           git config user.name "threads-bot"
-          git pull --rebase --autostash origin main 2>&1 || true
+          # pull より先に突き合わせ＋検査する（理由はひとつ上のステップのコメント）
+          python3 scripts/merge_state_files.py last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json || true
           git add posts_saas/posts_bemolle_diet.json posts_saas/posts_aya_kuroki_0929.json last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json promo_used_personal.json 2>/dev/null || true
+          if ! python3 scripts/verify_state_files.py posts_saas/posts_bemolle_diet.json posts_saas/posts_aya_kuroki_0929.json last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json promo_used_personal.json; then
+            curl -sS --max-time 20 -o /dev/null -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" -H "Content-Type: application/json" \
+              -d '{"messages":[{"type":"text","text":"🚨 SaaS投稿: 在庫または状態ファイルが壊れていたため push を止めました。Actionsのログを確認してください。"}]}' || true
+            touch .line_notified
+            exit 1
+          fi
           if ! git diff --staged --quiet; then
             git commit -m "state: posts補充 ${{ steps.slot.outputs.slot }} $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
           fi
@@ -250,7 +273,11 @@ jobs:
             # rebase中は ours/theirs が反転する: ローカルのstateを守るのは -X theirs
             ok=""
             for w in 5 10 20 30 0; do
-              git pull --rebase --autostash -X theirs origin main 2>&1 || true
+              git pull --rebase -X theirs origin main 2>&1 || { git rebase --abort 2>/dev/null || true; }
+              if ! python3 scripts/verify_state_files.py --head last_run.json last_run_personal.json last_posted_bemolle_diet.json last_posted_aya_kuroki_0929.json; then
+                echo "::error::pull 後の中身が壊れたため push を中止"
+                break
+              fi
               if git push; then ok=1; break; fi
               sleep "$w"
             done

@@ -219,6 +219,9 @@ jobs:
           git config user.email "bot@github-actions"
           git config user.name "threads-bot-personal"
           git add used_posts_personal.json last_run_personal.json posts_personal.json priority_posts_personal.json 2>/dev/null || true
+          # 壊れた中身（競合マーカー・読めないJSON）をpushしない最後の砦。
+          # 2026-11-17 に last_run.json がマーカーごとpushされ、以後の全実行が読めなくなった
+          python3 scripts/verify_state_files.py used_posts_personal.json last_run_personal.json posts_personal.json priority_posts_personal.json || exit 1
           if git diff --staged --quiet; then
             echo "no state changes"
           else
