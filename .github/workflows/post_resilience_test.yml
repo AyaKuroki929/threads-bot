@@ -47,6 +47,9 @@ jobs:
       - name: 配線の見張りをわざと壊して、検知するか確かめる
         run: python3 tests/test_pipeline_mutations.py
 
+      - name: 解約しても約束の日まで投稿を止めないか
+        run: python3 tests/test_cancel_stop_on.py
+
   notify-on-failure:
     needs: test
     if: failure()

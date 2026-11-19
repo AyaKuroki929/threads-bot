@@ -361,6 +361,25 @@ def handle_subscription_deleted(obj: dict):
             f"Threads認証を完了する前に解約した可能性があります。"
         )
         return
+    # ⚠️ 投稿を止める日が契約終了日より後の人がいる（お客様にそうお伝えしている）。
+    # 解約を受けて機械的に止めると、約束より早く投稿が消える。
+    # 2026-11-19 杉村さん（piccolo）で実際に起きた：契約終了は11/19だが
+    # 10/6の返信で「11月いっぱい」とお伝えしており、投稿は11/30までの約束だった。
+    # stop_on がまだ先なら止めない（その日に scheduled_deactivation.yml が止める）。
+    watch = CANCEL_WATCH.get(customer_id) or {}
+    stop_on = watch.get("stop_on")
+    today_jst = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 9 * 3600))
+    if stop_on and stop_on >= today_jst:
+        line_push_admin(
+            f"🟡 とうこさん 課金終了（投稿は続きます）\n\n"
+            f"サロン: {salon['salon_name']}\n"
+            f"Stripe: {customer_id}\n\n"
+            f"Stripeのサブスクリプションが削除されました。\n"
+            f"ただしお客様には投稿を {stop_on} まで出すとお伝えしているため、"
+            f"is_active は変えていません。その日の夜に自動で止まります。"
+        )
+        return
+
     deactivate_salon(salon["id"])
     line_push_admin(
         f"🔴 とうこさん サービス停止\n\n"
