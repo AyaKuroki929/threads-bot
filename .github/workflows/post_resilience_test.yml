@@ -19,6 +19,8 @@ on:
       - "generate_posts.py"
       - "rebuild_personal_pool.py"
       - "scripts/check_post_pipeline.py"
+      # 解約の通知で、お伝えした停止日より早く投稿を止めないか
+      - "saas_app/api/stripe_webhook.py"
       - "GENERATE_RULES_personal.md"
       - "posts_saas/posts_aya_kuroki_0929.json"
       - ".github/workflows/personal_regen.yml"
