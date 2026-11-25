@@ -2384,9 +2384,13 @@ JSON配列以外の文字は一切出力しないでください。"""
         from botlib import judge_fact_violations as _judge_fact_violations
         kept = []
         for post in new_posts:
-            reason = _judge_fact_violations(post, salon)
+            # ⚠️ 判断材料の投稿にも、通常の在庫と同じ「話し方」「控えてほしい表現」の
+            # 検査を当てる。ここが抜けていたため、大和田さんの「贅沢すぎるかな」
+            # 「初回だけ試してみたい」が判断材料プールに8本入り、実際に配信された
+            # （2026-11-25 彩さん「ストックの中にも入ってない？」で発覚）
+            reason = _judge_fact_violations(post, salon) or style_reason(post, safe_name)
             if reason:
-                print(f"[判断材料] {salon_name} {slot}: 事実照合NGで除外 → {reason}: {str(post)[:50]}")
+                print(f"[判断材料] {salon_name} {slot}: 除外 → {reason}: {str(post)[:50]}")
             else:
                 kept.append(post)
         new_posts = kept
