@@ -355,6 +355,19 @@ def _notify_reused() -> bool:
     return _notify_line(text)
 
 
+# お客様本人から「この言い方は控えてほしい」と言われた表現。投稿を選ぶ直前に見る。
+# 生成側（generate_saas_posts.style_reason）と同じ語を使う。
+def _client_ng_pattern(salon_name):
+    try:
+        import generate_saas_posts as _g
+        safe = str(salon_name).replace(".", "_").replace("-", "_")
+        if safe in getattr(_g, "MAI_ACCOUNTS", set()):
+            return _g._PRICE_NG
+    except Exception as e:
+        print(f"[pool] 控えたい表現の一覧を読めませんでした（投稿は続行）: {str(e)[:60]}")
+    return None
+
+
 def pick_post(salon_name, slot, used_texts, allow_judge=True):
     posts_file = os.path.join(POSTS_DIR, f"posts_{_safe_name(salon_name)}.json")
     if not os.path.exists(posts_file):
@@ -392,6 +405,21 @@ def pick_post(salon_name, slot, used_texts, allow_judge=True):
         return p if isinstance(p, str) else p[0]
 
     unused = [p for p in candidates if _key(p) not in used_texts]
+
+    # ⚠️ お客様が「この言い方はやめてほしい」と言った表現は、出す直前にも見る。
+    # 生成時の検査だけだと、検査より前に作られた在庫がそのまま出てしまう
+    # （2026-11-25 大和田さん「体験料が高く感じる／贅沢／初回だけ試したい、の表現は
+    # 控えていただけると嬉しいです」。在庫は0本だったが、配信側には歯止めが無かった）。
+    _ng = _client_ng_pattern(salon_name)
+    if _ng:
+        _clean = [p for p in unused if not _ng.search(str(p))]
+        if len(_clean) < len(unused):
+            print(f"[pool] {salon_name} {slot}: お客様が控えたい表現の投稿 "
+                  f"{len(unused) - len(_clean)}本を候補から外した")
+        if _clean:          # 全部外れたら歯止めを優先せず投稿を止めない（在庫側で直す）
+            unused = _clean
+        else:
+            print(f"[pool] {salon_name} {slot}: ⚠️ 候補が全部その表現だったので、そのまま使う")
 
     # 自己修復：未使用が残りわずかなら、枯渇する前に生成ワークフローを自動起動する。
     # （2026-07-12 うらかた枯渇の再発防止。人の対応を待たずに自動補充する）
