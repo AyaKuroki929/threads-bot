@@ -156,7 +156,13 @@ def audit_sample(sample: dict, safe_name: str) -> None:
 def main():
     target = sys.argv[1] if len(sys.argv) > 1 else "urakata_san_official"
     # generate_posts.py が補充するアカウント（シートに無い）はルールファイルで作る
+    # ⚠️ 個人アカウントは「_rules」を付けなくても本番の作り方（generate_posts.py）で作る。
+    # 以前は `aya_kuroki_0929` と指定すると下の「ローカル定義」（お店用の作り方）に流れ、
+    # 「プロフィールのリンクからご予約できます」のようなお客様向けの文が出ていた。
+    # 本番で個人アカウントを補充するのは generate_posts.py だけなので、試しもそちらに揃える
+    # （2026-11-27 同じ間違いで2回試しを無駄にした）。
     BY_RULES = {"bemolle_diet": "GENERATE_RULES.md",
+                "aya_kuroki_0929": "GENERATE_RULES_personal.md",
                 "aya_kuroki_0929_rules": "GENERATE_RULES_personal.md"}
     if target in BY_RULES:
         preview_by_rules_file(BY_RULES[target], target.replace("_rules", ""),
