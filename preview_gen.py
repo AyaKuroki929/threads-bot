@@ -56,16 +56,21 @@ def preview_by_rules_file(rules_file, label, client):
     """ファイルのルールだけで作る（generate_posts.py 側の経路＝ベモーレ・個人用）。
 
     ⚠️ これらは generate_saas_posts ではなく generate_posts.py が補充する。
-    同じ build_prompts を使うので、出てくる形は本番と同じ。
+    指示文は generate_posts.build_saas_prompts（本番と同じ関数）で作る。
     private リポの素材（_private.md）はここでは読まないので、
     主人の実話など非公開の素材を使った投稿は出てこない。
     """
-    import os as _os
+    import os as _os, json as _json
     base = _os.path.dirname(_os.path.abspath(__file__))
-    with open(_os.path.join(base, rules_file), encoding="utf-8") as f:
-        rules = f.read()
-    from botlib import load_conversation_rules
-    rules = load_conversation_rules() + "\n\n---\n\n" + rules
+    # ⚠️ ルールの読み込みも指示文も、本番（generate_posts.py）と同じ関数を使う。
+    # 別の作り方をすると、試しの出来が本番の予測にならない（2026-11-27 個人アカウントの
+    # 試しがお店向けの文になっていた）。
+    import generate_posts as _gp
+    rules = _gp._load_rules(rules_file)
+    try:
+        _pool = _json.load(open(_os.path.join(base, "posts_saas", f"posts_{label}.json"), encoding="utf-8"))
+    except Exception:                                    # noqa: BLE001
+        _pool = {}
     print("\n" + "#" * 70)
     print(f"# {label}（{rules_file}）")
     print("#" * 70)
@@ -73,11 +78,8 @@ def preview_by_rules_file(rules_file, label, client):
         slot = slot.strip()
         if not slot:
             continue
-        system_prompt, user_prompt = build_prompts(rules, slot, COUNT)
-        # 交流の回の本数指定。本番（generate_posts.py）と同じ文を足す
-        from botlib import INTERACT_ACCOUNTS, interact_prompt
-        if label in INTERACT_ACCOUNTS:
-            user_prompt += interact_prompt(COUNT)
+        system_prompt, user_prompt = _gp.build_saas_prompts(
+            label, rules, slot, _pool.get(slot) or [], COUNT)
         posts, err = _ask_model(client, system_prompt, user_prompt,
                                 f"preview {label} {slot}", keep_fn=_keep_valid_shape)
         print(f"\n========== {slot} ==========")

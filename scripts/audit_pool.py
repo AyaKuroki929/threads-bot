@@ -31,7 +31,7 @@ LECTURE = ("の本質", "の構造", "ポイントは", "が大切です", "し�
 
 def audit(pool: dict, safe_name: str = "") -> dict:
     """在庫1つ分の数字を返す。"""
-    from botlib import stiff_opening_reason, is_interactive, INTERACT_ACCOUNTS
+    from botlib import stiff_opening_reason, is_interactive, is_teaching, INTERACT_ACCOUNTS
     try:
         from generate_saas_posts import style_reason
     except Exception:                      # noqa: BLE001
@@ -57,6 +57,7 @@ def audit(pool: dict, safe_name: str = "") -> dict:
         "exclaim": sum(1 for f in firsts if f.rstrip().endswith("！")),
         # 相手が答えられる問いかけで終わる投稿（交流の回の目安）
         "interact": sum(1 for p in posts if is_interactive(p)),
+        "teach": sum(1 for p in posts if is_teaching(p)),
         "interact_target": safe_name in INTERACT_ACCOUNTS,
     }
 
@@ -75,10 +76,12 @@ def problems(m: dict) -> list:
     if m["lecture"] > max(2, m["total"] // 10):
         out.append(f"講義語の入った投稿が{m['lecture']}本（全体の1割まで）")
     # 2026-11-27 鷺さん「ずっとノウハウばかり」。個人・ベモーレは3本に1本を交流の回にする。
-    # 測る目安は「問いかけで終わる投稿が全体の3割以上」
-    if m.get("interact_target") and m["interact"] * 10 < m["total"] * 3:
-        out.append(f"問いかけで終わる投稿が{m['interact']}本（{m['interact'] * 100 // m['total']}%）"
-                   f"＝3割に届いていない（交流の回が少ない）")
+    # ⚠️「問いかけで終わる本数」では警告しない。実績（個人の直近45本）で、問いで終わる
+    # 11本はコメント0件、コメントが付いた3本は問いなしだった。問いの本数を増やしても
+    # コメントは増えない。ここでは「教える言葉が入った投稿」が多すぎるときだけ知らせる。
+    if m.get("interact_target") and m["teach"] * 10 > m["total"] * 6:
+        out.append(f"教える言葉が入った投稿が{m['teach']}本（{m['teach'] * 100 // m['total']}%）"
+                   f"＝6割を超えている（ノウハウに寄っている）")
     return out
 
 
@@ -86,7 +89,7 @@ def line(name: str, m: dict) -> str:
     return (f"{name:28} {m['total']:4}本 朝{m['per_slot']['morning']:3} 昼{m['per_slot']['noon']:3} "
             f"夜{m['per_slot']['evening']:3}｜宣言型{m['stiff']:2} 話し方NG{m['style_ng']:3} "
             f"重複{m['dup_first']:2} 講義語{m['lecture']:2}｜【地域】{m['area']:2} 「！」{m['exclaim']:3}"
-            f" 問いかけ締め{m['interact']:3}")
+            f" 問い締め{m['interact']:3} 教える言葉{m['teach']:3}")
 
 
 def main() -> int:
