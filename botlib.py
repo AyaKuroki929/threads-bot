@@ -780,3 +780,48 @@ def drop_reused_openings(new_posts, existing_posts, label: str = "") -> list:
     if n_example or n_dup:
         print(f"[openings] {label}: 例文の丸写し{n_example}本・1行目の重複{n_dup}本を除外")
     return kept
+
+
+# ── 交流の回（2026-11-27 鷺さん「スレッズがずっとノウハウばかりなので、もっと
+#    コメントや交流できるような発信も心がけたい」→ 彩さん「個人アカウントと
+#    Bemolleのアカウントに反映させて欲しい」）──────────────────────────
+# 測ったところ、締めが問いかけで終わる投稿は個人22%（181本中40本）・ベモーレ19%（125本中24本）。
+# ツリーの2部目（自分の返信）を除いた他の人からのコメントは、
+# 直近60本で個人 約12件・ベモーレ1件だった。
+# ルールには「毎バッチに1〜2本」としか書いておらず、本数の指定が弱かった。
+INTERACT_ACCOUNTS = {"aya_kuroki_0929", "bemolle_diet"}
+INTERACT_SHARE = 3          # 3本に1本を交流の回にする
+_ASK_END = re.compile(
+    r"[？?]\s*$|(ますか|ませんか|でしょうか|どうですか|どっちですか|どちらですか|ありますか|いますか)。?\s*$|"
+    r"教えて(ください|いただけ|ほしい|ね)|聞かせて(ください|いただけ|ほしい)")
+
+
+def closing_line(post) -> str:
+    """投稿の最後の1行（URLやInstagramの案内は除く）。"""
+    last = post[-1] if isinstance(post, list) else post
+    lines = [l.strip() for l in str(last).strip().splitlines()
+             if l.strip() and "http" not in l and "instagram.com" not in l and "lin.ee" not in l]
+    return lines[-1] if lines else ""
+
+
+def is_interactive(post) -> bool:
+    """相手が答えられる問いかけで終わっているか。"""
+    return bool(_ASK_END.search(closing_line(post)))
+
+
+def interact_quota(count: int) -> int:
+    return max(1, count // INTERACT_SHARE)
+
+
+def interact_prompt(count: int) -> str:
+    """生成の指示文に足す、交流の回の本数指定。本番と試し生成で同じ文を使う。"""
+    n = interact_quota(count)
+    return f"""
+=== 交流の回（必ず守る・2026-11-27）===
+{count}本のうち **{n}本は「交流の回」** にする。ルール内の「交流の回」の節に従う。
+- 交流の回は**教えない**。コツ・手順・答え・理由の説明を書かない
+- 1部目：呼びかけ＋相手に聞きたいこと（二択／いくつ当てはまるか／経験があるか／一言で答えられる問い）
+- 2部目：自分の答えや本音を先に短く出す → 最後は**相手への問いかけの文で終える**
+- 問いは一言で答えられるものにする（はい・いいえ／AかB／数字／ひとこと）
+- 交流の回どうしで、同じ型・同じ問いを使わない
+残りの{count - n}本も、教えて終わりにしない（説明しきらず、本音のひとことか短い問いで終える）。"""

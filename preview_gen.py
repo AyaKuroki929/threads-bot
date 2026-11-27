@@ -74,6 +74,10 @@ def preview_by_rules_file(rules_file, label, client):
         if not slot:
             continue
         system_prompt, user_prompt = build_prompts(rules, slot, COUNT)
+        # 交流の回の本数指定。本番（generate_posts.py）と同じ文を足す
+        from botlib import INTERACT_ACCOUNTS, interact_prompt
+        if label in INTERACT_ACCOUNTS:
+            user_prompt += interact_prompt(COUNT)
         posts, err = _ask_model(client, system_prompt, user_prompt,
                                 f"preview {label} {slot}", keep_fn=_keep_valid_shape)
         print(f"\n========== {slot} ==========")

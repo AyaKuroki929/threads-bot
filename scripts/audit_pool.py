@@ -31,7 +31,7 @@ LECTURE = ("の本質", "の構造", "ポイントは", "が大切です", "し�
 
 def audit(pool: dict, safe_name: str = "") -> dict:
     """在庫1つ分の数字を返す。"""
-    from botlib import stiff_opening_reason
+    from botlib import stiff_opening_reason, is_interactive, INTERACT_ACCOUNTS
     try:
         from generate_saas_posts import style_reason
     except Exception:                      # noqa: BLE001
@@ -55,6 +55,9 @@ def audit(pool: dict, safe_name: str = "") -> dict:
         "lecture": sum(1 for t in texts if any(w in t for w in LECTURE)),
         "area": sum(1 for f in firsts if f.startswith("【")),
         "exclaim": sum(1 for f in firsts if f.rstrip().endswith("！")),
+        # 相手が答えられる問いかけで終わる投稿（交流の回の目安）
+        "interact": sum(1 for p in posts if is_interactive(p)),
+        "interact_target": safe_name in INTERACT_ACCOUNTS,
     }
 
 
@@ -71,13 +74,19 @@ def problems(m: dict) -> list:
         out.append(f"1行目の重複が{m['dup_first']}本（全体の1割まで）")
     if m["lecture"] > max(2, m["total"] // 10):
         out.append(f"講義語の入った投稿が{m['lecture']}本（全体の1割まで）")
+    # 2026-11-27 鷺さん「ずっとノウハウばかり」。個人・ベモーレは3本に1本を交流の回にする。
+    # 測る目安は「問いかけで終わる投稿が全体の3割以上」
+    if m.get("interact_target") and m["interact"] * 10 < m["total"] * 3:
+        out.append(f"問いかけで終わる投稿が{m['interact']}本（{m['interact'] * 100 // m['total']}%）"
+                   f"＝3割に届いていない（交流の回が少ない）")
     return out
 
 
 def line(name: str, m: dict) -> str:
     return (f"{name:28} {m['total']:4}本 朝{m['per_slot']['morning']:3} 昼{m['per_slot']['noon']:3} "
             f"夜{m['per_slot']['evening']:3}｜宣言型{m['stiff']:2} 話し方NG{m['style_ng']:3} "
-            f"重複{m['dup_first']:2} 講義語{m['lecture']:2}｜【地域】{m['area']:2} 「！」{m['exclaim']:3}")
+            f"重複{m['dup_first']:2} 講義語{m['lecture']:2}｜【地域】{m['area']:2} 「！」{m['exclaim']:3}"
+            f" 問いかけ締め{m['interact']:3}")
 
 
 def main() -> int:
