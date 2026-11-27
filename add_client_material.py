@@ -60,11 +60,23 @@ def main() -> int:
         sys.exit("❌ --salon は4文字以上で指定する（短い断片は誤マッチの危険）")
     if not a.material.strip().startswith("【"):
         sys.exit("❌ --material は【日付・出典】から書き始める（例:【お客様の声（2026-08-03 ◯◯さん提供）】…）")
+    # ⚠️ 2部構成（ツリー）の投稿は、本文の中の「---」だけの行で区切って渡す。
+    # ここで [1部目, 2部目] に分けてから保存する。以前は文字列のまま1本として
+    # 保存していたため、「---」ごと1つの投稿として在庫に入った
+    # （2026-11-24〜25 大和田さんの19本。配信前に気づいて直した）。
+    posts_in = []
     for slot, text in a.post:
         if slot not in VALID_SLOTS:
             sys.exit(f"❌ slot が不正: {slot}（morning/noon/evening）")
-        if len(text) > MAX_LEN:
-            sys.exit(f"❌ {slot} の投稿が{len(text)}字（上限{MAX_LEN}字）")
+        parts = [x.strip() for x in re.split(r"\n\s*---\s*\n", text) if x.strip()]
+        if not parts:
+            sys.exit(f"❌ {slot} の投稿が空です")
+        for i, part in enumerate(parts, 1):
+            if len(part) > MAX_LEN:
+                sys.exit(f"❌ {slot} の{i}部目が{len(part)}字（上限{MAX_LEN}字）")
+            if "---" in part:
+                sys.exit(f"❌ {slot} の{i}部目に区切り線「---」が残っています（区切りは「---」だけの行にする）")
+        posts_in.append((slot, parts if len(parts) > 1 else parts[0]))
 
     import gspread
     gc = gspread.service_account(filename=SA_FILE, scopes=[
@@ -85,9 +97,25 @@ def main() -> int:
     safe_name = re.sub(r"[^\w\-]", "_", tid)
     print(f"対象: {ids[row-1]}（シート{row}行目 / posts_{safe_name}.json）")
 
+    # 在庫に入れる前に、自動生成と同じ検査を通す（話し方・控えてほしい表現・金額の書き方・一言目）。
+    # 彩さんの確認なしで在庫に入れてよいのは、この検査を通ったものだけ
+    # （2026-11-27 彩さん決定「検査を通ったものはそのまま在庫に入れて、事後に報告」）。
+    if posts_in:
+        import botlib
+        from generate_saas_posts import style_reason
+        ng = []
+        for slot, post in posts_in:
+            why = style_reason(post, safe_name) or botlib.stiff_opening_reason(post)
+            if why:
+                head = (post[0] if isinstance(post, list) else post).splitlines()[0][:30]
+                ng.append(f"  - {slot}「{head}…」: {why}")
+        if ng:
+            sys.exit("❌ 検査に通らない投稿があります（何も書き込んでいません）:\n" + "\n".join(ng))
+        print(f"✅ 投稿の検査: {len(posts_in)}本とも通過（話し方・控えてほしい表現・一言目）")
+
     # 投稿を追加する場合は、シートに書く前にプールの存在を確認する
     # （シートだけ更新されてプールが無い、という中途半端な状態を作らない。Sol指摘#12）
-    if a.post and not a.dry_run:
+    if posts_in and not a.dry_run:
         chk = subprocess.run(["gh", "api", f"repos/{POSTS_REPO}/contents/posts_{safe_name}.json",
                               "-q", ".name"], capture_output=True, text=True)
         if chk.returncode != 0:
@@ -95,8 +123,9 @@ def main() -> int:
 
     if a.dry_run:
         print(f"[DRY_RUN] シート追記予定: {a.material[:60]}…")
-        for slot, text in a.post:
-            print(f"[DRY_RUN] {slot} へ追加予定（{len(text)}字）")
+        for slot, post in posts_in:
+            n = len(post) if isinstance(post, list) else 1
+            print(f"[DRY_RUN] {slot} へ追加予定（{n}部構成）")
         print("[DRY_RUN] 書き込みは行いません")
         return 0
 
@@ -118,7 +147,7 @@ def main() -> int:
         print(f"✅ シート学習: 追記＋読み直し検証OK（自由記入欄 {len(back)}字）")
 
     # ② 投稿プールへ追加 → push → リモート検証
-    if a.post:
+    if posts_in:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "saas-posts"
             subprocess.run(["gh", "repo", "clone", POSTS_REPO, str(repo), "--", "-q", "--depth", "1"],
@@ -127,18 +156,24 @@ def main() -> int:
             if not pool.exists():
                 sys.exit(f"❌ プールが無い: {pool.name}（シートには追記済み。プール名を確認して再実行）")
             d = json.loads(pool.read_text(encoding="utf-8"))
-            for slot, text in a.post:
+            for slot, post in posts_in:
+                first = post[0] if isinstance(post, list) else post
                 existing = [x if isinstance(x, str) else x[0] for x in d.get(slot, [])]
-                if text in existing:
+                if first in existing:
                     print(f"⏭️ {slot}: 同一投稿が既にあるためスキップ")
                     continue
-                d.setdefault(slot, []).append(text)
-                print(f"✅ プール: {slot} へ追加（{len(text)}字 → {len(d[slot])}本）")
+                d.setdefault(slot, []).append(post)
+                n = len(post) if isinstance(post, list) else 1
+                print(f"✅ プール: {slot} へ追加（{n}部構成 → {len(d[slot])}本）")
             pool.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
             # 再読込検証
             d2 = json.loads(pool.read_text(encoding="utf-8"))
-            for slot, text in a.post:
-                assert text in [x if isinstance(x, str) else x[0] for x in d2.get(slot, [])]
+            for slot, post in posts_in:
+                first = post[0] if isinstance(post, list) else post
+                assert first in [x if isinstance(x, str) else x[0] for x in d2.get(slot, [])]
+            # 区切り線が本文に残ったまま保存されていないことを確かめる
+            assert not any("---" in json.dumps(x, ensure_ascii=False)
+                           for slot, _ in posts_in for x in d2.get(slot, [])), "区切り線が在庫に残っています"
             subprocess.run(["git", "-C", str(repo), "add", pool.name], check=True)
             staged = subprocess.run(["git", "-C", str(repo), "diff", "--cached", "--quiet"]).returncode
             if staged == 0:
